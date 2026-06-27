@@ -71,6 +71,15 @@ func (s *Store) UpdateCommentAnchor(id string, a domain.Anchor, status domain.Co
 	return err
 }
 
+// ReopenCommentIfNotResolved re-queues a comment to open, but only if it has
+// not already been resolved. This makes a losing/duplicate accept's requeue a
+// no-op once a winning accept has resolved the same comment.
+func (s *Store) ReopenCommentIfNotResolved(id string) error {
+	_, err := s.DB.Exec(`UPDATE comments SET status=?, claim_token='' WHERE id=? AND status != ?`,
+		domain.CommentOpen, id, domain.CommentResolved)
+	return err
+}
+
 func (s *Store) RebaseComment(id, newVersionID string, a domain.Anchor, status domain.CommentStatus) error {
 	_, err := s.DB.Exec(
 		`UPDATE comments SET against_version_id=?, anchor_start=?, anchor_end=?, status=? WHERE id=?`,

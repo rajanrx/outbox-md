@@ -104,8 +104,10 @@ func (s *Service) Accept(commentID string) (domain.Version, error) {
 	// not clobber a newer accepted edit. The agent must re-propose against the
 	// current version, so the comment returns to the outbox.
 	if sg.AgainstVersionID != doc.CurrentVersionID {
-		_ = s.store.UpdateSuggestionState(sg.ID, domain.SuggestionRejected)
-		_ = s.store.UpdateCommentStatus(commentID, domain.CommentOpen, "")
+		// Conditional requeue: never override a state a concurrent winning
+		// accept may have already set to accepted/resolved.
+		_ = s.store.RejectSuggestionIfProposed(sg.ID)
+		_ = s.store.ReopenCommentIfNotResolved(commentID)
 		return domain.Version{}, errors.New("suggestion is stale: proposed against an older version")
 	}
 	oldVer, err := s.store.GetVersion(doc.CurrentVersionID)
@@ -130,10 +132,12 @@ func (s *Service) Accept(commentID string) (domain.Version, error) {
 			_ = s.writeFile(doc.Path, oldVer.Content)
 		}
 		if errors.Is(err, store.ErrVersionConflict) {
-			// Lost the race: the comment's suggestion is now stale. Re-queue it
-			// so the agent can re-propose against the new current version.
-			_ = s.store.UpdateSuggestionState(sg.ID, domain.SuggestionRejected)
-			_ = s.store.UpdateCommentStatus(commentID, domain.CommentOpen, "")
+			// Lost the race: re-queue so the agent can re-propose against the new
+			// current version — but conditionally, so we never flip a suggestion
+			// the winning accept already marked accepted (same-comment duplicate
+			// accept) back to rejected/open.
+			_ = s.store.RejectSuggestionIfProposed(sg.ID)
+			_ = s.store.ReopenCommentIfNotResolved(commentID)
 		}
 		return domain.Version{}, err
 	}

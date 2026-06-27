@@ -34,3 +34,12 @@ func (s *Store) UpdateSuggestionState(id string, state domain.SuggestionState) e
 	_, err := s.DB.Exec(`UPDATE suggestions SET state=? WHERE id=?`, state, id)
 	return err
 }
+
+// RejectSuggestionIfProposed rejects a suggestion, but only if it is still
+// proposed. This makes a losing/duplicate accept's requeue a no-op once a
+// winning accept has marked the same suggestion accepted.
+func (s *Store) RejectSuggestionIfProposed(id string) error {
+	_, err := s.DB.Exec(`UPDATE suggestions SET state=? WHERE id=? AND state=?`,
+		domain.SuggestionRejected, id, domain.SuggestionProposed)
+	return err
+}

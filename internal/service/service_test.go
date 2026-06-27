@@ -137,6 +137,42 @@ func TestAcceptRejectsStaleSuggestion(t *testing.T) {
 	}
 }
 
+// P2: two concurrent accepts of the SAME comment must not leave the lifecycle
+// inconsistent — the loser's requeue must never undo the winner's accept.
+func TestDuplicateAcceptSameCommentStaysConsistent(t *testing.T) {
+	dir := t.TempDir()
+	s, err := store.Open("file:" + filepath.Join(dir, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	svc := New(s, func(_, _ string) error { return nil })
+	doc, _, _ := s.CreateDocument("spec.md", "base", "human")
+	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 4}, "human")
+	tok, _ := svc.Claim([]string{c.ID}, "agent")
+	_, _ = svc.Propose(c.ID, tok, "AAA", "agent")
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); _, _ = svc.Accept(c.ID) }()
+	go func() { defer wg.Done(); _, _ = svc.Accept(c.ID) }()
+	wg.Wait()
+
+	gotC, _ := s.GetComment(c.ID)
+	if gotC.Status != domain.CommentResolved {
+		t.Fatalf("comment status = %s, want resolved (loser must not re-open it)", gotC.Status)
+	}
+	sg, _, _ := s.GetSuggestionByComment(c.ID)
+	if sg.State != domain.SuggestionAccepted {
+		t.Fatalf("suggestion state = %s, want accepted (loser must not reject it)", sg.State)
+	}
+	cur, _ := s.GetDocument(doc.ID)
+	curVer, _ := s.GetVersion(cur.CurrentVersionID)
+	if curVer.Ordinal != 2 {
+		t.Fatalf("ordinal = %d, want 2 (exactly one new version)", curVer.Ordinal)
+	}
+}
+
 // P2: an already-accepted comment/suggestion cannot be accepted again.
 func TestAcceptRejectsRepeatedAccept(t *testing.T) {
 	s, _ := store.Open(":memory:")
