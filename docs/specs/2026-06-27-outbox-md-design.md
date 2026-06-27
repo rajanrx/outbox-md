@@ -269,9 +269,9 @@ sequenceDiagram
         A->>C: reply_in_thread (token)
         C-->>H: discussion shown
     else failure
-        A->>C: report_failure(reason)  // or agent crashes
-        C-->>C: attempts++ ; status → open (retry) or parked
-        R-->>C: lease expired → return to open (attempts++)
+        A->>C: report_failure(reason) or agent crashes
+        C-->>C: attempts++, status to open (retry) or parked
+        R-->>C: lease expired, return to open (attempts++)
     end
     H->>C: resolve comment (owner only)
     H->>C: approve document (human only) → pin baseline
@@ -555,7 +555,8 @@ As the corpus grows — many specs, versions, comments, decisions, and links —
 | Phase | Scope |
 |---|---|
 | **Phase 0 — Foundations** | Public repo scaffolding: `LICENSE` (MIT), `README`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md` (Contributor Covenant), `SECURITY.md`, `.github/` issue+PR templates, `CODEOWNERS`, DCO sign-off, CI (Go lint/test/build + frontend lint/build), Conventional Commits + `CHANGELOG`. Go module `github.com/rajanrx/outbox-md`. Develop in the open from commit 1. |
-| **v1** | Reader/editor, inline comments & threads, outbox queue, suggestions (accept/reject) + gated mechanical auto-apply, internal versioning, **document lifecycle + human approval (baseline pinning)**, **comment provenance**, **`DOCUMENT_LINK` table (dormant seam)**, configuration (`outbox.yaml` + overrides), reliability (leases, reaper, retries, parked state), built-in dashboard, MCP server, single Docker container. Actors: human + one working agent. Includes the **R1 anchor spike** with **section/heading-aware anchoring**. |
+| **v1-core (walking skeleton)** | The irreducible loop that proves the core hypothesis. Render one `.md` in the browser; select text → post an **anchored comment** (persisted to SQLite) shown in a plain outbox list; **MCP server with ~5 ops** (`read_doc`, `list_open_comments`, `claim_comment`, `propose_suggestion`, `reply_in_thread`); human reviews the proposed diff → **accept → file rewritten + version snapshot**; runs in Docker. **This IS the R1 spike** (§19): it must prove an inline comment stays correctly anchored across an AI-applied edit, with the doc never corrupted. Build and validate this *before* stacking anything on it. |
+| **v1-complete** | Layered onto the validated skeleton: threads/discussion, gated mechanical auto-apply, internal version history UI, **document lifecycle + human approval (baseline pinning)**, **comment provenance**, **`DOCUMENT_LINK` table (dormant seam)**, configuration (`outbox.yaml` + overrides), reliability (leases, reaper, retries, parked state), built-in dashboard. Actors: human + one working agent. |
 | **v1.5** | **Post-approval amendments + re-approval UX**; **semantic blame** view; **auto changelog / decision log**; **approver roles** (commenter vs approver); **council** (multiple AIs comment/discuss/vote in existing threads). No architectural change. |
 | **v2** | **Spec graph** — relationship navigation, lineage, and **cross-spec contradiction detection**; **section-level approval & freezing**; **corpus retrieval (lexical + graph) for grounding** (§15). |
 | **Fast-follow** | **Built-in LLM processor** (turnkey mode) implementing the MCP operations internally for zero-agent first-run; **MCP push notifications** (new-work push instead of polling, SDK permitting); **companion CLI** (`outbox approve`, `outbox parked`, …). |
