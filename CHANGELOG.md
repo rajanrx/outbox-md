@@ -5,3 +5,7 @@ All notable changes to this project are documented here. The format is based on
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Added
+- Walking skeleton: annotate → outbox → agent proposes → accept re-anchors and rewrites the file.
+- MCP server (5 tools) over Streamable HTTP; HTTP/JSON API and React frontend; single Docker container.

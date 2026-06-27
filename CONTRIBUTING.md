@@ -18,7 +18,7 @@ Use [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:
 
 ## Running the project
 
-**Backend (Go ≥ 1.23, no CGO):**
+**Backend (Go ≥ 1.25, no CGO):**
 ```bash
 CGO_ENABLED=0 go build ./...
 CGO_ENABLED=0 go test ./...
