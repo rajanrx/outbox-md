@@ -8,6 +8,9 @@
 | **Version** | 0.3 |
 | **Date** | 2026-06-27 |
 | **Type** | Greenfield · Open-source · Local-first |
+| **Repository** | https://github.com/rajanrx/outbox-md (public) |
+| **Go module** | `github.com/rajanrx/outbox-md` |
+| **License** | MIT |
 | **Authors** | Project team |
 
 ---
@@ -288,6 +291,7 @@ The outbox **serializes** processing — suggestions are reviewed one at a time 
 
 | Phase | Scope |
 |---|---|
+| **Phase 0 — Foundations** | Public repo scaffolding: `LICENSE` (MIT), `README`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md` (Contributor Covenant), `SECURITY.md`, `.github/` issue+PR templates, `CODEOWNERS`, DCO sign-off, CI (Go lint/test/build + frontend lint/build), Conventional Commits + `CHANGELOG`. Go module `github.com/rajanrx/outbox-md`. Develop in the open from commit 1. |
 | **v1** | Reader/editor, inline comments & threads, outbox queue, suggestions (accept/reject) + gated mechanical auto-apply, internal versioning, MCP server, single Docker container. Actors: human + one working agent. |
 | **v1.5** | **Council** — multiple AIs connect via MCP and comment/discuss/vote in existing threads. No architectural change. |
 | **Fast-follow** | **Built-in LLM processor** (turnkey mode) implementing the MCP operations internally for zero-agent first-run. |
