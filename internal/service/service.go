@@ -113,13 +113,16 @@ func (s *Service) Accept(commentID string) (domain.Version, error) {
 		return domain.Version{}, err
 	}
 
-	// Write the file BEFORE recording the new version, so the database never
-	// advances its current pointer to content that was not written to disk.
-	if err := s.writeFile(doc.Path, sg.ProposedContent); err != nil {
-		return domain.Version{}, err
-	}
-	newVer, err := s.store.AddVersion(doc.ID, sg.ProposedContent, sg.CreatedBy)
+	// Record the new version and write the file inside one transaction: the
+	// write runs before commit, and on any failure we compensate the on-disk
+	// file back to the current (unchanged) version. The invariant — the file
+	// on disk equals the current version's content — holds whether Accept
+	// succeeds or fails.
+	newVer, err := s.store.AddVersionTx(doc.ID, sg.ProposedContent, sg.CreatedBy, func(v domain.Version) error {
+		return s.writeFile(doc.Path, v.Content)
+	})
 	if err != nil {
+		_ = s.writeFile(doc.Path, oldVer.Content)
 		return domain.Version{}, err
 	}
 	_ = s.store.UpdateSuggestionState(sg.ID, domain.SuggestionAccepted)

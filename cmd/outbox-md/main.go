@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/rajanrx/outbox-md/internal/api"
@@ -39,23 +40,46 @@ func safeJoin(dir, path string) (string, error) {
 
 // atomicWrite writes content to a temp file in the same directory and renames
 // it into place, so a failed or partial write never corrupts the target file.
+// It preserves the target's permission bits, and best-effort its ownership, so
+// the rename does not silently change mode (CreateTemp defaults to 0600) or
+// leave a root-owned file on a Docker bind mount.
 func atomicWrite(target, content string) error {
+	mode := os.FileMode(0o644)
+	uid, gid := -1, -1
+	if fi, err := os.Stat(target); err == nil {
+		mode = fi.Mode().Perm()
+		if st, ok := fi.Sys().(*syscall.Stat_t); ok {
+			uid, gid = int(st.Uid), int(st.Gid)
+		}
+	}
+
 	tmp, err := os.CreateTemp(filepath.Dir(target), ".outbox-tmp-*")
 	if err != nil {
 		return err
 	}
 	tmpName := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpName) }
+
 	if _, err := tmp.WriteString(content); err != nil {
 		_ = tmp.Close()
-		_ = os.Remove(tmpName)
+		cleanup()
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
+		cleanup()
 		return err
 	}
+	if err := os.Chmod(tmpName, mode); err != nil {
+		cleanup()
+		return err
+	}
+	if uid >= 0 {
+		// Best-effort: only succeeds when permitted (e.g. running as root in
+		// Docker). A failure here must not block the write.
+		_ = os.Chown(tmpName, uid, gid)
+	}
 	if err := os.Rename(tmpName, target); err != nil {
-		_ = os.Remove(tmpName)
+		cleanup()
 		return err
 	}
 	return nil

@@ -81,6 +81,52 @@ func (s *Store) GetVersion(id string) (domain.Version, error) {
 	return v, err
 }
 
+// AddVersionTx records a new version and advances the current pointer inside a
+// single transaction. The write callback (e.g. the file write) runs inside the
+// transaction and the commit happens last, so the database is never left
+// pointing at content the write rejected. If write returns an error the
+// transaction rolls back. Callers should still compensate the external side
+// effect on a returned error, since a commit failure after a successful write
+// is the one window this cannot close alone.
+func (s *Store) AddVersionTx(docID, content, createdBy string, write func(domain.Version) error) (domain.Version, error) {
+	verID := domain.NewID()
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return domain.Version{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	var maxOrd int
+	if err := tx.QueryRow(`SELECT COALESCE(MAX(ordinal),0) FROM versions WHERE doc_id=?`, docID).
+		Scan(&maxOrd); err != nil {
+		return domain.Version{}, err
+	}
+	ord := maxOrd + 1
+	if _, err := tx.Exec(`INSERT INTO versions(id, doc_id, ordinal, content, created_by) VALUES(?,?,?,?,?)`,
+		verID, docID, ord, content, createdBy); err != nil {
+		return domain.Version{}, err
+	}
+	if _, err := tx.Exec(`UPDATE documents SET current_version_id=? WHERE id=?`, verID, docID); err != nil {
+		return domain.Version{}, err
+	}
+	v := domain.Version{ID: verID, DocID: docID, Ordinal: ord, Content: content, CreatedBy: createdBy}
+	if write != nil {
+		if err := write(v); err != nil {
+			return domain.Version{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.Version{}, err
+	}
+	committed = true
+	return v, nil
+}
+
 func (s *Store) AddVersion(docID, content, createdBy string) (domain.Version, error) {
 	verID := domain.NewID()
 	tx, err := s.DB.Begin()
