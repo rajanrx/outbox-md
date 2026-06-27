@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
@@ -23,6 +24,17 @@ func newMux() http.Handler {
 		_, _ = w.Write([]byte("ok"))
 	})
 	return mux
+}
+
+// safeJoin resolves path under dir and refuses any result that escapes dir
+// (defense-in-depth against path traversal on the file-write path).
+func safeJoin(dir, path string) (string, error) {
+	target := filepath.Join(dir, path)
+	rel, err := filepath.Rel(dir, target)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("refusing to write outside managed dir: %q", path)
+	}
+	return target, nil
 }
 
 func getenv(k, def string) string {
@@ -72,7 +84,11 @@ func main() {
 		log.Fatal(err)
 	}
 	svc := service.New(st, func(path, content string) error {
-		return os.WriteFile(filepath.Join(dir, path), []byte(content), 0o644)
+		target, err := safeJoin(dir, path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, []byte(content), 0o644)
 	})
 	if err := importMarkdown(st, dir); err != nil {
 		log.Fatal(err)
