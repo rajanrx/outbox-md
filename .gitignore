@@ -1,3 +1,10 @@
 .outbox/
 node_modules/
+/outbox-md
+*.test
 .DS_Store
+
+# Built frontend assets are not committed, except the placeholder index.html
+# that lets the Go `embed` directive compile without a frontend build.
+web/dist/*
+!web/dist/index.html
