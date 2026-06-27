@@ -83,6 +83,9 @@ func (s *Service) Accept(commentID string) (domain.Version, error) {
 	if err != nil {
 		return domain.Version{}, err
 	}
+	if c.Status == domain.CommentResolved {
+		return domain.Version{}, errors.New("comment already resolved")
+	}
 	sg, ok, err := s.store.GetSuggestionByComment(commentID)
 	if err != nil {
 		return domain.Version{}, err
@@ -90,20 +93,33 @@ func (s *Service) Accept(commentID string) (domain.Version, error) {
 	if !ok {
 		return domain.Version{}, errors.New("no suggestion to accept")
 	}
+	if sg.State != domain.SuggestionProposed {
+		return domain.Version{}, errors.New("suggestion is not in proposed state")
+	}
 	doc, err := s.store.GetDocument(c.DocID)
 	if err != nil {
 		return domain.Version{}, err
+	}
+	// Reject stale applies: a suggestion proposed against an older version must
+	// not clobber a newer accepted edit. The agent must re-propose against the
+	// current version, so the comment returns to the outbox.
+	if sg.AgainstVersionID != doc.CurrentVersionID {
+		_ = s.store.UpdateSuggestionState(sg.ID, domain.SuggestionRejected)
+		_ = s.store.UpdateCommentStatus(commentID, domain.CommentOpen, "")
+		return domain.Version{}, errors.New("suggestion is stale: proposed against an older version")
 	}
 	oldVer, err := s.store.GetVersion(doc.CurrentVersionID)
 	if err != nil {
 		return domain.Version{}, err
 	}
 
-	newVer, err := s.store.AddVersion(doc.ID, sg.ProposedContent, sg.CreatedBy)
-	if err != nil {
+	// Write the file BEFORE recording the new version, so the database never
+	// advances its current pointer to content that was not written to disk.
+	if err := s.writeFile(doc.Path, sg.ProposedContent); err != nil {
 		return domain.Version{}, err
 	}
-	if err := s.writeFile(doc.Path, newVer.Content); err != nil {
+	newVer, err := s.store.AddVersion(doc.ID, sg.ProposedContent, sg.CreatedBy)
+	if err != nil {
 		return domain.Version{}, err
 	}
 	_ = s.store.UpdateSuggestionState(sg.ID, domain.SuggestionAccepted)

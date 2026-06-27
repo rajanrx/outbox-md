@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/rajanrx/outbox-md/internal/domain"
@@ -40,6 +41,86 @@ func TestAcceptRewritesFileAndReanchors(t *testing.T) {
 	gotHello, _ := s.GetComment(cHello.ID)
 	if gotHello.Status != domain.CommentResolved {
 		t.Fatalf("hello status = %s, want resolved", gotHello.Status)
+	}
+}
+
+// P1: a suggestion proposed against an older version must not clobber a newer
+// accepted edit.
+func TestAcceptRejectsStaleSuggestion(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	var written string
+	svc := New(s, func(_, content string) error { written = content; return nil })
+	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
+
+	c1, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
+	c2, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 6, End: 11}, "human")
+	t1, _ := svc.Claim([]string{c1.ID}, "agent")
+	_, _ = svc.Propose(c1.ID, t1, "AAA", "agent") // against v1
+	t2, _ := svc.Claim([]string{c2.ID}, "agent")
+	_, _ = svc.Propose(c2.ID, t2, "BBB", "agent") // against v1
+
+	if _, err := svc.Accept(c1.ID); err != nil {
+		t.Fatal(err)
+	}
+	if written != "AAA" {
+		t.Fatalf("after first accept written=%q", written)
+	}
+	// Accepting c2 (still against v1) must be rejected, not overwrite "AAA".
+	if _, err := svc.Accept(c2.ID); err == nil {
+		t.Fatal("expected stale rejection")
+	}
+	if written != "AAA" {
+		t.Fatalf("stale accept clobbered the file: %q", written)
+	}
+	cur, _ := s.GetDocument(doc.ID)
+	curVer, _ := s.GetVersion(cur.CurrentVersionID)
+	if curVer.Content != "AAA" {
+		t.Fatalf("current content=%q, want AAA", curVer.Content)
+	}
+	got2, _ := s.GetComment(c2.ID)
+	if got2.Status != domain.CommentOpen {
+		t.Fatalf("stale comment status=%s, want open (re-queued)", got2.Status)
+	}
+}
+
+// P2: an already-accepted comment/suggestion cannot be accepted again.
+func TestAcceptRejectsRepeatedAccept(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _ string) error { return nil })
+	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
+	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
+	tok, _ := svc.Claim([]string{c.ID}, "agent")
+	_, _ = svc.Propose(c.ID, tok, "Howdy world", "agent")
+	if _, err := svc.Accept(c.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Accept(c.ID); err == nil {
+		t.Fatal("expected error on repeated accept")
+	}
+	cur, _ := s.GetDocument(doc.ID)
+	curVer, _ := s.GetVersion(cur.CurrentVersionID)
+	if curVer.Ordinal != 2 {
+		t.Fatalf("ordinal=%d, want 2 (no duplicate version)", curVer.Ordinal)
+	}
+}
+
+// P1: a failed file write must not advance the database current pointer.
+func TestAcceptFailedWriteDoesNotAdvanceDB(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _ string) error { return errors.New("disk full") })
+	doc, v1, _ := s.CreateDocument("spec.md", "Hello world", "human")
+	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
+	tok, _ := svc.Claim([]string{c.ID}, "agent")
+	_, _ = svc.Propose(c.ID, tok, "Howdy world", "agent")
+	if _, err := svc.Accept(c.ID); err == nil {
+		t.Fatal("expected write error")
+	}
+	cur, _ := s.GetDocument(doc.ID)
+	if cur.CurrentVersionID != v1.ID {
+		t.Fatal("current version advanced despite failed write")
 	}
 }
 

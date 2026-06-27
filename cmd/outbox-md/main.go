@@ -37,6 +37,30 @@ func safeJoin(dir, path string) (string, error) {
 	return target, nil
 }
 
+// atomicWrite writes content to a temp file in the same directory and renames
+// it into place, so a failed or partial write never corrupts the target file.
+func atomicWrite(target, content string) error {
+	tmp, err := os.CreateTemp(filepath.Dir(target), ".outbox-tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.WriteString(content); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, target); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	return nil
+}
+
 func getenv(k, def string) string {
 	if v := os.Getenv(k); v != "" {
 		return v
@@ -88,7 +112,7 @@ func main() {
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(target, []byte(content), 0o644)
+		return atomicWrite(target, content)
 	})
 	if err := importMarkdown(st, dir); err != nil {
 		log.Fatal(err)

@@ -16,7 +16,13 @@ export function SuggestionView({ commentId, onAccepted }: {
       <pre style={{ whiteSpace: "pre-wrap", background: "#f4f4f4", padding: 8 }}>
         {sg.proposedContent}
       </pre>
-      <button onClick={async () => { await accept(commentId); onAccepted(); }}>Accept</button>
+      {sg.state === "proposed" ? (
+        <button onClick={async () => { await accept(commentId); onAccepted(); }}>Accept</button>
+      ) : (
+        <p>
+          <em>Suggestion {sg.state} — nothing to accept.</em>
+        </p>
+      )}
     </div>
   );
 }
