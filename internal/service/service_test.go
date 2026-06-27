@@ -2,11 +2,64 @@ package service
 
 import (
 	"errors"
+	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/rajanrx/outbox-md/internal/domain"
 	"github.com/rajanrx/outbox-md/internal/store"
 )
+
+// P1: two accepts racing on the same base version must serialize — exactly one
+// wins, and the on-disk file equals the winning version (no clobber).
+func TestConcurrentAcceptsSerialize(t *testing.T) {
+	dir := t.TempDir()
+	s, err := store.Open("file:" + filepath.Join(dir, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var mu sync.Mutex
+	written := ""
+	svc := New(s, func(_, content string) error {
+		mu.Lock()
+		written = content
+		mu.Unlock()
+		return nil
+	})
+	doc, _, _ := s.CreateDocument("spec.md", "base", "human")
+	c1, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 4}, "human")
+	c2, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 4}, "human")
+	t1, _ := svc.Claim([]string{c1.ID}, "agent")
+	_, _ = svc.Propose(c1.ID, t1, "AAA", "agent") // both against the base version
+	t2, _ := svc.Claim([]string{c2.ID}, "agent")
+	_, _ = svc.Propose(c2.ID, t2, "BBB", "agent")
+
+	var wg sync.WaitGroup
+	res := make([]error, 2)
+	wg.Add(2)
+	go func() { defer wg.Done(); _, res[0] = svc.Accept(c1.ID) }()
+	go func() { defer wg.Done(); _, res[1] = svc.Accept(c2.ID) }()
+	wg.Wait()
+
+	ok := 0
+	for _, e := range res {
+		if e == nil {
+			ok++
+		}
+	}
+	if ok != 1 {
+		t.Fatalf("expected exactly one accept to win, got %d (errs: %v)", ok, res)
+	}
+	cur, _ := s.GetDocument(doc.ID)
+	curVer, _ := s.GetVersion(cur.CurrentVersionID)
+	if written != curVer.Content {
+		t.Fatalf("on-disk %q != current version %q", written, curVer.Content)
+	}
+	if curVer.Ordinal != 2 {
+		t.Fatalf("ordinal = %d, want 2 (only one new version)", curVer.Ordinal)
+	}
+}
 
 func TestAcceptRewritesFileAndReanchors(t *testing.T) {
 	s, _ := store.Open(":memory:")

@@ -113,16 +113,28 @@ func (s *Service) Accept(commentID string) (domain.Version, error) {
 		return domain.Version{}, err
 	}
 
-	// Record the new version and write the file inside one transaction: the
-	// write runs before commit, and on any failure we compensate the on-disk
-	// file back to the current (unchanged) version. The invariant — the file
-	// on disk equals the current version's content — holds whether Accept
-	// succeeds or fails.
-	newVer, err := s.store.AddVersionTx(doc.ID, sg.ProposedContent, sg.CreatedBy, func(v domain.Version) error {
+	// Record the new version and write the file inside one transaction, guarded
+	// by a compare-and-swap on the current version (oldVer.ID). This serializes
+	// concurrent accepts so two requests cannot both advance past the same
+	// version. The write runs only for the winning accept; if it ran but a later
+	// step failed, we compensate the on-disk file back to the current version.
+	// The invariant — the file on disk equals the current version's content —
+	// holds whether Accept succeeds or fails.
+	wrote := false
+	newVer, err := s.store.AddVersionTx(doc.ID, oldVer.ID, sg.ProposedContent, sg.CreatedBy, func(v domain.Version) error {
+		wrote = true
 		return s.writeFile(doc.Path, v.Content)
 	})
 	if err != nil {
-		_ = s.writeFile(doc.Path, oldVer.Content)
+		if wrote {
+			_ = s.writeFile(doc.Path, oldVer.Content)
+		}
+		if errors.Is(err, store.ErrVersionConflict) {
+			// Lost the race: the comment's suggestion is now stale. Re-queue it
+			// so the agent can re-propose against the new current version.
+			_ = s.store.UpdateSuggestionState(sg.ID, domain.SuggestionRejected)
+			_ = s.store.UpdateCommentStatus(commentID, domain.CommentOpen, "")
+		}
 		return domain.Version{}, err
 	}
 	_ = s.store.UpdateSuggestionState(sg.ID, domain.SuggestionAccepted)

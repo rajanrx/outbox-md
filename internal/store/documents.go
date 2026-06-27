@@ -81,14 +81,22 @@ func (s *Store) GetVersion(id string) (domain.Version, error) {
 	return v, err
 }
 
+// ErrVersionConflict means the document's current version changed between the
+// caller's staleness check and the transaction — another accept won the race.
+var ErrVersionConflict = errors.New("version conflict: document advanced concurrently")
+
 // AddVersionTx records a new version and advances the current pointer inside a
-// single transaction. The write callback (e.g. the file write) runs inside the
-// transaction and the commit happens last, so the database is never left
-// pointing at content the write rejected. If write returns an error the
-// transaction rolls back. Callers should still compensate the external side
-// effect on a returned error, since a commit failure after a successful write
-// is the one window this cannot close alone.
-func (s *Store) AddVersionTx(docID, content, createdBy string, write func(domain.Version) error) (domain.Version, error) {
+// single transaction, but only if the current pointer is still expectedCurrent
+// (a compare-and-swap). This serializes concurrent accepts: two requests that
+// both passed a staleness check against the same version cannot both commit —
+// the second sees RowsAffected == 0 and gets ErrVersionConflict.
+//
+// The write callback (e.g. the file write) runs after the CAS succeeds and
+// before commit, so the file is only written by the winning accept and the
+// database is never left pointing at content the write rejected. Callers should
+// still compensate the external side effect when write ran, since a commit
+// failure after a successful write is the one window this cannot close alone.
+func (s *Store) AddVersionTx(docID, expectedCurrent, content, createdBy string, write func(domain.Version) error) (domain.Version, error) {
 	verID := domain.NewID()
 	tx, err := s.DB.Begin()
 	if err != nil {
@@ -101,6 +109,20 @@ func (s *Store) AddVersionTx(docID, content, createdBy string, write func(domain
 		}
 	}()
 
+	// Compare-and-swap the current pointer; advance only if it is unchanged.
+	res, err := tx.Exec(`UPDATE documents SET current_version_id=? WHERE id=? AND current_version_id=?`,
+		verID, docID, expectedCurrent)
+	if err != nil {
+		return domain.Version{}, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return domain.Version{}, err
+	}
+	if n != 1 {
+		return domain.Version{}, ErrVersionConflict
+	}
+
 	var maxOrd int
 	if err := tx.QueryRow(`SELECT COALESCE(MAX(ordinal),0) FROM versions WHERE doc_id=?`, docID).
 		Scan(&maxOrd); err != nil {
@@ -109,9 +131,6 @@ func (s *Store) AddVersionTx(docID, content, createdBy string, write func(domain
 	ord := maxOrd + 1
 	if _, err := tx.Exec(`INSERT INTO versions(id, doc_id, ordinal, content, created_by) VALUES(?,?,?,?,?)`,
 		verID, docID, ord, content, createdBy); err != nil {
-		return domain.Version{}, err
-	}
-	if _, err := tx.Exec(`UPDATE documents SET current_version_id=? WHERE id=?`, verID, docID); err != nil {
 		return domain.Version{}, err
 	}
 	v := domain.Version{ID: verID, DocID: docID, Ordinal: ord, Content: content, CreatedBy: createdBy}
