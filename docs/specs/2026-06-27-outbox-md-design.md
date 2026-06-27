@@ -566,7 +566,7 @@ As the corpus grows — many specs, versions, comments, decisions, and links —
 
 | # | Item | Notes |
 |---|---|---|
-| R1 | **Anchor stability** | Comment anchors and suggestion `affected_range` must survive edits to the underlying text. Direction: **section/heading-aware anchoring** (heading path + intra-section offset) over raw character offsets, plus re-anchoring on version change. *Prototype first — highest-risk item; also underpins overlap-based staleness (§11).* |
+| R1 | **Anchor stability** | Comment anchors and suggestion `affected_range` must survive the document being rewritten when an edit is accepted. **This is the v1-core hypothesis** — the walking skeleton (§18) exists to validate it *before* anything is stacked on top. Section/heading-aware anchoring (heading path + intra-section offset) is a **candidate to test, not a committed decision**; raw character offsets and fuzzy text anchors are alternatives. Underpins overlap-based staleness (§11). |
 | R2 | **Comment-vs-version semantics** | Behaviour when the document changes beneath an open comment (re-anchor vs. mark against original version). |
 | R3 | **MCP transport for remote agents** | How an external/remote agent reaches a locally-running container (stdio vs. HTTP/SSE; exposure model). |
 | R4 | **Go MCP SDK maturity** | The official Go SDK is newer than the TypeScript one. Validate transport coverage, stability, and (for the roadmap) push-notification support; the MCP boundary is isolated enough to swap if needed. |
