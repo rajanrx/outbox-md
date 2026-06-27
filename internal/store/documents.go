@@ -1,6 +1,11 @@
 package store
 
-import "github.com/rajanrx/outbox-md/internal/domain"
+import (
+	"database/sql"
+	"errors"
+
+	"github.com/rajanrx/outbox-md/internal/domain"
+)
 
 func (s *Store) CreateDocument(path, content, createdBy string) (domain.Document, domain.Version, error) {
 	docID := domain.NewID()
@@ -35,6 +40,20 @@ func (s *Store) GetDocument(id string) (domain.Document, error) {
 		d.CurrentVersionID = *cur
 	}
 	return d, err
+}
+
+func (s *Store) GetDocumentByPath(path string) (domain.Document, bool, error) {
+	var d domain.Document
+	var cur *string
+	err := s.DB.QueryRow(`SELECT id, path, current_version_id FROM documents WHERE path=?`, path).
+		Scan(&d.ID, &d.Path, &cur)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Document{}, false, nil
+	}
+	if cur != nil {
+		d.CurrentVersionID = *cur
+	}
+	return d, err == nil, err
 }
 
 func (s *Store) ListDocuments() ([]domain.Document, error) {
