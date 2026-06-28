@@ -223,3 +223,29 @@ func TestProposeRejectsBadToken(t *testing.T) {
 		t.Fatal("expected error for invalid claim token")
 	}
 }
+
+func TestHumanReplyAndResolve(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _ string) error { return nil })
+	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
+	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
+
+	if _, err := svc.HumanReply(c.ID, "what about X?"); err != nil {
+		t.Fatal(err)
+	}
+	thread, _ := s.ListThread(c.ID)
+	if len(thread) != 1 || thread[0].Body != "what about X?" {
+		t.Fatalf("thread = %+v", thread)
+	}
+	if err := svc.Resolve(c.ID, "someone-else"); err == nil {
+		t.Fatal("expected non-owner resolve to fail")
+	}
+	if err := svc.Resolve(c.ID, "human"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.GetComment(c.ID)
+	if got.Status != domain.CommentResolved {
+		t.Fatalf("status = %s, want resolved", got.Status)
+	}
+}

@@ -78,6 +78,23 @@ func (s *Service) Reply(commentID, token, body, agent string) error {
 	return s.store.UpdateCommentStatus(commentID, domain.CommentReplied, c.ClaimToken)
 }
 
+func (s *Service) HumanReply(commentID, body string) (domain.ThreadMessage, error) {
+	return s.store.AddThreadMessage(domain.ThreadMessage{
+		CommentID: commentID, AuthorIdentity: "human", Body: body,
+	})
+}
+
+func (s *Service) Resolve(commentID, owner string) error {
+	c, err := s.store.GetComment(commentID)
+	if err != nil {
+		return err
+	}
+	if c.Owner != owner {
+		return errors.New("only the comment owner may resolve it")
+	}
+	return s.store.UpdateCommentStatus(commentID, domain.CommentResolved, "")
+}
+
 func (s *Service) Accept(commentID string) (domain.Version, error) {
 	c, err := s.store.GetComment(commentID)
 	if err != nil {
