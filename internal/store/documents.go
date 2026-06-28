@@ -171,3 +171,11 @@ func (s *Store) AddVersion(docID, content, createdBy string) (domain.Version, er
 	}
 	return domain.Version{ID: verID, DocID: docID, Ordinal: ord, Content: content, CreatedBy: createdBy}, nil
 }
+
+// SetDocumentApproval pins the approved baseline and sets the lifecycle status.
+// Pass the same approvedVersionID to keep the baseline (e.g. status -> amending).
+func (s *Store) SetDocumentApproval(docID, approvedVersionID string, status domain.DocumentStatus) error {
+	_, err := s.DB.Exec(`UPDATE documents SET approved_version_id=?, status=? WHERE id=?`,
+		approvedVersionID, status, docID)
+	return err
+}
