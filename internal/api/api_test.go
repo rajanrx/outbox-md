@@ -47,6 +47,61 @@ func TestDocAndCommentEndpoints(t *testing.T) {
 	}
 }
 
+func TestApproveEndpointPinsBaseline(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := service.New(s, func(_, _ string) error { return nil })
+	h := NewAPI(svc, s)
+	doc, _, _ := s.CreateDocument("a.md", "v1", "human")
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/docs/"+doc.ID+"/approve", strings.NewReader(`{"note":"ok"}`))
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("approve status = %d, body %s", rr.Code, rr.Body.String())
+	}
+	got, _ := s.GetDocument(doc.ID)
+	if got.Status != domain.DocApproved {
+		t.Errorf("status = %q, want approved", got.Status)
+	}
+
+	// Re-approve with nothing pending is a 400.
+	rr2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("POST", "/api/docs/"+doc.ID+"/reapprove", nil)
+	h.ServeHTTP(rr2, req2)
+	if rr2.Code != 400 {
+		t.Errorf("reapprove status = %d, want 400", rr2.Code)
+	}
+}
+
+func TestDocViewIncludesBaselineContent(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := service.New(s, func(_, _ string) error { return nil })
+	h := NewAPI(svc, s)
+	doc, _, _ := s.CreateDocument("a.md", "v1", "human")
+	rrA := httptest.NewRecorder()
+	h.ServeHTTP(rrA, httptest.NewRequest("POST", "/api/docs/"+doc.ID+"/approve", nil))
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("GET", "/api/docs/"+doc.ID, nil))
+	var view struct {
+		BaselineContent string `json:"baselineContent"`
+		Document        struct {
+			Status string `json:"status"`
+		} `json:"document"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	if view.BaselineContent != "v1" {
+		t.Errorf("baselineContent = %q, want v1", view.BaselineContent)
+	}
+	if view.Document.Status != "approved" {
+		t.Errorf("status = %q, want approved", view.Document.Status)
+	}
+}
+
 func TestDevClaimAndPropose(t *testing.T) {
 	t.Setenv("OUTBOX_DEV", "1")
 	s, _ := store.Open(":memory:")

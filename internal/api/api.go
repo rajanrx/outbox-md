@@ -34,9 +34,40 @@ func NewAPI(svc *service.Service, st *store.Store) http.Handler {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		baseline := ""
+		if doc.ApprovedVersionID != "" {
+			if bv, err := st.GetVersion(doc.ApprovedVersionID); err == nil {
+				baseline = bv.Content
+			}
+		}
 		writeJSON(w, map[string]any{
-			"document": doc, "content": ver.Content, "comments": comments,
+			"document": doc, "content": ver.Content, "comments": comments, "baselineContent": baseline,
 		}, nil)
+	})
+
+	mux.HandleFunc("POST /api/docs/{id}/approve", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Note string `json:"note"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&in) // body/note optional
+		a, err := svc.Approve(r.PathValue("id"), in.Note)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, a, nil)
+	})
+	mux.HandleFunc("POST /api/docs/{id}/reapprove", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Note string `json:"note"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		a, err := svc.Reapprove(r.PathValue("id"), in.Note)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, a, nil)
 	})
 
 	mux.HandleFunc("POST /api/docs/{id}/comments", func(w http.ResponseWriter, r *http.Request) {

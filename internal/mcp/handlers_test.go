@@ -33,3 +33,21 @@ func TestHandlersDriveTheLoop(t *testing.T) {
 		t.Fatalf("read_doc content = %v", rd["content"])
 	}
 }
+
+func TestReadDocExposesLifecycle(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := service.New(s, func(_, _ string) error { return nil })
+	h := &Handlers{Svc: svc, St: s}
+	doc, _, _ := s.CreateDocument("a.md", "v1", "human")
+	_ = s.SetDocumentApproval(doc.ID, doc.CurrentVersionID, domain.DocApproved)
+
+	out, err := h.ReadDoc(doc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := out["document"].(domain.Document)
+	if d.Status != domain.DocApproved || d.ApprovedVersionID != doc.CurrentVersionID {
+		t.Errorf("read_doc document = %+v, want approved baseline", d)
+	}
+}
