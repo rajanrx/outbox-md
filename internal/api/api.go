@@ -96,6 +96,39 @@ func NewAPI(svc *service.Service, st *store.Store) http.Handler {
 		})
 	}
 
+	mux.HandleFunc("GET /api/comments/{id}/thread", func(w http.ResponseWriter, r *http.Request) {
+		msgs, err := st.ListThread(r.PathValue("id"))
+		writeJSON(w, msgs, err)
+	})
+	mux.HandleFunc("POST /api/comments/{id}/reply", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Body string `json:"body"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		m, err := svc.HumanReply(r.PathValue("id"), in.Body)
+		writeJSON(w, m, err)
+	})
+	mux.HandleFunc("POST /api/comments/{id}/resolve", func(w http.ResponseWriter, r *http.Request) {
+		// Caller identity is server-set (the single local human); it is never
+		// taken from the request body, so it cannot be spoofed.
+		if err := svc.Resolve(r.PathValue("id")); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true}, nil)
+	})
+
+	mux.HandleFunc("POST /api/comments/{id}/reject", func(w http.ResponseWriter, r *http.Request) {
+		if err := svc.RejectSuggestion(r.PathValue("id")); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true}, nil)
+	})
+
 	return mux
 }
 

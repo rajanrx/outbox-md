@@ -223,3 +223,49 @@ func TestProposeRejectsBadToken(t *testing.T) {
 		t.Fatal("expected error for invalid claim token")
 	}
 }
+
+func TestHumanReplyAndResolve(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _ string) error { return nil })
+	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
+	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
+
+	if _, err := svc.HumanReply(c.ID, "what about X?"); err != nil {
+		t.Fatal(err)
+	}
+	thread, _ := s.ListThread(c.ID)
+	if len(thread) != 1 || thread[0].Body != "what about X?" {
+		t.Fatalf("thread = %+v", thread)
+	}
+	// The local human may not resolve a comment owned by an agent.
+	agentC, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 6, End: 11}, "agent")
+	if err := svc.Resolve(agentC.ID); err == nil {
+		t.Fatal("expected resolve of an agent-owned comment to fail")
+	}
+	// The local human resolves their own comment (identity is server-set).
+	if err := svc.Resolve(c.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.GetComment(c.ID)
+	if got.Status != domain.CommentResolved {
+		t.Fatalf("status = %s, want resolved", got.Status)
+	}
+}
+
+func TestRejectSuggestionReopens(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _ string) error { return nil })
+	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
+	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
+	tok, _ := svc.Claim([]string{c.ID}, "agent")
+	_, _ = svc.Propose(c.ID, tok, "Howdy world", "agent")
+	if err := svc.RejectSuggestion(c.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.GetComment(c.ID)
+	if got.Status != domain.CommentOpen {
+		t.Fatalf("status = %s, want open", got.Status)
+	}
+}

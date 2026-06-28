@@ -1,0 +1,14 @@
+# air config — rebuilds & restarts the Go backend on save (used by docker-compose.dev.yml).
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  cmd = "go build -o ./tmp/outbox-md ./cmd/outbox-md"
+  bin = "./tmp/outbox-md"
+  include_ext = ["go"]
+  exclude_dir = ["tmp", "web", "docs", ".git", ".outbox", ".superpowers"]
+  delay = 500
+  stop_on_error = true
+
+[misc]
+  clean_on_exit = true

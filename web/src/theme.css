@@ -1,0 +1,135 @@
+/* ── outbox-md · light theme ────────────────────────────────────────
+   Clean white reading surface in light chrome. Keep it simple & readable.
+   Fraunces (display) · Hanken Grotesk (UI) · JetBrains Mono (code). */
+
+:root {
+  --paper:        #ffffff;
+  --paper-2:      #f5f4f1;
+  --ink:          #1d1c1a;
+  --ink-soft:     #5f5b53;
+  --line:         #e7e4dc;
+
+  /* "chrome" = the app frame around the reader (now light) */
+  --chrome:       #fbfaf8;
+  --chrome-2:     #ffffff;
+  --chrome-3:     #efece6;
+  --chrome-line:  #e7e4dc;
+  --chrome-ink:   #26241f;
+  --chrome-soft:  #8a847a;
+
+  --accent:       #c47d12;
+  --accent-ink:   #ffffff;
+  --accent-soft:  rgba(196,125,18,0.12);
+  --agent:        #2b8c7f;
+
+  /* comment highlighter — a translucent yellow marker on white */
+  --mark:         rgba(255,206,84,0.46);
+  --mark-active:  rgba(255,184,28,0.72);
+
+  --radius:       10px;
+  --font-display: "Fraunces Variable", Georgia, serif;
+  --font-ui:      "Hanken Grotesk Variable", system-ui, sans-serif;
+  --font-mono:    "JetBrains Mono Variable", ui-monospace, monospace;
+  --ease:         cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  font-family: var(--font-ui);
+  background: var(--paper);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+button { font-family: inherit; cursor: pointer; }
+
+/* ── shell ── */
+.app-shell { display: flex; flex-direction: column; height: 100vh; }
+.workbench { flex: 1; display: flex; min-height: 0; }
+
+/* ── top bar ── */
+.topbar {
+  height: 50px; flex: none; display: flex; align-items: center; gap: 16px;
+  padding: 0 14px; background: var(--chrome);
+  border-bottom: 1px solid var(--chrome-line); user-select: none;
+}
+.brand { display: flex; align-items: center; gap: 9px; font-weight: 600; letter-spacing: .2px; color: var(--ink); }
+.brand .dot {
+  width: 11px; height: 11px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #f3c66e, var(--accent));
+}
+.brand b { font-weight: 650; }
+.brand span { color: var(--chrome-soft); font-weight: 450; }
+.crumbs { display: flex; align-items: center; gap: 7px; color: var(--chrome-soft); font-size: 13px; min-width: 0; }
+.crumbs .sep { opacity: .5; }
+.crumbs .leaf { color: var(--ink); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topbar .spacer { flex: 1; }
+.icon-btn {
+  width: 32px; height: 28px; display: grid; place-items: center; border-radius: 7px;
+  background: transparent; border: 1px solid transparent; color: var(--chrome-soft);
+  transition: background .15s, color .15s, border-color .15s;
+}
+.icon-btn:hover { background: var(--chrome-3); color: var(--ink); }
+.icon-btn.on { color: var(--accent); border-color: var(--chrome-line); background: var(--chrome-2); }
+.icon-btn svg { width: 16px; height: 16px; }
+
+/* ── side panels (collapsible) ── */
+.tree-panel, .comments-panel {
+  flex: none; background: var(--chrome); overflow: hidden;
+  transition: width .24s var(--ease), opacity .2s var(--ease);
+}
+.tree-panel { width: 270px; border-right: 1px solid var(--chrome-line); }
+.comments-panel { width: 420px; border-left: 1px solid var(--chrome-line); position: relative; }
+.tree-panel.collapsed, .comments-panel.collapsed { width: 0 !important; opacity: 0; }
+
+/* drag-to-resize handle on the comments panel's left edge */
+.resize-handle {
+  position: absolute; left: -3px; top: 0; width: 7px; height: 100%; z-index: 5;
+  cursor: col-resize; background: transparent; transition: background .15s;
+}
+.resize-handle:hover, .resize-handle:active { background: var(--accent); opacity: .5; }
+.panel-head {
+  height: 38px; display: flex; align-items: center; gap: 8px; padding: 0 14px;
+  font-size: 11px; letter-spacing: 1.4px; text-transform: uppercase; color: var(--chrome-soft);
+}
+.panel-head .count {
+  margin-left: auto; font-size: 11px; letter-spacing: 0; color: var(--accent);
+  background: var(--accent-soft); padding: 1px 8px; border-radius: 20px;
+}
+.panel-body { height: calc(100% - 38px); overflow-y: auto; }
+
+/* ── file tree ── */
+.tree { padding: 4px 8px 24px; }
+.tree-row {
+  display: flex; align-items: center; gap: 7px; width: 100%; text-align: left;
+  border: 0; background: none; color: var(--chrome-ink); border-radius: 7px;
+  padding: 5px 8px; font-size: 13.5px; line-height: 1.2;
+  border-left: 2px solid transparent; transition: background .12s, color .12s;
+}
+.tree-row:hover { background: var(--chrome-3); }
+.tree-row.file.active { background: var(--accent-soft); border-left-color: var(--accent); color: var(--ink); font-weight: 550; }
+.tree-row .chev { width: 14px; color: var(--chrome-soft); transition: transform .15s var(--ease); flex: none; }
+.tree-row .chev.open { transform: rotate(90deg); }
+.tree-row .ic { width: 15px; height: 15px; flex: none; color: var(--chrome-soft); }
+.tree-row.file.active .ic { color: var(--accent); }
+.tree-row .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tree-children { overflow: hidden; }
+
+/* ── reader pane (the paper) ── */
+.reader-pane {
+  flex: 1; min-width: 0; overflow-y: auto; background: var(--paper);
+}
+.reader-empty { display: grid; place-items: center; height: 100%; color: var(--chrome-soft); font-size: 14px; }
+
+/* ── scrollbars ── */
+.panel-body::-webkit-scrollbar, .reader-pane::-webkit-scrollbar { width: 11px; height: 11px; }
+.panel-body::-webkit-scrollbar-thumb { background: #d8d3c8; border: 3px solid var(--chrome); border-radius: 8px; }
+.reader-pane::-webkit-scrollbar-thumb { background: #ddd7ca; border: 3px solid var(--paper); border-radius: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* comment highlights — clickable marker on the prose */
+::highlight(comment) { background: var(--mark); border-radius: 2px; }
+::highlight(comment-active) { background: var(--mark-active); border-radius: 2px; }
+
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }

@@ -1,0 +1,118 @@
+/* Comments rail. */
+.margin { padding: 14px 12px 36px; }
+
+/* comment navigator — position + prev/next */
+.margin-nav {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  margin-bottom: 14px; padding: 6px;
+  background: var(--chrome-2); border: 1px solid var(--chrome-line); border-radius: 9px;
+}
+.margin-nav button {
+  width: 28px; height: 28px; border: 1px solid var(--chrome-line); border-radius: 7px;
+  background: var(--chrome); color: var(--ink); font-size: 16px; line-height: 1;
+  display: grid; place-items: center; transition: background .12s, border-color .12s;
+}
+.margin-nav button:hover { background: var(--chrome-3); border-color: var(--accent); color: var(--accent); }
+.margin-nav .pos {
+  font-size: 12.5px; font-weight: 600; color: var(--ink-soft); min-width: 52px; text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* new-comment composer */
+.margin-new {
+  margin-bottom: 14px; padding: 10px; animation: rise .25s var(--ease) both;
+  background: var(--chrome-2); border: 1px solid rgba(196,125,18,.28); border-radius: var(--radius);
+  box-shadow: 0 4px 16px -14px rgba(196,125,18,.25);
+}
+.margin-new textarea {
+  width: 100%; min-height: 64px; resize: vertical; box-sizing: border-box;
+  background: var(--chrome); border: 1px solid var(--chrome-line); border-radius: 8px;
+  color: var(--ink); font: inherit; font-size: 13px; padding: 8px 10px; outline: none;
+}
+.margin-new textarea:focus { border-color: var(--accent); }
+.margin-new textarea::placeholder { color: var(--chrome-soft); }
+.margin-new-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.margin-new-actions button {
+  padding: 7px 14px; border-radius: 8px; font-weight: 650; font-size: 12.5px; border: 1px solid var(--chrome-line);
+}
+.margin-new-actions .ghost { background: var(--chrome); color: var(--ink-soft); }
+.margin-new-actions .ghost:hover { background: var(--chrome-3); }
+.margin-new-actions .primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+.margin-new-actions .primary:hover { filter: brightness(1.06); }
+
+.margin-empty {
+  margin-top: 6px; padding: 18px 14px; text-align: center; font-size: 12.5px; line-height: 1.5;
+  color: var(--chrome-soft);
+}
+
+/* ── comment card — clean, Jira-like ── */
+.card {
+  background: var(--chrome-2); border: 1px solid var(--chrome-line); border-radius: var(--radius);
+  padding: 10px 12px 12px; margin-bottom: 11px; color: var(--ink);
+  animation: rise .3s var(--ease) both; cursor: pointer;
+  transition: border-color .15s, box-shadow .15s;
+}
+.card.active { border-color: rgba(196,125,18,.22); box-shadow: 0 3px 14px -12px rgba(196,125,18,.25); }
+.card.pinned { border-left: 3px solid var(--accent); }
+
+.card-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.status-tag {
+  font-size: 11px; font-weight: 600; text-transform: capitalize; color: var(--chrome-soft);
+}
+.status-tag::before {
+  content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+  background: currentColor; margin-right: 6px; vertical-align: 1px;
+}
+.status-open { color: var(--accent); }
+.status-addressed { color: var(--accent); }
+.status-resolved { color: var(--agent); }
+.status-detached { color: #c9603f; }
+
+.card-tools { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+.ic-btn {
+  width: 24px; height: 24px; display: grid; place-items: center; border-radius: 6px;
+  background: transparent; border: 0; color: var(--chrome-soft);
+  transition: background .12s, color .12s;
+}
+.ic-btn:hover { background: var(--chrome-3); color: var(--accent); }
+.ic-btn.on { color: var(--accent); }
+.ic-btn svg { width: 15px; height: 15px; }
+
+/* thread posts: avatar + name + body, no boxes */
+.posts { display: flex; flex-direction: column; gap: 12px; }
+.post { display: flex; gap: 9px; align-items: flex-start; }
+.avatar {
+  flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 11px; font-weight: 700; color: #fff; background: var(--chrome-soft);
+}
+.avatar.who-human { background: var(--accent); }
+.avatar.who-agent { background: var(--agent); }
+.post-main { min-width: 0; flex: 1; }
+.post-author { font-size: 12.5px; font-weight: 650; text-transform: capitalize; color: var(--ink); line-height: 1.3; }
+.post-text { font-size: 13px; line-height: 1.55; color: var(--ink); white-space: pre-wrap; margin-top: 1px; }
+.post-empty { font-size: 12.5px; color: var(--chrome-soft); font-style: italic; }
+
+.review-btn {
+  width: 100%; margin: 10px 0 0; padding: 7px 10px; border-radius: 8px; font-size: 12.5px; font-weight: 600;
+  background: var(--accent-soft); color: var(--accent); border: 1px solid rgba(196,125,18,.3);
+  transition: background .15s;
+}
+.review-btn:hover { background: rgba(196,125,18,.18); }
+
+/* reply row: plain input + subtle text actions */
+.card-actions { display: flex; gap: 4px; margin-top: 12px; align-items: center; }
+.card-actions input {
+  flex: 1; min-width: 0; background: var(--chrome); border: 1px solid var(--chrome-line);
+  color: var(--ink); border-radius: 7px; padding: 7px 10px; font-size: 12.5px; outline: none;
+  transition: border-color .15s;
+}
+.card-actions input::placeholder { color: var(--chrome-soft); }
+.card-actions input:focus { border-color: var(--accent); }
+.link-btn {
+  flex: none; background: none; border: 0; padding: 6px 8px; border-radius: 6px;
+  font-size: 12.5px; font-weight: 600; color: var(--ink-soft); transition: background .12s, color .12s;
+}
+.link-btn:hover:not(:disabled) { background: var(--chrome-3); color: var(--ink); }
+.link-btn:disabled { opacity: .4; cursor: default; }
+.link-btn.resolve { color: var(--agent); }
+.link-btn.resolve:hover { background: rgba(43,140,127,.12); color: var(--agent); }

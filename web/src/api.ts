@@ -1,5 +1,4 @@
-import type { Anchor } from "./lib/selection";
-export type { Anchor };
+export type Anchor = { start: number; end: number };
 
 export type Comment = {
   id: string;
@@ -28,5 +27,24 @@ export async function getSuggestion(commentId: string): Promise<Suggestion | nul
   return r.ok ? r.json() : null;
 }
 export async function accept(commentId: string): Promise<unknown> {
-  return (await fetch(`/api/comments/${commentId}/accept`, { method: "POST" })).json();
+  const r = await fetch(`/api/comments/${commentId}/accept`, { method: "POST" });
+  return r.ok ? r.json().catch(() => null) : null;
+}
+
+export type ThreadMessage = { id: string; authorIdentity: string; body: string };
+
+export async function getThread(commentId: string): Promise<ThreadMessage[]> {
+  return (await fetch(`/api/comments/${commentId}/thread`)).json();
+}
+export async function reply(commentId: string, body: string): Promise<unknown> {
+  const r = await fetch(`/api/comments/${commentId}/reply`, { method: "POST", body: JSON.stringify({ body }) });
+  return r.ok ? r.json().catch(() => null) : null;
+}
+export async function resolve(commentId: string): Promise<unknown> {
+  const r = await fetch(`/api/comments/${commentId}/resolve`, { method: "POST" });
+  return r.ok ? r.json().catch(() => null) : null;
+}
+export async function rejectSuggestion(commentId: string): Promise<unknown> {
+  const r = await fetch(`/api/comments/${commentId}/reject`, { method: "POST" });
+  return r.ok ? r.json().catch(() => null) : null;
 }

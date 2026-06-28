@@ -78,6 +78,44 @@ func (s *Service) Reply(commentID, token, body, agent string) error {
 	return s.store.UpdateCommentStatus(commentID, domain.CommentReplied, c.ClaimToken)
 }
 
+func (s *Service) HumanReply(commentID, body string) (domain.ThreadMessage, error) {
+	return s.store.AddThreadMessage(domain.ThreadMessage{
+		CommentID: commentID, AuthorIdentity: "human", Body: body,
+	})
+}
+
+// LocalHuman is the identity of the single local reviewer. This local-first
+// app has no authentication, so the caller's identity is server-set rather than
+// taken from the request. When auth is added, this becomes the identity derived
+// from the request's verified auth context.
+const LocalHuman = "human"
+
+// Resolve closes a comment owned by the local human. The caller identity is NOT
+// accepted from the request (which would be spoofable) — it is fixed to the
+// single local reviewer here.
+func (s *Service) Resolve(commentID string) error {
+	c, err := s.store.GetComment(commentID)
+	if err != nil {
+		return err
+	}
+	if c.Owner != LocalHuman {
+		return errors.New("only the comment owner may resolve it")
+	}
+	return s.store.UpdateCommentStatus(commentID, domain.CommentResolved, "")
+}
+
+func (s *Service) RejectSuggestion(commentID string) error {
+	sg, ok, err := s.store.GetSuggestionByComment(commentID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New("no suggestion to reject")
+	}
+	_ = s.store.UpdateSuggestionState(sg.ID, domain.SuggestionRejected)
+	return s.store.UpdateCommentStatus(commentID, domain.CommentOpen, "")
+}
+
 func (s *Service) Accept(commentID string) (domain.Version, error) {
 	c, err := s.store.GetComment(commentID)
 	if err != nil {

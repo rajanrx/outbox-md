@@ -95,3 +95,22 @@ func (s *Store) AddThreadMessage(m domain.ThreadMessage) (domain.ThreadMessage, 
 		m.ID, m.CommentID, m.AuthorIdentity, m.Body)
 	return m, err
 }
+
+func (s *Store) ListThread(commentID string) ([]domain.ThreadMessage, error) {
+	rows, err := s.DB.Query(
+		`SELECT id, comment_id, author_identity, body FROM thread_messages
+		 WHERE comment_id=? ORDER BY created_at`, commentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []domain.ThreadMessage{}
+	for rows.Next() {
+		var m domain.ThreadMessage
+		if err := rows.Scan(&m.ID, &m.CommentID, &m.AuthorIdentity, &m.Body); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
