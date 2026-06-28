@@ -1,0 +1,52 @@
+{
+  "title": "Using outbox-md",
+  "gif": false,
+  "slides": [
+    { "id": 0, "kind": "title", "title": "Using outbox-md", "subtitle": "From zero to your first AI-applied edit" },
+    { "id": 1, "kind": "bullets", "title": "1 · Run it", "bullets": [
+      "docker run -p 8080:8080 -e OUTBOX_DEV=1 \\",
+      "    -v $PWD/specs:/data outbox-md:dev",
+      "Open http://localhost:8080",
+      "Every .md in the folder becomes a document"
+    ] },
+    { "id": 2, "kind": "bullets", "title": "2 · Comment", "bullets": [
+      "Open a document and highlight any text",
+      "Click \"Comment on selection\"",
+      "It appears in the Outbox panel",
+      "The file itself is untouched — it just waits in the queue"
+    ] },
+    { "id": 3, "kind": "bullets", "title": "3 · Connect an agent", "bullets": [
+      "Point any MCP client at http://localhost:8080/mcp",
+      "Tools: list_open_comments, claim_comment,",
+      "    propose_suggestion, reply_in_thread",
+      "Any agent works — no keys stored by the app"
+    ] },
+    { "id": 4, "kind": "diagram", "title": "The flow", "nodes": ["Comment", "Claim", "Propose", "Accept"], "caption": "you  →  agent  →  you" },
+    { "id": 5, "kind": "bullets", "title": "4 · Accept", "bullets": [
+      "Review the proposed change",
+      "Click Accept",
+      "The .md file is rewritten and versioned",
+      "Other comments re-anchor to follow their text"
+    ] },
+    { "id": 6, "kind": "bullets", "title": "That's the loop", "bullets": [
+      "Ordered, safe, fully auditable",
+      "Repeat to iterate a rough draft into a finished spec"
+    ] },
+    { "id": 7, "kind": "title", "title": "Build with us", "subtitle": "github.com/rajanrx/outbox-md" }
+  ],
+  "lines": [
+    { "speaker": "Andrew", "slide": 0, "text": "Alright Ava, show me how to actually use outbox-md." },
+    { "speaker": "Ava", "slide": 0, "text": "Sure. It's four steps: run it, comment, connect an agent, and accept. Let's go." },
+    { "speaker": "Ava", "slide": 1, "text": "First, run the container and point it at a folder of Markdown files, then open localhost port eight thousand eighty in your browser. Every Markdown file in that folder becomes a document you can review." },
+    { "speaker": "Andrew", "slide": 1, "text": "So it just reads my existing specs folder — nothing to upload." },
+    { "speaker": "Ava", "slide": 2, "text": "Right. Now open a document, highlight any text, and click Comment on selection. Your comment shows up in the Outbox panel, and the file itself stays untouched — the comment just waits in the queue." },
+    { "speaker": "Andrew", "slide": 3, "text": "And the AI — how does it pick up the work?" },
+    { "speaker": "Ava", "slide": 3, "text": "You point any MCP client at localhost slash m-c-p. It can list the open comments, claim one, and propose an edit. The app stores no keys — you bring your own agent." },
+    { "speaker": "Ava", "slide": 4, "text": "So the flow is simple: you comment, the agent claims and proposes, and you decide." },
+    { "speaker": "Ava", "slide": 5, "text": "When you're happy, click Accept. The Markdown file is rewritten and versioned, and every other comment re-anchors to follow its text." },
+    { "speaker": "Andrew", "slide": 5, "text": "So the file on disk is always the latest approved version." },
+    { "speaker": "Ava", "slide": 6, "text": "Always — ordered, safe, and fully auditable. Repeat that loop to turn a rough AI draft into a finished spec." },
+    { "speaker": "Andrew", "slide": 7, "text": "Great. And it's open for contributions?" },
+    { "speaker": "Ava", "slide": 7, "text": "It is. Come build with us — the link's right below." }
+  ]
+}
