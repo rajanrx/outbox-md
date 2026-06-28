@@ -7,11 +7,21 @@ export type Comment = {
   authorIdentity: string;
 };
 export type DocView = {
-  document: { id: string; path: string };
+  document: { id: string; path: string; status: "draft" | "approved" | "amending"; approvedVersionId: string };
   content: string;
   comments: Comment[];
+  baselineContent: string;
 };
 export type Suggestion = { id: string; proposedContent: string; state: string };
+
+export async function approve(id: string, note = ""): Promise<unknown> {
+  const r = await fetch(`/api/docs/${id}/approve`, { method: "POST", body: JSON.stringify({ note }) });
+  return r.ok ? r.json() : null;
+}
+export async function reapprove(id: string, note = ""): Promise<unknown> {
+  const r = await fetch(`/api/docs/${id}/reapprove`, { method: "POST", body: JSON.stringify({ note }) });
+  return r.ok ? r.json() : null;
+}
 
 export async function listDocs(): Promise<{ id: string; path: string }[]> {
   return (await fetch("/api/docs")).json();
