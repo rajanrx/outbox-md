@@ -22,3 +22,8 @@ docs/media/out/**/*.mp3
 
 # Video scripts (kept locally, not committed)
 docs/media/*.script.json
+
+# Video tooling & docs kept local — repo carries only the finished multimedia
+*.py
+docs/media/bgm/
+docs/specs/2026-06-28-intro-videos-design.md
