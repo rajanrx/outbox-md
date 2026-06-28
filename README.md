@@ -50,7 +50,7 @@ The 2-minute **intro** is at the top. Two more, for going deeper:
 </table>
 </div>
 
-The videos are a podcast-style Q&A between **Andrew** and **Ava**, rendered from committed scripts and slides:
+The videos are a podcast-style Q&A between **Andrew** and **Ava**, produced by `scripts/build_video.py` from per-video script files:
 
 ```bash
 python3 scripts/build_video.py docs/media/explainer.script.json docs/media/out/explainer
@@ -58,7 +58,7 @@ python3 scripts/build_video.py docs/media/tutorial.script.json  docs/media/out/t
 python3 scripts/build_video.py docs/media/deepdive.script.json  docs/media/out/deepdive
 ```
 
-Narration uses [edge-tts](https://github.com/rany2/edge-tts) (Andrew/Ava neural voices, no API key); slides are rendered with Pillow; assembly is ffmpeg. Background music is *"Coffee & Streets"* by [Aylex](https://aylex.net) (no-copyright), mixed at 16% — see [`docs/media/bgm/CREDITS.md`](docs/media/bgm/CREDITS.md). Edit the `*.script.json` files and re-run to update. The videos are hosted on YouTube; the scripts, slides, thumbnails, and final renders (`docs/media/out/<name>/<name>.mp4`) are committed, while the per-video `work/` intermediates are gitignored.
+Narration uses [edge-tts](https://github.com/rany2/edge-tts) (Andrew/Ava neural voices, no API key); slides are rendered with Pillow; assembly is ffmpeg. Background music is *"Coffee & Streets"* by [Aylex](https://aylex.net) (no-copyright), mixed at 16% — see [`docs/media/bgm/CREDITS.md`](docs/media/bgm/CREDITS.md). Edit the `*.script.json` files and re-run to update. The videos are hosted on YouTube; the renderer, thumbnails, and final renders (`docs/media/out/<name>/<name>.mp4`) are committed, while the per-video script JSONs and `work/` intermediates are gitignored (kept locally).
 
 ## Design
 

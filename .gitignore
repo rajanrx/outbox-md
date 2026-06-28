@@ -19,3 +19,6 @@ __pycache__/
 # Background music track (free-to-use; fetched via docs/media/bgm/CREDITS.md, not redistributed here)
 docs/media/bgm/*.mp3
 docs/media/out/**/*.mp3
+
+# Video scripts (kept locally, not committed)
+docs/media/*.script.json
