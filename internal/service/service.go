@@ -104,6 +104,18 @@ func (s *Service) Resolve(commentID string) error {
 	return s.store.UpdateCommentStatus(commentID, domain.CommentResolved, "")
 }
 
+func (s *Service) RejectSuggestion(commentID string) error {
+	sg, ok, err := s.store.GetSuggestionByComment(commentID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New("no suggestion to reject")
+	}
+	_ = s.store.UpdateSuggestionState(sg.ID, domain.SuggestionRejected)
+	return s.store.UpdateCommentStatus(commentID, domain.CommentOpen, "")
+}
+
 func (s *Service) Accept(commentID string) (domain.Version, error) {
 	c, err := s.store.GetComment(commentID)
 	if err != nil {

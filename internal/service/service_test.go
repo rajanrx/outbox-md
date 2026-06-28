@@ -252,3 +252,20 @@ func TestHumanReplyAndResolve(t *testing.T) {
 		t.Fatalf("status = %s, want resolved", got.Status)
 	}
 }
+
+func TestRejectSuggestionReopens(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _ string) error { return nil })
+	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
+	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
+	tok, _ := svc.Claim([]string{c.ID}, "agent")
+	_, _ = svc.Propose(c.ID, tok, "Howdy world", "agent")
+	if err := svc.RejectSuggestion(c.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.GetComment(c.ID)
+	if got.Status != domain.CommentOpen {
+		t.Fatalf("status = %s, want open", got.Status)
+	}
+}

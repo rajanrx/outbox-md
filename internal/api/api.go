@@ -121,6 +121,14 @@ func NewAPI(svc *service.Service, st *store.Store) http.Handler {
 		writeJSON(w, map[string]any{"ok": true}, nil)
 	})
 
+	mux.HandleFunc("POST /api/comments/{id}/reject", func(w http.ResponseWriter, r *http.Request) {
+		if err := svc.RejectSuggestion(r.PathValue("id")); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true}, nil)
+	})
+
 	return mux
 }
 
