@@ -32,7 +32,7 @@ func (s *Store) ListComments(docID string) ([]domain.Comment, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []domain.Comment
+	out := []domain.Comment{}
 	for rows.Next() {
 		c, err := scanComment(rows.Scan)
 		if err != nil {
@@ -49,7 +49,7 @@ func (s *Store) ListOpenComments() ([]domain.Comment, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []domain.Comment
+	out := []domain.Comment{}
 	for rows.Next() {
 		c, err := scanComment(rows.Scan)
 		if err != nil {

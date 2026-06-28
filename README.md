@@ -23,14 +23,17 @@ Read and inline-annotate AI-generated Markdown. Your comments never edit the doc
 ## Quickstart (walking skeleton)
 
 ```bash
-# put the .md files you want to review in ./specs (or point OUTBOX_DIR anywhere)
-mkdir -p specs && printf "# Spec\n\nHello world\n" > specs/spec.md
-
 OUTBOX_DEV=1 docker compose up -d --build
-# open http://localhost:8181
+# open http://localhost:8181  — shows this repo's own specs by default
 ```
 
-`/data` must be a **folder** of `.md` files (not a single file). Review any folder by setting `OUTBOX_DIR` — e.g. to dogfood this repo's own specs: `OUTBOX_DIR=docs/specs OUTBOX_DEV=1 docker compose up -d --build`.
+To review **your own** folder of `.md` files, point `OUTBOX_DIR` at it:
+
+```bash
+OUTBOX_DIR=path/to/your/specs OUTBOX_DEV=1 docker compose up -d --build
+```
+
+`/data` must be a **folder** of `.md` files, not a single file.
 
 <details><summary>Without compose (<code>docker run</code>)</summary>
 

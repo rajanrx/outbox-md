@@ -62,7 +62,7 @@ func (s *Store) ListDocuments() ([]domain.Document, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []domain.Document
+	out := []domain.Document{}
 	for rows.Next() {
 		var d domain.Document
 		if err := rows.Scan(&d.ID, &d.Path, &d.CurrentVersionID); err != nil {
