@@ -314,7 +314,7 @@ def main():
     narration = os.path.join(work, "narration.mp4")
     run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", listfile, "-c", "copy", narration])
 
-    final = os.path.join(out_dir, "final.mp4")
+    final = os.path.join(out_dir, os.path.basename(os.path.normpath(out_dir)) + ".mp4")
     bgm = script.get("bgm")
     if bgm and os.path.exists(bgm):
         vol = script.get("bgm_volume", 0.16)

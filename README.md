@@ -2,12 +2,13 @@
 
 > Local-first, agent-agnostic review for AI-generated Markdown specs.
 
-<!-- Replace the YouTube links below with the uploaded video URLs. -->
 <div align="center">
 
-[![What is outbox-md? — watch the explainer](docs/media/hero.gif)](https://youtu.be/REPLACE_WITH_EXPLAINER_VIDEO_ID)
+<a href="https://www.youtube.com/watch?v=CNT49m0xBOY">
+  <img src="docs/media/explainer-thumb.png" alt="Watch: What is outbox-md?" width="100%">
+</a>
 
-**▶ [What is outbox-md?](https://youtu.be/REPLACE_WITH_EXPLAINER_VIDEO_ID)** &nbsp;·&nbsp; **▶ [Using outbox-md (tutorial)](https://youtu.be/REPLACE_WITH_TUTORIAL_VIDEO_ID)**
+<em>▶ <b><a href="https://www.youtube.com/watch?v=CNT49m0xBOY">What is outbox-md?</a></b> — the 2-minute intro</em>
 
 </div>
 
@@ -32,10 +33,22 @@ Agents connect over MCP at `http://localhost:8080/mcp` (Streamable HTTP). With `
 
 ## Watch & learn
 
-| Explainer — *"What is outbox-md?"* | Tutorial — *"Using outbox-md"* | Deep dive — *"Architecture & vision"* |
-|:---:|:---:|:---:|
-| [![Explainer](docs/media/explainer-thumb.png)](https://youtu.be/REPLACE_WITH_EXPLAINER_VIDEO_ID) | [![Tutorial](docs/media/tutorial-thumb.png)](https://youtu.be/REPLACE_WITH_TUTORIAL_VIDEO_ID) | [![Deep dive](docs/media/deepdive-thumb.png)](https://youtu.be/REPLACE_WITH_DEEPDIVE_VIDEO_ID) |
-| The problem, the outbox model, and how to contribute | Run it → comment → connect an agent → accept | Architecture, the hard parts, and where it's headed (for builders) |
+The 2-minute **intro** is at the top. Two more, for going deeper:
+
+<div align="center">
+<table>
+<tr>
+<td width="50%" valign="top">
+  <a href="https://www.youtube.com/watch?v=0RwuXV6jmKY"><img src="docs/media/tutorial-thumb.png" alt="Tutorial" width="100%"></a>
+  <p align="center"><b>▶ <a href="https://www.youtube.com/watch?v=0RwuXV6jmKY">Using outbox-md</a></b><br/>Run it → comment → connect an agent → accept</p>
+</td>
+<td width="50%" valign="top">
+  <a href="https://www.youtube.com/watch?v=VmuwLniMU9M"><img src="docs/media/deepdive-thumb.png" alt="Deep dive" width="100%"></a>
+  <p align="center"><b>▶ <a href="https://www.youtube.com/watch?v=VmuwLniMU9M">Architecture &amp; Vision</a></b><br/>The hard parts and where it's headed — for builders</p>
+</td>
+</tr>
+</table>
+</div>
 
 The videos are a podcast-style Q&A between **Andrew** and **Ava**, rendered from committed scripts and slides:
 
@@ -45,7 +58,7 @@ python3 scripts/build_video.py docs/media/tutorial.script.json  docs/media/out/t
 python3 scripts/build_video.py docs/media/deepdive.script.json  docs/media/out/deepdive
 ```
 
-Narration uses [edge-tts](https://github.com/rany2/edge-tts) (Andrew/Ava neural voices, no API key); slides are rendered with Pillow; assembly is ffmpeg. Background music is *"Coffee & Streets"* by [Aylex](https://aylex.net) (no-copyright), mixed at 16% — see [`docs/media/bgm/CREDITS.md`](docs/media/bgm/CREDITS.md). Edit the `*.script.json` files and re-run to update. The MP4s live on YouTube; only the scripts, slides, thumbnails, and hero GIF are committed.
+Narration uses [edge-tts](https://github.com/rany2/edge-tts) (Andrew/Ava neural voices, no API key); slides are rendered with Pillow; assembly is ffmpeg. Background music is *"Coffee & Streets"* by [Aylex](https://aylex.net) (no-copyright), mixed at 16% — see [`docs/media/bgm/CREDITS.md`](docs/media/bgm/CREDITS.md). Edit the `*.script.json` files and re-run to update. The videos are hosted on YouTube; the scripts, slides, thumbnails, and final renders (`docs/media/out/<name>/<name>.mp4`) are committed, while the per-video `work/` intermediates are gitignored.
 
 ## Design
 
