@@ -1,20 +1,26 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getThread, reply, resolve, type Comment, type ThreadMessage } from "../api";
 import { DiffPanel } from "../suggestion/DiffPanel";
 
-export function Card({ comment, currentContent, onChange }: {
+export function Card({ comment, currentContent, active = false, onActivate, onChange }: {
   comment: Comment;
   currentContent: string;
+  active?: boolean;
+  onActivate?: () => void;
   onChange: () => void;
 }) {
   const [thread, setThread] = useState<ThreadMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [showDiff, setShowDiff] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
   const load = () => getThread(comment.id).then((t) => setThread(t ?? []));
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [comment.id]);
+  useEffect(() => {
+    if (active) ref.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [active]);
 
   return (
-    <div className="card" data-comment={comment.id}>
+    <div ref={ref} className={"card" + (active ? " active" : "")} data-comment={comment.id} onClick={onActivate}>
       <div className="card-head">
         <span className={`who who-${comment.authorIdentity}`}>{comment.authorIdentity}</span>
         <span className={`status status-${comment.status}`}>{comment.status}</span>

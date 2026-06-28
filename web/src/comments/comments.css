@@ -15,7 +15,12 @@
 .card {
   background: var(--chrome-2); border: 1px solid var(--chrome-line); border-radius: var(--radius);
   padding: 12px 13px; margin-bottom: 11px; font-size: 13px; color: var(--chrome-ink);
-  animation: rise .3s var(--ease) both;
+  animation: rise .3s var(--ease) both; cursor: pointer;
+  transition: border-color .15s, box-shadow .15s;
+}
+.card.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), 0 10px 26px -16px rgba(196,125,18,.55);
 }
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 9px; }
 .who {
@@ -31,7 +36,7 @@
 .status-resolved { color: var(--agent); border-color: rgba(70,181,166,.4); }
 .status-detached { color: #d4806a; border-color: rgba(212,128,106,.4); }
 
-.msg { font-size: 12.5px; line-height: 1.5; margin: 5px 0; color: #d7d2c8; }
+.msg { font-size: 12.5px; line-height: 1.5; margin: 5px 0; color: var(--ink); }
 .msg b { font-weight: 650; }
 .who-human { } /* used inline on msg author too */
 
@@ -54,7 +59,7 @@
   border-radius: 7px; padding: 6px 11px; font-size: 12.5px; font-weight: 600; border: 1px solid var(--chrome-line);
   background: var(--chrome-3); color: var(--chrome-ink); transition: background .15s, opacity .15s;
 }
-.card-actions button:hover:not(:disabled) { background: #34323d; }
+.card-actions button:hover:not(:disabled) { background: var(--chrome-3); }
 .card-actions button:disabled { opacity: .4; cursor: default; }
 .card-actions .btn-primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
 .card-actions .btn-primary:hover:not(:disabled) { filter: brightness(1.06); background: var(--accent); }

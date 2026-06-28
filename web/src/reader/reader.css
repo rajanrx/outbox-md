@@ -1,8 +1,8 @@
 /* Reading surface — editorial, on warm paper. */
 .reader {
-  max-width: 860px;
+  max-width: 980px;
   margin: 0 auto;
-  padding: 64px 72px 140px;
+  padding: 56px 64px 140px;
   color: var(--ink);
   font-family: var(--font-ui);
   font-size: 16.5px;
@@ -64,7 +64,9 @@
 .reader ::selection { background: rgba(227,166,63,.30); }
 
 .mermaid-block {
-  margin: 1.8em 0; padding: 22px; background: #fff; border: 1px solid var(--line);
-  border-radius: 14px; overflow: auto; box-shadow: 0 18px 40px -28px rgba(20,15,5,.35);
+  margin: 1.8em 0; padding: 26px; background: #fff; border: 1px solid var(--line);
+  border-radius: 14px; overflow: auto; box-shadow: 0 18px 40px -28px rgba(20,15,5,.18);
 }
-.mermaid-block svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+/* fill the reader width so diagrams render large and legible */
+.mermaid-block svg { display: block; margin: 0 auto; width: 100%; height: auto; max-width: 760px; }
+.mermaid-block.wide svg { max-width: 100%; }
