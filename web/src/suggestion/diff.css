@@ -1,5 +1,44 @@
-.diff-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; z-index: 50; }
-.diff-panel { background: #fff; border-radius: 10px; padding: 18px; width: min(820px, 92vw); max-height: 86vh; overflow: auto; }
-.diff { white-space: pre-wrap; background: #f6f8fa; padding: 12px; border-radius: 8px; font-family: ui-monospace, monospace; font-size: 13px; }
-.diff .ins { background: #aceebb; } .diff .del { background: #ffcecb; text-decoration: line-through; }
-.diff-actions { display: flex; gap: 8px; margin-top: 12px; }
+/* inline, GitHub-style "suggested change" block within a comment thread */
+.suggestion {
+  margin: 10px 0 2px; border: 1px solid var(--chrome-line); border-radius: 8px;
+  overflow: hidden; background: var(--chrome-2); cursor: default;
+}
+.suggestion-head {
+  padding: 6px 10px; font-size: 11px; font-weight: 650; letter-spacing: .3px;
+  text-transform: uppercase; color: var(--chrome-soft);
+  background: var(--chrome); border-bottom: 1px solid var(--chrome-line);
+}
+
+.diff {
+  max-height: 280px; overflow: auto;
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.5; padding: 4px 0;
+}
+.drow { display: flex; padding: 0 8px; white-space: pre-wrap; word-break: break-word; }
+.drow .sign { flex: none; width: 13px; color: var(--chrome-soft); user-select: none; }
+.drow .text { flex: 1; }
+.drow.eq { color: var(--ink-soft); }
+.drow.ins { background: #e3f7e8; }
+.drow.ins .sign, .drow.ins .text { color: #1a7f37; }
+.drow.del { background: #ffe9e7; }
+.drow.del .sign, .drow.del .text { color: #b3261e; }
+.drow.gap {
+  justify-content: center; color: var(--chrome-soft); font-style: italic; font-size: 11px;
+  background: var(--chrome); padding: 2px 8px; user-select: none;
+}
+.diff-empty { padding: 14px; text-align: center; color: var(--chrome-soft); font-size: 12.5px; }
+
+.diff-actions { display: flex; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--chrome-line); }
+.diff-actions button {
+  padding: 5px 14px; border-radius: 7px; font-size: 12.5px; font-weight: 600;
+  border: 1px solid var(--chrome-line); background: var(--chrome); color: var(--ink);
+  transition: background .12s, filter .12s;
+}
+.diff-actions button:hover:not(:disabled) { background: var(--chrome-3); }
+.diff-actions button:disabled { opacity: .5; cursor: default; }
+.diff-actions .primary { background: var(--agent); color: #fff; border-color: transparent; }
+.diff-actions .primary:hover:not(:disabled) { filter: brightness(1.06); }
+
+.suggestion-state {
+  padding: 7px 10px; font-size: 12px; color: var(--chrome-soft); text-transform: capitalize;
+  border-top: 1px solid var(--chrome-line);
+}
