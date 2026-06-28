@@ -303,3 +303,57 @@ func TestReapproveRejectedWhenNothingPending(t *testing.T) {
 		t.Error("reapprove on approved doc with no pending changes should be rejected")
 	}
 }
+
+func TestAcceptOnApprovedDocAccumulatesAmendmentWithoutWritingDisk(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	var written string
+	writes := 0
+	svc := New(s, func(_, content string) error { written = content; writes++; return nil })
+
+	doc, _, _ := s.CreateDocument("a.md", "baseline", "human")
+	if _, err := svc.Approve(doc.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// A post-approval comment is flagged.
+	c, err := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 1}, "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.PostApproval {
+		t.Error("comment on approved doc should be flagged post_approval")
+	}
+
+	// Agent proposes a change; accepting it must NOT write disk or move the baseline.
+	tok, _ := svc.Claim([]string{c.ID}, "agent")
+	if _, err := svc.Propose(c.ID, tok, "amended baseline", "agent"); err != nil {
+		t.Fatal(err)
+	}
+	writesBefore := writes
+	if _, err := svc.Accept(c.ID); err != nil {
+		t.Fatal(err)
+	}
+	if writes != writesBefore {
+		t.Errorf("accept on approved doc wrote disk %d time(s); want 0", writes-writesBefore)
+	}
+	got, _ := s.GetDocument(doc.ID)
+	if got.Status != domain.DocAmending {
+		t.Errorf("status = %q, want amending", got.Status)
+	}
+	if got.ApprovedVersionID == got.CurrentVersionID {
+		t.Error("baseline should not have advanced on accept")
+	}
+
+	// Re-approve advances the baseline and writes the head to disk.
+	if _, err := svc.Reapprove(doc.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if written != "amended baseline" {
+		t.Errorf("on-disk after reapprove = %q, want amended baseline", written)
+	}
+	got, _ = s.GetDocument(doc.ID)
+	if got.Status != domain.DocApproved || got.ApprovedVersionID != got.CurrentVersionID {
+		t.Errorf("after reapprove doc = %+v, want approved at head", got)
+	}
+}

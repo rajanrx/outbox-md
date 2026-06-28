@@ -25,6 +25,7 @@ func (s *Service) PostComment(docID string, a domain.Anchor, author string) (dom
 	return s.store.CreateComment(domain.Comment{
 		DocID: docID, AgainstVersionID: doc.CurrentVersionID, Anchor: a,
 		AuthorIdentity: author, Owner: author, Status: domain.CommentOpen,
+		PostApproval: doc.Status == domain.DocApproved || doc.Status == domain.DocAmending,
 	})
 }
 
@@ -160,11 +161,19 @@ func (s *Service) Accept(commentID string) (domain.Version, error) {
 	// step failed, we compensate the on-disk file back to the current version.
 	// The invariant — the file on disk equals the current version's content —
 	// holds whether Accept succeeds or fails.
+	// draft writes the file directly; an approved/amending doc accumulates the
+	// new version ahead of the baseline and leaves the on-disk file untouched
+	// (the baseline) until re-approval.
+	governed := doc.Status == domain.DocApproved || doc.Status == domain.DocAmending
 	wrote := false
-	newVer, err := s.store.AddVersionTx(doc.ID, oldVer.ID, sg.ProposedContent, sg.CreatedBy, func(v domain.Version) error {
-		wrote = true
-		return s.writeFile(doc.Path, v.Content)
-	})
+	var writeFn func(domain.Version) error
+	if !governed {
+		writeFn = func(v domain.Version) error {
+			wrote = true
+			return s.writeFile(doc.Path, v.Content)
+		}
+	}
+	newVer, err := s.store.AddVersionTx(doc.ID, oldVer.ID, sg.ProposedContent, sg.CreatedBy, writeFn)
 	if err != nil {
 		if wrote {
 			_ = s.writeFile(doc.Path, oldVer.Content)
@@ -178,6 +187,10 @@ func (s *Service) Accept(commentID string) (domain.Version, error) {
 			_ = s.store.ReopenCommentIfNotResolved(commentID)
 		}
 		return domain.Version{}, err
+	}
+	if governed {
+		// keep the baseline; mark the doc as amending
+		_ = s.store.SetDocumentApproval(doc.ID, doc.ApprovedVersionID, domain.DocAmending)
 	}
 	_ = s.store.UpdateSuggestionState(sg.ID, domain.SuggestionAccepted)
 	_ = s.store.UpdateCommentStatus(commentID, domain.CommentResolved, "")
