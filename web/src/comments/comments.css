@@ -18,16 +18,32 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* new-comment composer */
 .margin-new {
-  margin-bottom: 14px; animation: rise .25s var(--ease) both;
+  margin-bottom: 14px; padding: 10px; animation: rise .25s var(--ease) both;
+  background: var(--chrome-2); border: 1px solid var(--accent); border-radius: var(--radius);
+  box-shadow: 0 10px 26px -16px rgba(196,125,18,.5);
 }
-.margin-new button {
-  width: 100%; padding: 9px 12px; border: 0; border-radius: 9px;
-  background: var(--accent); color: var(--accent-ink); font-weight: 650; font-size: 13px;
-  box-shadow: 0 8px 20px -10px rgba(227,166,63,.7); transition: filter .15s, transform .05s;
+.margin-new textarea {
+  width: 100%; min-height: 64px; resize: vertical; box-sizing: border-box;
+  background: var(--chrome); border: 1px solid var(--chrome-line); border-radius: 8px;
+  color: var(--ink); font: inherit; font-size: 13px; padding: 8px 10px; outline: none;
 }
-.margin-new button:hover { filter: brightness(1.06); }
-.margin-new button:active { transform: translateY(1px); }
+.margin-new textarea:focus { border-color: var(--accent); }
+.margin-new textarea::placeholder { color: var(--chrome-soft); }
+.margin-new-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.margin-new-actions button {
+  padding: 7px 14px; border-radius: 8px; font-weight: 650; font-size: 12.5px; border: 1px solid var(--chrome-line);
+}
+.margin-new-actions .ghost { background: var(--chrome); color: var(--ink-soft); }
+.margin-new-actions .ghost:hover { background: var(--chrome-3); }
+.margin-new-actions .primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+.margin-new-actions .primary:hover { filter: brightness(1.06); }
+
+.margin-empty {
+  margin-top: 6px; padding: 18px 14px; text-align: center; font-size: 12.5px; line-height: 1.5;
+  color: var(--chrome-soft);
+}
 
 .card {
   background: var(--chrome-2); border: 1px solid var(--chrome-line); border-radius: var(--radius);
@@ -39,7 +55,17 @@
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent), 0 10px 26px -16px rgba(196,125,18,.55);
 }
-.card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 9px; }
+.card.pinned { border-left: 3px solid var(--accent); }
+.card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
+.card-tools { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+.ic-btn {
+  width: 26px; height: 26px; display: grid; place-items: center; border-radius: 6px;
+  background: transparent; border: 1px solid transparent; color: var(--chrome-soft);
+  transition: background .12s, color .12s, border-color .12s;
+}
+.ic-btn:hover { background: var(--chrome-3); color: var(--accent); border-color: var(--chrome-line); }
+.ic-btn.on { color: var(--accent); }
+.ic-btn svg { width: 15px; height: 15px; }
 .who {
   font-size: 11px; font-weight: 650; letter-spacing: .3px; padding: 2px 9px; border-radius: 20px;
 }
@@ -53,17 +79,15 @@
 .status-resolved { color: var(--agent); border-color: rgba(70,181,166,.4); }
 .status-detached { color: #d4806a; border-color: rgba(212,128,106,.4); }
 
-.msg { font-size: 12.5px; line-height: 1.5; margin: 5px 0; color: var(--ink); }
-.msg b { font-weight: 650; }
-.who-human { } /* used inline on msg author too */
-
-.jump-btn {
-  width: 100%; margin: 0 0 9px; padding: 6px 10px; border-radius: 8px;
-  font-size: 12px; font-weight: 600; text-align: center;
-  background: var(--accent-soft); color: var(--accent); border: 1px solid rgba(196,125,18,.35);
-  transition: background .15s;
+/* forum-style thread posts */
+.msg {
+  display: flex; flex-direction: column; gap: 3px;
+  padding: 8px 10px; margin: 6px 0; border-radius: 8px;
+  background: var(--chrome); border: 1px solid var(--chrome-line);
 }
-.jump-btn:hover { background: rgba(196,125,18,.2); }
+.msg-who { font-size: 11px; font-weight: 650; letter-spacing: .2px; }
+.msg-body { font-size: 12.5px; line-height: 1.5; color: var(--ink); white-space: pre-wrap; }
+.msg-empty { color: var(--chrome-soft); font-style: italic; background: none; border: 0; padding: 4px 0; }
 
 .review-btn {
   width: 100%; margin: 4px 0 9px; padding: 7px 10px; border-radius: 8px; font-size: 12.5px; font-weight: 600;

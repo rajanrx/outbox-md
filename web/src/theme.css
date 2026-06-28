@@ -80,8 +80,15 @@ button { font-family: inherit; cursor: pointer; }
   transition: width .24s var(--ease), opacity .2s var(--ease);
 }
 .tree-panel { width: 270px; border-right: 1px solid var(--chrome-line); }
-.comments-panel { width: 348px; border-left: 1px solid var(--chrome-line); }
-.tree-panel.collapsed, .comments-panel.collapsed { width: 0; opacity: 0; }
+.comments-panel { width: 420px; border-left: 1px solid var(--chrome-line); position: relative; }
+.tree-panel.collapsed, .comments-panel.collapsed { width: 0 !important; opacity: 0; }
+
+/* drag-to-resize handle on the comments panel's left edge */
+.resize-handle {
+  position: absolute; left: -3px; top: 0; width: 7px; height: 100%; z-index: 5;
+  cursor: col-resize; background: transparent; transition: background .15s;
+}
+.resize-handle:hover, .resize-handle:active { background: var(--accent); opacity: .5; }
 .panel-head {
   height: 38px; display: flex; align-items: center; gap: 8px; padding: 0 14px;
   font-size: 11px; letter-spacing: 1.4px; text-transform: uppercase; color: var(--chrome-soft);

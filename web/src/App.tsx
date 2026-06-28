@@ -18,13 +18,37 @@ const PanelRightIcon = () => (
   </svg>
 );
 
+const COMMENTS_W_KEY = "outbox.commentsWidth";
+const clampW = (w: number) => Math.min(760, Math.max(300, w));
+
 export default function App() {
   const [docs, setDocs] = useState<{ id: string; path: string }[]>([]);
   const [docId, setDocId] = useState("");
   const [view, setView] = useState<DocView | null>(null);
   const [treeOpen, setTreeOpen] = useState(true);
   const [commentsOpen, setCommentsOpen] = useState(true);
+  const [commentsW, setCommentsW] = useState(() => {
+    const v = Number(localStorage.getItem(COMMENTS_W_KEY));
+    return v ? clampW(v) : 420;
+  });
   const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => { localStorage.setItem(COMMENTS_W_KEY, String(commentsW)); }, [commentsW]);
+
+  const startResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const onMove = (ev: MouseEvent) => setCommentsW(clampW(window.innerWidth - ev.clientX));
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    };
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
 
   const refresh = useCallback(async () => {
     if (docId) setView(await getDoc(docId));
@@ -71,7 +95,8 @@ export default function App() {
             : <div className="reader-empty">No documents — mount a folder of <code>.md</code> files.</div>}
         </main>
 
-        <aside className={"comments-panel" + (commentsOpen ? "" : " collapsed")}>
+        <aside className={"comments-panel" + (commentsOpen ? "" : " collapsed")} style={{ width: commentsOpen ? commentsW : 0 }}>
+          {commentsOpen && <div className="resize-handle" onMouseDown={startResize} title="Drag to resize" />}
           <div className="panel-head">Comments <span className="count">{openCount}</span></div>
           <div className="panel-body">
             {view && <Margin docId={docId} content={view.content} rootRef={rootRef} comments={view.comments ?? []} onChange={refresh} />}
