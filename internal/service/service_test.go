@@ -458,9 +458,16 @@ func TestGovernedConcurrentAcceptsSerialize(t *testing.T) {
 // claims V1). Either operation may lose with a conflict and be retried — assert
 // only that the FINAL state is one of the consistent outcomes, never the torn one.
 func TestApproveAcceptInterleavingNeverCorrupts(t *testing.T) {
-	dir := t.TempDir()
-	for i := 0; i < 500; i++ {
-		s, err := store.Open("file:" + filepath.Join(dir, fmt.Sprintf("appr%d.db", i)))
+	// The Approve-vs-draft-Accept corruption is a rare interleave: at 500 iters a
+	// single `go test` run (as CI runs it — no -race, no -count) was observed to
+	// pass with the bug present; ~2500 iters reliably surfaces it. We run 5000 so
+	// a plain CI run deterministically goes red if either CAS guard is reverted.
+	// The on-disk invariant is modeled in the writeFile closure below (not in
+	// SQLite), so an in-memory store reproduces the logical race identically while
+	// avoiding the per-iteration file fsync that made a file-backed loop too slow
+	// for this iteration count.
+	for i := 0; i < 5000; i++ {
+		s, err := store.Open(":memory:")
 		if err != nil {
 			t.Fatal(err)
 		}
