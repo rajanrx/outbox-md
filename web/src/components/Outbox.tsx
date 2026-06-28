@@ -1,14 +1,15 @@
 import type { Comment } from "../api";
 
 export function Outbox({ comments, onSelect }: {
-  comments: Comment[];
+  comments: Comment[] | null;
   onSelect: (c: Comment) => void;
 }) {
+  const list = comments ?? [];
   return (
     <div>
-      <h3>Outbox ({comments.length})</h3>
+      <h3>Outbox ({list.length})</h3>
       <ul>
-        {comments.map((c) => (
+        {list.map((c) => (
           <li key={c.id}>
             <button onClick={() => onSelect(c)}>
               [{c.status}] {c.anchor.start}–{c.anchor.end} · {c.authorIdentity}

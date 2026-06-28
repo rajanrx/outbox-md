@@ -23,13 +23,27 @@ Read and inline-annotate AI-generated Markdown. Your comments never edit the doc
 ## Quickstart (walking skeleton)
 
 ```bash
-docker build -t outbox-md:dev .
-mkdir -p sample && printf "# Spec\n\nHello world\n" > sample/spec.md
-docker run --rm -p 8080:8080 -e OUTBOX_DEV=1 -v "$PWD/sample:/data" outbox-md:dev
-# open http://localhost:8080
+OUTBOX_DEV=1 docker compose up -d --build
+# open http://localhost:8181  — shows this repo's own specs by default
 ```
 
-Agents connect over MCP at `http://localhost:8080/mcp` (Streamable HTTP). With `OUTBOX_DEV=1`, the agent loop can also be driven over HTTP for testing (`/api/dev/claim`, `/api/dev/propose`).
+To review **your own** folder of `.md` files, point `OUTBOX_DIR` at it:
+
+```bash
+OUTBOX_DIR=path/to/your/specs OUTBOX_DEV=1 docker compose up -d --build
+```
+
+`/data` must be a **folder** of `.md` files, not a single file.
+
+<details><summary>Without compose (<code>docker run</code>)</summary>
+
+```bash
+docker build -t outbox-md:dev .
+docker run --rm -p 8181:8181 -e OUTBOX_DEV=1 -v "$PWD/specs:/data" outbox-md:dev
+```
+</details>
+
+Agents connect over MCP at `http://localhost:8181/mcp` (Streamable HTTP). With `OUTBOX_DEV=1`, the agent loop can also be driven over HTTP for testing (`/api/dev/claim`, `/api/dev/propose`).
 
 ## Watch & learn
 
@@ -39,8 +53,8 @@ The 2-minute **intro** is at the top. Two more, for going deeper:
 <table>
 <tr>
 <td width="50%" valign="top">
-  <a href="https://www.youtube.com/watch?v=0RwuXV6jmKY"><img src="docs/media/tutorial-thumb.png" alt="Tutorial" width="100%"></a>
-  <p align="center"><b>▶ <a href="https://www.youtube.com/watch?v=0RwuXV6jmKY">Using outbox-md</a></b><br/>Run it → comment → connect an agent → accept</p>
+  <a href="https://www.youtube.com/watch?v=4VH7NT095ms"><img src="docs/media/tutorial-thumb.png" alt="Tutorial" width="100%"></a>
+  <p align="center"><b>▶ <a href="https://www.youtube.com/watch?v=4VH7NT095ms">Using outbox-md</a></b><br/>Run it → comment → connect an agent → accept</p>
 </td>
 <td width="50%" valign="top">
   <a href="https://www.youtube.com/watch?v=VmuwLniMU9M"><img src="docs/media/deepdive-thumb.png" alt="Deep dive" width="100%"></a>
@@ -49,8 +63,6 @@ The 2-minute **intro** is at the top. Two more, for going deeper:
 </tr>
 </table>
 </div>
-
-A podcast-style Q&A between **Andrew** and **Ava** — narration via [edge-tts](https://github.com/rany2/edge-tts) (no API key), slides via Pillow, assembly via ffmpeg. Background music: *"Coffee & Streets"* by [Aylex](https://aylex.net) (no-copyright), mixed at 16%.
 
 ## Design
 

@@ -18,6 +18,6 @@ RUN CGO_ENABLED=0 go build -o /outbox-md ./cmd/outbox-md
 # --- runtime ---
 FROM gcr.io/distroless/static-debian12
 COPY --from=go /outbox-md /outbox-md
-EXPOSE 8080
+EXPOSE 8181
 VOLUME ["/data"]
 ENTRYPOINT ["/outbox-md"]

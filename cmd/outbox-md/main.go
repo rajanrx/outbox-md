@@ -85,6 +85,24 @@ func atomicWrite(target, content string) error {
 	return nil
 }
 
+// ensureDataDir verifies the data path is a directory (creating it if absent),
+// and fails with a clear message if it points at a file — the most common
+// mistake (mounting a single .md instead of a folder).
+func ensureDataDir(dir string) error {
+	fi, err := os.Stat(dir)
+	if err == nil {
+		if !fi.IsDir() {
+			return fmt.Errorf("data path %q is a file, not a directory — mount a folder of .md files "+
+				"(e.g. -v \"$PWD/specs:/data\"), not a single file", dir)
+		}
+		return nil
+	}
+	if !os.IsNotExist(err) {
+		return err
+	}
+	return os.MkdirAll(dir, 0o755)
+}
+
 func getenv(k, def string) string {
 	if v := os.Getenv(k); v != "" {
 		return v
@@ -121,8 +139,11 @@ func importMarkdown(st *store.Store, dir string) error {
 
 func main() {
 	dir := getenv("OUTBOX_DIR", "/data")
-	addr := getenv("OUTBOX_ADDR", ":8080")
+	addr := getenv("OUTBOX_ADDR", ":8181")
 
+	if err := ensureDataDir(dir); err != nil {
+		log.Fatal(err)
+	}
 	dbDir := filepath.Join(dir, ".outbox")
 	if err := os.MkdirAll(dbDir, 0o755); err != nil {
 		log.Fatal(err)
