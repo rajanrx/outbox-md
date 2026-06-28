@@ -450,6 +450,80 @@ func TestGovernedConcurrentAcceptsSerialize(t *testing.T) {
 	}
 }
 
+// P1 (Governance Seam): a DRAFT Approve racing a DRAFT Accept must never leave
+// the document approved-but-stale. The TOCTOU: Approve reads current=V1; a
+// concurrent draft Accept advances V1->V2 and writes disk; Approve then pins the
+// stale V1 as the approved baseline. Corrupt signature: status==approved while
+// approved_version_id != current_version_id (disk shows V2 while the baseline
+// claims V1). Either operation may lose with a conflict and be retried — assert
+// only that the FINAL state is one of the consistent outcomes, never the torn one.
+func TestApproveAcceptInterleavingNeverCorrupts(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < 500; i++ {
+		s, err := store.Open("file:" + filepath.Join(dir, fmt.Sprintf("appr%d.db", i)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var mu sync.Mutex
+		disk := "v1" // models the on-disk file; for a draft doc it equals current
+		svc := New(s, func(_, content string) error {
+			mu.Lock()
+			disk = content
+			mu.Unlock()
+			return nil
+		})
+
+		doc, _, _ := s.CreateDocument("spec.md", "v1", "human") // draft, current=V1="v1"
+		c := proposeAgainstCurrent(t, svc, doc.ID, "v2")        // suggestion v2 against V1
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); _, _ = svc.Approve(doc.ID, "") }()
+		go func() { defer wg.Done(); _, _ = svc.Accept(c) }()
+		wg.Wait()
+
+		final, _ := s.GetDocument(doc.ID)
+		curVer, _ := s.GetVersion(final.CurrentVersionID)
+		mu.Lock()
+		gotDisk := disk
+		mu.Unlock()
+
+		switch final.Status {
+		case domain.DocApproved:
+			// Approve won and Accept lost (conflict/retry): baseline is pinned at
+			// the CURRENT version and disk equals that version's content.
+			if final.ApprovedVersionID != final.CurrentVersionID {
+				appVer, _ := s.GetVersion(final.ApprovedVersionID)
+				t.Fatalf("iter %d: approved but approved(ord %d) != current(ord %d) — STALE baseline pinned (disk=%q)",
+					i, appVer.Ordinal, curVer.Ordinal, gotDisk)
+			}
+			if gotDisk != curVer.Content {
+				t.Fatalf("iter %d: approved but disk %q != current content %q (CORRUPTION)", i, gotDisk, curVer.Content)
+			}
+		case domain.DocAmending:
+			// Approve won, then Accept took the governed path (read the approved
+			// doc): the amendment accumulates ahead of the baseline, disk untouched.
+			appVer, _ := s.GetVersion(final.ApprovedVersionID)
+			if appVer.Ordinal >= curVer.Ordinal {
+				t.Fatalf("iter %d: amending but approved ordinal %d not behind current %d (baseline regressed?)",
+					i, appVer.Ordinal, curVer.Ordinal)
+			}
+			if gotDisk != appVer.Content {
+				t.Fatalf("iter %d: amending but disk %q != approved-baseline content %q (CORRUPTION)", i, gotDisk, appVer.Content)
+			}
+		case domain.DocDraft:
+			// Accept won and Approve lost (conflict/retry): still a draft, disk
+			// equals the new current version's content.
+			if gotDisk != curVer.Content {
+				t.Fatalf("iter %d: draft but disk %q != current content %q", i, gotDisk, curVer.Content)
+			}
+		default:
+			t.Fatalf("iter %d: unexpected status %q", i, final.Status)
+		}
+		s.Close()
+	}
+}
+
 // P1 (Governance Seam): a governed Accept racing a Reapprove must never corrupt
 // the document. After both settle the state must be one of the two CONSISTENT
 // outcomes, never the regressed/stranded one:

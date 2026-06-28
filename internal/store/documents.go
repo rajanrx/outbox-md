@@ -96,6 +96,15 @@ var ErrVersionConflict = errors.New("version conflict: document advanced concurr
 // database is never left pointing at content the write rejected. Callers should
 // still compensate the external side effect when write ran, since a commit
 // failure after a successful write is the one window this cannot close alone.
+//
+// The CAS is also guarded on status='draft'. This is the draft-accept path only
+// (governed accepts use AddGovernedVersionTx); guarding on draft closes the
+// reverse half of the Approve TOCTOU: if a concurrent Approve pins the baseline
+// (flipping status to approved) after this accept read the doc as draft but
+// before its CAS, the guard now fails — RowsAffected==0 → ErrVersionConflict —
+// so a draft accept can never advance current (and write disk) past a freshly
+// pinned approved baseline. The caller requeues, and the agent re-proposes
+// against the approved head, which then takes the governed path.
 func (s *Store) AddVersionTx(docID, expectedCurrent, content, createdBy string, write func(domain.Version) error) (domain.Version, error) {
 	verID := domain.NewID()
 	tx, err := s.DB.Begin()
@@ -109,9 +118,10 @@ func (s *Store) AddVersionTx(docID, expectedCurrent, content, createdBy string, 
 		}
 	}()
 
-	// Compare-and-swap the current pointer; advance only if it is unchanged.
-	res, err := tx.Exec(`UPDATE documents SET current_version_id=? WHERE id=? AND current_version_id=?`,
-		verID, docID, expectedCurrent)
+	// Compare-and-swap the current pointer; advance only if it is unchanged AND
+	// the doc is still a draft (a concurrent Approve must not be raced past).
+	res, err := tx.Exec(`UPDATE documents SET current_version_id=? WHERE id=? AND current_version_id=? AND status=?`,
+		verID, docID, expectedCurrent, domain.DocDraft)
 	if err != nil {
 		return domain.Version{}, err
 	}
@@ -287,4 +297,28 @@ func (s *Store) SetDocumentApproval(docID, approvedVersionID string, status doma
 	_, err := s.DB.Exec(`UPDATE documents SET approved_version_id=?, status=? WHERE id=?`,
 		approvedVersionID, status, docID)
 	return err
+}
+
+// SetDocumentApprovalIfCurrent pins the approved baseline and sets the lifecycle
+// status, but only if the current pointer is still expectedCurrent (a
+// compare-and-swap). This closes the Approve TOCTOU: a concurrent accept that
+// advanced the current pointer between Approve's read and its pin makes the
+// guard match 0 rows, so we return ErrVersionConflict instead of pinning a stale
+// baseline behind the new current. A single conditional UPDATE — no transaction
+// needed; with SetMaxOpenConns(1) a loser deterministically sees committed state
+// and gets a clean conflict rather than SQLITE_BUSY.
+func (s *Store) SetDocumentApprovalIfCurrent(docID, expectedCurrent, approvedVersionID string, status domain.DocumentStatus) error {
+	res, err := s.DB.Exec(`UPDATE documents SET approved_version_id=?, status=? WHERE id=? AND current_version_id=?`,
+		approvedVersionID, status, docID, expectedCurrent)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return ErrVersionConflict
+	}
+	return nil
 }

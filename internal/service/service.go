@@ -229,7 +229,14 @@ func (s *Service) Approve(docID, note string) (domain.Approval, error) {
 	if doc.Status != domain.DocDraft {
 		return domain.Approval{}, errors.New("already approved — use re-approve")
 	}
-	if err := s.store.SetDocumentApproval(docID, doc.CurrentVersionID, domain.DocApproved); err != nil {
+	// CAS-guarded pin: only pin the baseline if the current pointer is still the
+	// version we read. A concurrent draft accept that advanced current between the
+	// read above and this pin makes the guard fail, so we never pin a stale
+	// baseline behind the new current.
+	if err := s.store.SetDocumentApprovalIfCurrent(docID, doc.CurrentVersionID, doc.CurrentVersionID, domain.DocApproved); err != nil {
+		if errors.Is(err, store.ErrVersionConflict) {
+			return domain.Approval{}, errors.New("document changed during approval; retry")
+		}
 		return domain.Approval{}, err
 	}
 	return s.store.CreateApproval(domain.Approval{
