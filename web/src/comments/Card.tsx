@@ -30,7 +30,6 @@ export function Card({ comment, currentContent, active = false, pinned = false, 
 }) {
   const [thread, setThread] = useState<ThreadMessage[]>([]);
   const [draft, setDraft] = useState("");
-  const [showDiff, setShowDiff] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const load = () => getThread(comment.id).then((t) => setThread(t ?? []));
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [comment.id]);
@@ -67,7 +66,7 @@ export function Card({ comment, currentContent, active = false, pinned = false, 
       </div>
 
       {comment.status === "addressed" && (
-        <button className="review-btn" onClick={(e) => stop(e, () => setShowDiff(true))}>Review suggestion</button>
+        <DiffPanel commentId={comment.id} currentContent={currentContent} onDone={onChange} />
       )}
 
       {comment.status !== "resolved" && (
@@ -81,8 +80,6 @@ export function Card({ comment, currentContent, active = false, pinned = false, 
           <button className="link-btn resolve" onClick={async () => { await resolve(comment.id); onChange(); }}>Resolve</button>
         </div>
       )}
-
-      {showDiff && <DiffPanel commentId={comment.id} currentContent={currentContent} onDone={() => { setShowDiff(false); onChange(); }} />}
     </div>
   );
 }
