@@ -238,10 +238,13 @@ func TestHumanReplyAndResolve(t *testing.T) {
 	if len(thread) != 1 || thread[0].Body != "what about X?" {
 		t.Fatalf("thread = %+v", thread)
 	}
-	if err := svc.Resolve(c.ID, "someone-else"); err == nil {
-		t.Fatal("expected non-owner resolve to fail")
+	// The local human may not resolve a comment owned by an agent.
+	agentC, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 6, End: 11}, "agent")
+	if err := svc.Resolve(agentC.ID); err == nil {
+		t.Fatal("expected resolve of an agent-owned comment to fail")
 	}
-	if err := svc.Resolve(c.ID, "human"); err != nil {
+	// The local human resolves their own comment (identity is server-set).
+	if err := svc.Resolve(c.ID); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := s.GetComment(c.ID)

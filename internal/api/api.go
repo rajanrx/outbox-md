@@ -112,14 +112,9 @@ func NewAPI(svc *service.Service, st *store.Store) http.Handler {
 		writeJSON(w, m, err)
 	})
 	mux.HandleFunc("POST /api/comments/{id}/resolve", func(w http.ResponseWriter, r *http.Request) {
-		var in struct {
-			Owner string `json:"owner"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if err := svc.Resolve(r.PathValue("id"), in.Owner); err != nil {
+		// Caller identity is server-set (the single local human); it is never
+		// taken from the request body, so it cannot be spoofed.
+		if err := svc.Resolve(r.PathValue("id")); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}

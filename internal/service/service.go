@@ -84,12 +84,21 @@ func (s *Service) HumanReply(commentID, body string) (domain.ThreadMessage, erro
 	})
 }
 
-func (s *Service) Resolve(commentID, owner string) error {
+// LocalHuman is the identity of the single local reviewer. This local-first
+// app has no authentication, so the caller's identity is server-set rather than
+// taken from the request. When auth is added, this becomes the identity derived
+// from the request's verified auth context.
+const LocalHuman = "human"
+
+// Resolve closes a comment owned by the local human. The caller identity is NOT
+// accepted from the request (which would be spoofable) — it is fixed to the
+// single local reviewer here.
+func (s *Service) Resolve(commentID string) error {
 	c, err := s.store.GetComment(commentID)
 	if err != nil {
 		return err
 	}
-	if c.Owner != owner {
+	if c.Owner != LocalHuman {
 		return errors.New("only the comment owner may resolve it")
 	}
 	return s.store.UpdateCommentStatus(commentID, domain.CommentResolved, "")
