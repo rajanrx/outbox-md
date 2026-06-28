@@ -1,0 +1,7 @@
+# Dev image for the Go backend: hot-reload via air. Source is bind-mounted at
+# runtime (see docker-compose.dev.yml); this image only carries the toolchain.
+FROM golang:1.25-alpine
+RUN apk add --no-cache git && go install github.com/air-verse/air@latest
+WORKDIR /src
+ENV CGO_ENABLED=0
+CMD ["air", "-c", ".air.toml"]

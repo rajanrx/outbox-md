@@ -33,3 +33,6 @@ docs/**/__*
 # Local tooling artifacts
 .claude/
 .playwright-mcp/
+
+# air build dir
+tmp/

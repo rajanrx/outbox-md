@@ -5,9 +5,13 @@ services:
       # host:container — change the host side if 8181 is taken
       - "8181:8181"
     volumes:
-      # Folder of .md files to review. Defaults to this repo's specs;
-      # override with OUTBOX_DIR=path/to/your/specs.
-      - "${OUTBOX_DIR:-./docs/specs}:/data"
+      # Folder of .md files to review. Defaults to this repo's specs; override
+      # with OUTBOX_DIR=path/to/your/specs. Long syntax + type:bind so a bare
+      # relative path (e.g. OUTBOX_DIR=docs/specs) is treated as a host bind
+      # mount, not a named volume.
+      - type: bind
+        source: ${OUTBOX_DIR:-./docs/specs}
+        target: /data
     environment:
       # Set OUTBOX_DEV=1 to enable the HTTP "simulate agent" endpoints.
       OUTBOX_DEV: "${OUTBOX_DEV:-0}"

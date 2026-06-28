@@ -1,0 +1,39 @@
+# Development stack with hot reload:
+#
+#   docker compose -f docker-compose.dev.yml up
+#
+# Open http://localhost:5173 — the Vite dev server (HMR) proxies /api and /mcp to
+# the Go backend (rebuilt on save by air) at :8181. Production stays the single
+# embedded binary (docker-compose.yml), unchanged.
+#
+# Review a different folder:  OUTBOX_DIR=/src/path/under/repo docker compose -f docker-compose.dev.yml up
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - "8181:8181"
+    volumes:
+      - .:/src
+      - go-mod-cache:/go/pkg/mod
+    environment:
+      OUTBOX_DEV: "1"
+      OUTBOX_DIR: "${OUTBOX_DIR:-/src/docs/specs}"
+
+  frontend:
+    image: node:20-alpine
+    working_dir: /web
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./web:/web
+      - /web/node_modules
+    environment:
+      VITE_API_TARGET: "http://backend:8181"
+    depends_on:
+      - backend
+
+volumes:
+  go-mod-cache:
