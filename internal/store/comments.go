@@ -4,21 +4,27 @@ import "github.com/rajanrx/outbox-md/internal/domain"
 
 func scanComment(scan func(...any) error) (domain.Comment, error) {
 	var c domain.Comment
+	var pa int
 	err := scan(&c.ID, &c.DocID, &c.AgainstVersionID, &c.Anchor.Start, &c.Anchor.End,
-		&c.AuthorIdentity, &c.Owner, &c.Status, &c.ClaimToken)
+		&c.AuthorIdentity, &c.Owner, &c.Status, &c.ClaimToken, &pa)
+	c.PostApproval = pa != 0
 	return c, err
 }
 
 const commentCols = `id, doc_id, against_version_id, anchor_start, anchor_end,
-	author_identity, owner, status, claim_token`
+	author_identity, owner, status, claim_token, post_approval`
 
 func (s *Store) CreateComment(c domain.Comment) (domain.Comment, error) {
 	if c.ID == "" {
 		c.ID = domain.NewID()
 	}
-	_, err := s.DB.Exec(`INSERT INTO comments(`+commentCols+`) VALUES(?,?,?,?,?,?,?,?,?)`,
+	pa := 0
+	if c.PostApproval {
+		pa = 1
+	}
+	_, err := s.DB.Exec(`INSERT INTO comments(`+commentCols+`) VALUES(?,?,?,?,?,?,?,?,?,?)`,
 		c.ID, c.DocID, c.AgainstVersionID, c.Anchor.Start, c.Anchor.End,
-		c.AuthorIdentity, c.Owner, c.Status, c.ClaimToken)
+		c.AuthorIdentity, c.Owner, c.Status, c.ClaimToken, pa)
 	return c, err
 }
 

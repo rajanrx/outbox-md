@@ -3,6 +3,8 @@ package store
 import (
 	"errors"
 	"testing"
+
+	"github.com/rajanrx/outbox-md/internal/domain"
 )
 
 func TestAddVersionTxCAS(t *testing.T) {
@@ -56,5 +58,33 @@ func TestCreateAndVersion(t *testing.T) {
 	got, _ := s.GetDocument(doc.ID)
 	if got.CurrentVersionID != v2.ID {
 		t.Fatal("current version not advanced to v2")
+	}
+}
+
+func TestNewDocumentDefaultsToDraft(t *testing.T) {
+	s, _ := Open(":memory:")
+	defer s.Close()
+	doc, _, err := s.CreateDocument("a.md", "hello", "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetDocument(doc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != domain.DocDraft {
+		t.Errorf("status = %q, want draft", got.Status)
+	}
+	if got.ApprovedVersionID != "" {
+		t.Errorf("approvedVersionId = %q, want empty", got.ApprovedVersionID)
+	}
+}
+
+func TestMigrateIsIdempotent(t *testing.T) {
+	s, _ := Open(":memory:")
+	defer s.Close()
+	// migrate already ran inside Open; running it again must be a no-op.
+	if err := migrate(s.DB); err != nil {
+		t.Fatalf("re-migrate: %v", err)
 	}
 }

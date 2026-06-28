@@ -1,7 +1,9 @@
 CREATE TABLE IF NOT EXISTS documents (
   id TEXT PRIMARY KEY,
   path TEXT NOT NULL UNIQUE,
-  current_version_id TEXT
+  current_version_id TEXT,
+  status TEXT NOT NULL DEFAULT 'draft',
+  approved_version_id TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS versions (
   id TEXT PRIMARY KEY,
@@ -21,6 +23,7 @@ CREATE TABLE IF NOT EXISTS comments (
   owner TEXT NOT NULL,
   status TEXT NOT NULL,
   claim_token TEXT NOT NULL DEFAULT '',
+  post_approval INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS suggestions (
@@ -37,5 +40,13 @@ CREATE TABLE IF NOT EXISTS thread_messages (
   comment_id TEXT NOT NULL REFERENCES comments(id),
   author_identity TEXT NOT NULL,
   body TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS approvals (
+  id TEXT PRIMARY KEY,
+  doc_id TEXT NOT NULL REFERENCES documents(id),
+  version_id TEXT NOT NULL REFERENCES versions(id),
+  approved_by TEXT NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

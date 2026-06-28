@@ -5,10 +5,29 @@ type Anchor struct {
 	End   int `json:"end"`
 }
 
+type DocumentStatus string
+
+const (
+	DocDraft    DocumentStatus = "draft"
+	DocApproved DocumentStatus = "approved"
+	DocAmending DocumentStatus = "amending"
+)
+
 type Document struct {
-	ID               string `json:"id"`
-	Path             string `json:"path"`
-	CurrentVersionID string `json:"currentVersionId"`
+	ID                string         `json:"id"`
+	Path              string         `json:"path"`
+	CurrentVersionID  string         `json:"currentVersionId"`
+	Status            DocumentStatus `json:"status"`
+	ApprovedVersionID string         `json:"approvedVersionId"`
+}
+
+type Approval struct {
+	ID         string `json:"id"`
+	DocID      string `json:"docId"`
+	VersionID  string `json:"versionId"`
+	ApprovedBy string `json:"approvedBy"`
+	Note       string `json:"note"`
+	CreatedAt  string `json:"createdAt"`
 }
 
 type Version struct {
@@ -38,6 +57,7 @@ type Comment struct {
 	AuthorIdentity   string        `json:"authorIdentity"`
 	Owner            string        `json:"owner"`
 	Status           CommentStatus `json:"status"`
+	PostApproval     bool          `json:"postApproval"`
 	ClaimToken       string        `json:"-"`
 }
 

@@ -34,8 +34,8 @@ func (s *Store) CreateDocument(path, content, createdBy string) (domain.Document
 func (s *Store) GetDocument(id string) (domain.Document, error) {
 	var d domain.Document
 	var cur *string
-	err := s.DB.QueryRow(`SELECT id, path, current_version_id FROM documents WHERE id=?`, id).
-		Scan(&d.ID, &d.Path, &cur)
+	err := s.DB.QueryRow(`SELECT id, path, current_version_id, status, approved_version_id FROM documents WHERE id=?`, id).
+		Scan(&d.ID, &d.Path, &cur, &d.Status, &d.ApprovedVersionID)
 	if cur != nil {
 		d.CurrentVersionID = *cur
 	}
@@ -45,8 +45,8 @@ func (s *Store) GetDocument(id string) (domain.Document, error) {
 func (s *Store) GetDocumentByPath(path string) (domain.Document, bool, error) {
 	var d domain.Document
 	var cur *string
-	err := s.DB.QueryRow(`SELECT id, path, current_version_id FROM documents WHERE path=?`, path).
-		Scan(&d.ID, &d.Path, &cur)
+	err := s.DB.QueryRow(`SELECT id, path, current_version_id, status, approved_version_id FROM documents WHERE path=?`, path).
+		Scan(&d.ID, &d.Path, &cur, &d.Status, &d.ApprovedVersionID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Document{}, false, nil
 	}
@@ -57,7 +57,7 @@ func (s *Store) GetDocumentByPath(path string) (domain.Document, bool, error) {
 }
 
 func (s *Store) ListDocuments() ([]domain.Document, error) {
-	rows, err := s.DB.Query(`SELECT id, path, COALESCE(current_version_id,'') FROM documents ORDER BY path`)
+	rows, err := s.DB.Query(`SELECT id, path, COALESCE(current_version_id,''), status, approved_version_id FROM documents ORDER BY path`)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +65,7 @@ func (s *Store) ListDocuments() ([]domain.Document, error) {
 	out := []domain.Document{}
 	for rows.Next() {
 		var d domain.Document
-		if err := rows.Scan(&d.ID, &d.Path, &d.CurrentVersionID); err != nil {
+		if err := rows.Scan(&d.ID, &d.Path, &d.CurrentVersionID, &d.Status, &d.ApprovedVersionID); err != nil {
 			return nil, err
 		}
 		out = append(out, d)
