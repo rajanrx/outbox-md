@@ -23,13 +23,24 @@ Read and inline-annotate AI-generated Markdown. Your comments never edit the doc
 ## Quickstart (walking skeleton)
 
 ```bash
-docker build -t outbox-md:dev .
-mkdir -p sample && printf "# Spec\n\nHello world\n" > sample/spec.md
-docker run --rm -p 8080:8080 -e OUTBOX_DEV=1 -v "$PWD/sample:/data" outbox-md:dev
-# open http://localhost:8080
+# put the .md files you want to review in ./specs (or point OUTBOX_DIR anywhere)
+mkdir -p specs && printf "# Spec\n\nHello world\n" > specs/spec.md
+
+OUTBOX_DEV=1 docker compose up -d --build
+# open http://localhost:8181
 ```
 
-Agents connect over MCP at `http://localhost:8080/mcp` (Streamable HTTP). With `OUTBOX_DEV=1`, the agent loop can also be driven over HTTP for testing (`/api/dev/claim`, `/api/dev/propose`).
+`/data` must be a **folder** of `.md` files (not a single file). Review any folder by setting `OUTBOX_DIR` — e.g. to dogfood this repo's own specs: `OUTBOX_DIR=docs/specs OUTBOX_DEV=1 docker compose up -d --build`.
+
+<details><summary>Without compose (<code>docker run</code>)</summary>
+
+```bash
+docker build -t outbox-md:dev .
+docker run --rm -p 8181:8181 -e OUTBOX_DEV=1 -v "$PWD/specs:/data" outbox-md:dev
+```
+</details>
+
+Agents connect over MCP at `http://localhost:8181/mcp` (Streamable HTTP). With `OUTBOX_DEV=1`, the agent loop can also be driven over HTTP for testing (`/api/dev/claim`, `/api/dev/propose`).
 
 ## Watch & learn
 
@@ -49,8 +60,6 @@ The 2-minute **intro** is at the top. Two more, for going deeper:
 </tr>
 </table>
 </div>
-
-A podcast-style Q&A between **Andrew** and **Ava** — narration via [edge-tts](https://github.com/rany2/edge-tts) (no API key), slides via Pillow, assembly via ffmpeg. Background music: *"Coffee & Streets"* by [Aylex](https://aylex.net) (no-copyright), mixed at 16%.
 
 ## Design
 

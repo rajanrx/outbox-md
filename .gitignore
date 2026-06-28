@@ -27,3 +27,7 @@ docs/media/*.script.json
 *.py
 docs/media/bgm/
 docs/specs/2026-06-28-intro-videos-design.md
+
+# Local tooling artifacts
+.claude/
+.playwright-mcp/

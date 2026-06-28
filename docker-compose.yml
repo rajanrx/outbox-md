@@ -1,0 +1,13 @@
+services:
+  outbox-md:
+    build: .
+    ports:
+      # host:container — change the host side if 8181 is taken
+      - "8181:8181"
+    volumes:
+      # The folder of .md files to review. Override with OUTBOX_DIR=path.
+      - "${OUTBOX_DIR:-./specs}:/data"
+    environment:
+      # Set OUTBOX_DEV=1 to enable the HTTP "simulate agent" endpoints.
+      OUTBOX_DEV: "${OUTBOX_DEV:-0}"
+    restart: unless-stopped

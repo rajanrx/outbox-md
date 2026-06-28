@@ -39,6 +39,23 @@ func TestSafeJoinRejectsTraversal(t *testing.T) {
 	}
 }
 
+func TestEnsureDataDirRejectsFile(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "spec.md")
+	if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureDataDir(f); err == nil {
+		t.Fatal("expected error when the data path is a file, not a directory")
+	}
+	d := filepath.Join(t.TempDir(), "created")
+	if err := ensureDataDir(d); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Stat(d); err != nil || !fi.IsDir() {
+		t.Fatal("ensureDataDir should create a missing directory")
+	}
+}
+
 func TestHealthz(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
