@@ -26,7 +26,7 @@ func (s *Store) CreateDocument(path, content, createdBy string) (domain.Document
 	if err := tx.Commit(); err != nil {
 		return domain.Document{}, domain.Version{}, err
 	}
-	doc := domain.Document{ID: docID, Path: path, CurrentVersionID: verID}
+	doc := domain.Document{ID: docID, Path: path, CurrentVersionID: verID, Status: domain.DocDraft}
 	ver := domain.Version{ID: verID, DocID: docID, Ordinal: 1, Content: content, CreatedBy: createdBy}
 	return doc, ver, nil
 }
@@ -144,6 +144,115 @@ func (s *Store) AddVersionTx(docID, expectedCurrent, content, createdBy string, 
 	}
 	committed = true
 	return v, nil
+}
+
+// AddGovernedVersionTx records a new version ahead of the approved baseline for
+// an approved/amending document and flips status to amending — all inside one
+// transaction, guarded by a compare-and-swap on the current pointer. It mirrors
+// AddVersionTx's CAS but never writes disk (governed accepts accumulate ahead of
+// the baseline) and never touches approved_version_id: the baseline pointer is
+// owned solely by Reapprove, so a stale governed accept can no longer regress it.
+//
+// The status flip is in the SAME tx as the version advance, so the "amending"
+// marker and the new head commit or roll back together. If another writer moved
+// the current pointer first, the CAS fails and we return ErrVersionConflict so
+// the caller can re-queue exactly like a draft accept that lost the race.
+func (s *Store) AddGovernedVersionTx(docID, expectedCurrent, content, createdBy string) (domain.Version, error) {
+	verID := domain.NewID()
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return domain.Version{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	// Compare-and-swap the current pointer; advance only if it is unchanged.
+	res, err := tx.Exec(`UPDATE documents SET current_version_id=? WHERE id=? AND current_version_id=?`,
+		verID, docID, expectedCurrent)
+	if err != nil {
+		return domain.Version{}, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return domain.Version{}, err
+	}
+	if n != 1 {
+		return domain.Version{}, ErrVersionConflict
+	}
+
+	var maxOrd int
+	if err := tx.QueryRow(`SELECT COALESCE(MAX(ordinal),0) FROM versions WHERE doc_id=?`, docID).
+		Scan(&maxOrd); err != nil {
+		return domain.Version{}, err
+	}
+	ord := maxOrd + 1
+	if _, err := tx.Exec(`INSERT INTO versions(id, doc_id, ordinal, content, created_by) VALUES(?,?,?,?,?)`,
+		verID, docID, ord, content, createdBy); err != nil {
+		return domain.Version{}, err
+	}
+	// Mark the document amending — status only; never rewrite approved_version_id.
+	if _, err := tx.Exec(`UPDATE documents SET status=? WHERE id=?`, domain.DocAmending, docID); err != nil {
+		return domain.Version{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.Version{}, err
+	}
+	committed = true
+	return domain.Version{ID: verID, DocID: docID, Ordinal: ord, Content: content, CreatedBy: createdBy}, nil
+}
+
+// ReapproveTx advances the approved baseline to expectedCurrent and writes that
+// content to disk inside one transaction, guarded by a compare-and-swap on the
+// current pointer. The baseline only moves if the working head is still
+// expectedCurrent; if a concurrent accept advanced current under us, the CAS
+// affects 0 rows and we return ErrVersionConflict without writing disk — so a
+// re-approval can never pin a baseline the human did not actually review.
+//
+// The write callback (the disk write) runs after the CAS succeeds and before
+// commit, mirroring AddVersionTx. As with AddVersionTx, if write ran but the
+// commit fails the caller must compensate the on-disk file back to the prior
+// baseline content — that post-write-pre-commit window is the one case this
+// cannot close alone. On the ErrVersionConflict path write never runs, so no
+// compensation is needed there.
+func (s *Store) ReapproveTx(docID, expectedCurrent, content string, write func() error) error {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	// CAS the baseline + status, guarded on the current pointer being unchanged.
+	res, err := tx.Exec(`UPDATE documents SET approved_version_id=?, status=? WHERE id=? AND current_version_id=?`,
+		expectedCurrent, domain.DocApproved, docID, expectedCurrent)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return ErrVersionConflict
+	}
+	if write != nil {
+		if err := write(); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 func (s *Store) AddVersion(docID, content, createdBy string) (domain.Version, error) {
