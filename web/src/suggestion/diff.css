@@ -1,0 +1,5 @@
+.diff-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; z-index: 50; }
+.diff-panel { background: #fff; border-radius: 10px; padding: 18px; width: min(820px, 92vw); max-height: 86vh; overflow: auto; }
+.diff { white-space: pre-wrap; background: #f6f8fa; padding: 12px; border-radius: 8px; font-family: ui-monospace, monospace; font-size: 13px; }
+.diff .ins { background: #aceebb; } .diff .del { background: #ffcecb; text-decoration: line-through; }
+.diff-actions { display: flex; gap: 8px; margin-top: 12px; }

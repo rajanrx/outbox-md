@@ -1,0 +1,10 @@
+.margin { width: 320px; flex: none; padding: 24px 16px; border-left: 1px solid #d0d7de; overflow-y: auto; }
+.card { border: 1px solid #d0d7de; border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; font-size: 13px; }
+.card-head { display: flex; justify-content: space-between; margin-bottom: 6px; }
+.who { font-weight: 600; } .who-human { color: #2f81f7; } .who-agent { color: #2dd4bf; }
+.status { color: #6e7781; text-transform: capitalize; }
+.margin-new { margin-bottom: 14px; }
+.msg { font-size: 13px; margin: 4px 0; }
+.card-actions { display: flex; gap: 6px; margin-top: 8px; }
+.card-actions input { flex: 1; min-width: 0; }
+.review-btn { margin: 6px 0; }
