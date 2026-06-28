@@ -1,19 +1,9 @@
 import { blockTextOffsets } from "./selection";
 import { mapRenderedToSource } from "./map";
 
-function nearestBlock(node: Node | null): HTMLElement | null {
-  let el = node instanceof HTMLElement ? node : node?.parentElement ?? null;
-  while (el && !el.hasAttribute("data-pos-start")) el = el.parentElement;
-  return el;
-}
-
-function wholeBlock(
-  block: HTMLElement,
-): { start: number; end: number } | null {
-  const ps = Number(block.getAttribute("data-pos-start"));
-  const pe = Number(block.getAttribute("data-pos-end"));
-  if (Number.isNaN(ps) || Number.isNaN(pe)) return null;
-  return { start: ps, end: pe };
+// UTF-16 string index → rune (code-point) offset, matching the Go backend's []rune model.
+function toRune(s: string, utf16Index: number): number {
+  return [...s.slice(0, utf16Index)].length;
 }
 
 export function computeAnchor(
@@ -22,27 +12,28 @@ export function computeAnchor(
   range: Range,
 ): { start: number; end: number } | null {
   const sel = blockTextOffsets(root, range);
-  if (!sel) {
-    // blockTextOffsets returns null for selections with no text content (e.g.
-    // a Mermaid block whose only child is an <svg>). Treat a non-collapsed
-    // selection whose nearest block is non-text / Mermaid as a whole-block
-    // anchor.
-    if (range.collapsed) return null;
-    const block = nearestBlock(range.startContainer);
-    if (!block || nearestBlock(range.endContainer) !== block) return null;
-    if (!root.contains(block)) return null;
-    if (block.hasAttribute("data-mermaid") || !(block.textContent ?? "").trim()) {
-      return wholeBlock(block);
-    }
-    return null;
-  }
+  if (!sel) return null;
+  const psAttr = sel.blockEl.getAttribute("data-pos-start");
+  const peAttr = sel.blockEl.getAttribute("data-pos-end");
+  if (psAttr == null || peAttr == null) return null;
+  const ps = Number(psAttr);
+  const pe = Number(peAttr);
+  if (Number.isNaN(ps) || Number.isNaN(pe)) return null;
+
   const rendered = sel.blockEl.textContent ?? "";
-  // Non-text / Mermaid / empty-text blocks: anchor the whole block.
-  if (sel.blockEl.hasAttribute("data-mermaid") || !rendered.trim()) {
-    return wholeBlock(sel.blockEl);
+  let raw: { start: number; end: number };
+  // Non-text blocks (Mermaid/images) or a block containing a rendered Mermaid
+  // diagram: anchor the whole block. querySelector covers the production case
+  // where MermaidBlock's <div data-mermaid> sits inside a stamped <pre>.
+  if (
+    sel.blockEl.hasAttribute("data-mermaid") ||
+    sel.blockEl.querySelector("[data-mermaid]") ||
+    !rendered.trim()
+  ) {
+    raw = { start: ps, end: pe };
+  } else {
+    const m = mapRenderedToSource(source.slice(ps, pe), rendered, sel.rStart, sel.rEnd);
+    raw = { start: ps + m.start, end: ps + m.end };
   }
-  const whole = wholeBlock(sel.blockEl);
-  if (!whole) return null;
-  const m = mapRenderedToSource(source.slice(whole.start, whole.end), rendered, sel.rStart, sel.rEnd);
-  return { start: whole.start + m.start, end: whole.start + m.end };
+  return { start: toRune(source, raw.start), end: toRune(source, raw.end) };
 }

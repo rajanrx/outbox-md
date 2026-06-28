@@ -4,15 +4,14 @@ function nearestBlock(node: Node | null): HTMLElement | null {
   return el;
 }
 
+// Rendered-text offset of (node, offset) within block. Range-based so it works
+// for both text-node containers and element containers (e.g. a selection whose
+// endpoint sits on an SVG <text> element inside a Mermaid diagram).
 function offsetInBlock(block: HTMLElement, node: Node, offset: number): number {
-  let total = 0;
-  const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
-  let n: Node | null;
-  while ((n = walker.nextNode())) {
-    if (n === node) return total + offset;
-    total += n.textContent?.length ?? 0;
-  }
-  return total;
+  const r = document.createRange();
+  r.selectNodeContents(block);
+  r.setEnd(node, offset);
+  return r.toString().length;
 }
 
 export function blockTextOffsets(

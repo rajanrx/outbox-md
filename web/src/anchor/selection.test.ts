@@ -27,3 +27,17 @@ test("returns null when selection spans two blocks", () => {
   range.setEnd(ps[1].firstChild!, 1);
   expect(blockTextOffsets(document.getElementById("root")!, range)).toBeNull();
 });
+
+test("selection inside an inline child resolves to the stamped block", () => {
+  document.body.innerHTML =
+    `<div id="root"><p data-pos-start="0" data-pos-end="20">Hi <strong>brave</strong> world</p></div>`;
+  const strong = document.querySelector("strong")!;
+  const range = document.createRange();
+  range.setStart(strong.firstChild!, 0);
+  range.setEnd(strong.firstChild!, 5);
+  const got = blockTextOffsets(document.getElementById("root")!, range);
+  expect(got).not.toBeNull();
+  expect(got!.blockEl.tagName).toBe("P");
+  expect(got!.rStart).toBe(3);
+  expect(got!.rEnd).toBe(8);
+});
