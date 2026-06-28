@@ -29,7 +29,7 @@ export function Card({ comment, currentContent, onChange }: {
         <div className="card-actions">
           <input value={draft} placeholder="Reply…" onChange={(e) => setDraft(e.target.value)} />
           <button disabled={!draft.trim()} onClick={async () => { await reply(comment.id, draft); setDraft(""); await load(); }}>Reply</button>
-          <button onClick={async () => { await resolve(comment.id); onChange(); }}>Resolve</button>
+          <button className="btn-primary" onClick={async () => { await resolve(comment.id); onChange(); }}>Resolve</button>
         </div>
       )}
       {showDiff && <DiffPanel commentId={comment.id} currentContent={currentContent} onDone={() => { setShowDiff(false); onChange(); }} />}

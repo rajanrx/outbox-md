@@ -1,10 +1,60 @@
-.margin { width: 320px; flex: none; padding: 24px 16px; border-left: 1px solid #d0d7de; overflow-y: auto; }
-.card { border: 1px solid #d0d7de; border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; font-size: 13px; }
-.card-head { display: flex; justify-content: space-between; margin-bottom: 6px; }
-.who { font-weight: 600; } .who-human { color: #2f81f7; } .who-agent { color: #2dd4bf; }
-.status { color: #6e7781; text-transform: capitalize; }
-.margin-new { margin-bottom: 14px; }
-.msg { font-size: 13px; margin: 4px 0; }
-.card-actions { display: flex; gap: 6px; margin-top: 8px; }
-.card-actions input { flex: 1; min-width: 0; }
-.review-btn { margin: 6px 0; }
+/* Comments rail — cards on dark chrome. */
+.margin { padding: 14px 12px 36px; }
+
+.margin-new {
+  margin-bottom: 14px; animation: rise .25s var(--ease) both;
+}
+.margin-new button {
+  width: 100%; padding: 9px 12px; border: 0; border-radius: 9px;
+  background: var(--accent); color: var(--accent-ink); font-weight: 650; font-size: 13px;
+  box-shadow: 0 8px 20px -10px rgba(227,166,63,.7); transition: filter .15s, transform .05s;
+}
+.margin-new button:hover { filter: brightness(1.06); }
+.margin-new button:active { transform: translateY(1px); }
+
+.card {
+  background: var(--chrome-2); border: 1px solid var(--chrome-line); border-radius: var(--radius);
+  padding: 12px 13px; margin-bottom: 11px; font-size: 13px; color: var(--chrome-ink);
+  animation: rise .3s var(--ease) both;
+}
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 9px; }
+.who {
+  font-size: 11px; font-weight: 650; letter-spacing: .3px; padding: 2px 9px; border-radius: 20px;
+}
+.who-human { color: var(--accent); background: var(--accent-soft); }
+.who-agent { color: var(--agent); background: rgba(70,181,166,.14); }
+.status {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .7px; color: var(--chrome-soft);
+  border: 1px solid var(--chrome-line); padding: 2px 8px; border-radius: 20px;
+}
+.status-addressed { color: var(--accent); border-color: rgba(227,166,63,.4); }
+.status-resolved { color: var(--agent); border-color: rgba(70,181,166,.4); }
+.status-detached { color: #d4806a; border-color: rgba(212,128,106,.4); }
+
+.msg { font-size: 12.5px; line-height: 1.5; margin: 5px 0; color: #d7d2c8; }
+.msg b { font-weight: 650; }
+.who-human { } /* used inline on msg author too */
+
+.review-btn {
+  width: 100%; margin: 4px 0 9px; padding: 7px 10px; border-radius: 8px; font-size: 12.5px; font-weight: 600;
+  background: var(--accent-soft); color: var(--accent); border: 1px solid rgba(227,166,63,.4);
+  transition: background .15s;
+}
+.review-btn:hover { background: rgba(227,166,63,.22); }
+
+.card-actions { display: flex; gap: 6px; margin-top: 9px; align-items: center; }
+.card-actions input {
+  flex: 1; min-width: 0; background: var(--chrome); border: 1px solid var(--chrome-line);
+  color: var(--chrome-ink); border-radius: 7px; padding: 6px 9px; font-size: 12.5px; outline: none;
+  transition: border-color .15s;
+}
+.card-actions input::placeholder { color: var(--chrome-soft); }
+.card-actions input:focus { border-color: var(--accent); }
+.card-actions button {
+  border-radius: 7px; padding: 6px 11px; font-size: 12.5px; font-weight: 600; border: 1px solid var(--chrome-line);
+  background: var(--chrome-3); color: var(--chrome-ink); transition: background .15s, opacity .15s;
+}
+.card-actions button:hover:not(:disabled) { background: #34323d; }
+.card-actions button:disabled { opacity: .4; cursor: default; }
+.card-actions .btn-primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+.card-actions .btn-primary:hover:not(:disabled) { filter: brightness(1.06); background: var(--accent); }

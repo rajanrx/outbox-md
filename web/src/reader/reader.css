@@ -1,8 +1,70 @@
-.reader { max-width: 820px; margin: 0 auto; padding: 24px 32px; line-height: 1.6; color: #1f2328; font-family: -apple-system, system-ui, sans-serif; }
-.reader pre { background: #0d1117; padding: 14px; border-radius: 8px; overflow: auto; }
-.reader code { font-family: ui-monospace, monospace; }
-.reader table { border-collapse: collapse; }
-.reader th, .reader td { border: 1px solid #d0d7de; padding: 6px 12px; }
-.reader ::selection { background: #fde68a; }
-.mermaid-block { margin: 16px 0; }
-::highlight(comment) { background: #fde68a; }
+/* Reading surface — editorial, on warm paper. */
+.reader {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 64px 72px 140px;
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 16.5px;
+  line-height: 1.72;
+  animation: rise .4s var(--ease) both;
+}
+
+.reader h1, .reader h2, .reader h3, .reader h4 {
+  font-family: var(--font-display);
+  font-weight: 560;
+  letter-spacing: -0.012em;
+  line-height: 1.12;
+  color: #14130F;
+  margin: 2.2em 0 0.6em;
+}
+.reader h1 { font-size: 2.9rem; font-weight: 600; margin-top: 0; letter-spacing: -0.02em; }
+.reader h2 {
+  font-size: 1.7rem; margin-top: 2.4em; padding-bottom: .28em;
+  border-bottom: 1px solid var(--line);
+}
+.reader h3 { font-size: 1.28rem; }
+.reader h4 { font-size: 1.05rem; font-family: var(--font-ui); font-weight: 650; letter-spacing: 0; color: var(--ink); }
+
+.reader p { margin: 0 0 1.15em; }
+.reader a { color: #B27613; text-decoration: none; border-bottom: 1px solid rgba(178,118,19,.35); }
+.reader a:hover { border-bottom-color: #B27613; }
+.reader strong { font-weight: 660; color: #16140F; }
+.reader em { font-style: italic; }
+.reader hr { border: 0; height: 1px; background: var(--line); margin: 2.4em 0; }
+
+.reader ul, .reader ol { margin: 0 0 1.15em; padding-left: 1.4em; }
+.reader li { margin: 0.3em 0; }
+.reader li::marker { color: var(--accent); }
+
+.reader blockquote {
+  margin: 1.4em 0; padding: 0.4em 1.2em; color: var(--ink-soft);
+  border-left: 3px solid var(--accent); background: var(--paper-2); border-radius: 0 8px 8px 0;
+}
+
+.reader code {
+  font-family: var(--font-mono); font-size: 0.86em;
+  background: var(--paper-2); padding: 0.12em 0.4em; border-radius: 5px;
+  border: 1px solid var(--line);
+}
+.reader pre {
+  background: #1A1820; color: #E7E2D8; border: 1px solid #2A2730;
+  padding: 18px 20px; border-radius: 12px; overflow: auto;
+  margin: 1.4em 0; font-size: 13.5px; line-height: 1.6;
+  box-shadow: 0 14px 34px -22px rgba(20,15,5,.5);
+}
+.reader pre code { background: none; border: 0; padding: 0; font-size: inherit; color: inherit; }
+
+.reader table { border-collapse: separate; border-spacing: 0; width: 100%; margin: 1.4em 0; font-size: 0.94em; }
+.reader thead th { background: var(--paper-2); }
+.reader th, .reader td { border-bottom: 1px solid var(--line); padding: 9px 14px; text-align: left; vertical-align: top; }
+.reader tr:last-child td { border-bottom: 0; }
+.reader th { font-weight: 650; color: var(--ink); }
+
+.reader ::selection { background: rgba(227,166,63,.30); }
+
+.mermaid-block {
+  margin: 1.8em 0; padding: 22px; background: #fff; border: 1px solid var(--line);
+  border-radius: 14px; overflow: auto; box-shadow: 0 18px 40px -28px rgba(20,15,5,.35);
+}
+.mermaid-block svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
