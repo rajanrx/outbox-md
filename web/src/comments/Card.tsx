@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { getThread, reply, resolve, type Comment, type ThreadMessage } from "../api";
 import { DiffPanel } from "../suggestion/DiffPanel";
 
-export function Card({ comment, currentContent, active = false, onActivate, onChange }: {
+export function Card({ comment, currentContent, active = false, offscreen = false, onActivate, onJump, onChange }: {
   comment: Comment;
   currentContent: string;
   active?: boolean;
+  offscreen?: boolean;
   onActivate?: () => void;
+  onJump?: () => void;
   onChange: () => void;
 }) {
   const [thread, setThread] = useState<ThreadMessage[]>([]);
@@ -25,6 +27,11 @@ export function Card({ comment, currentContent, active = false, onActivate, onCh
         <span className={`who who-${comment.authorIdentity}`}>{comment.authorIdentity}</span>
         <span className={`status status-${comment.status}`}>{comment.status}</span>
       </div>
+      {offscreen && (
+        <button className="jump-btn" onClick={(e) => { e.stopPropagation(); onJump?.(); }}>
+          ↑ Scroll to text
+        </button>
+      )}
       {thread.map((m) => (
         <div key={m.id} className="msg"><b className={`who-${m.authorIdentity}`}>{m.authorIdentity}:</b> {m.body}</div>
       ))}

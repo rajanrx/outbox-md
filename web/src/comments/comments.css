@@ -1,5 +1,22 @@
-/* Comments rail — cards on dark chrome. */
+/* Comments rail. */
 .margin { padding: 14px 12px 36px; }
+
+/* comment navigator — position + prev/next */
+.margin-nav {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  margin-bottom: 14px; padding: 6px;
+  background: var(--chrome-2); border: 1px solid var(--chrome-line); border-radius: 9px;
+}
+.margin-nav button {
+  width: 28px; height: 28px; border: 1px solid var(--chrome-line); border-radius: 7px;
+  background: var(--chrome); color: var(--ink); font-size: 16px; line-height: 1;
+  display: grid; place-items: center; transition: background .12s, border-color .12s;
+}
+.margin-nav button:hover { background: var(--chrome-3); border-color: var(--accent); color: var(--accent); }
+.margin-nav .pos {
+  font-size: 12.5px; font-weight: 600; color: var(--ink-soft); min-width: 52px; text-align: center;
+  font-variant-numeric: tabular-nums;
+}
 
 .margin-new {
   margin-bottom: 14px; animation: rise .25s var(--ease) both;
@@ -39,6 +56,14 @@
 .msg { font-size: 12.5px; line-height: 1.5; margin: 5px 0; color: var(--ink); }
 .msg b { font-weight: 650; }
 .who-human { } /* used inline on msg author too */
+
+.jump-btn {
+  width: 100%; margin: 0 0 9px; padding: 6px 10px; border-radius: 8px;
+  font-size: 12px; font-weight: 600; text-align: center;
+  background: var(--accent-soft); color: var(--accent); border: 1px solid rgba(196,125,18,.35);
+  transition: background .15s;
+}
+.jump-btn:hover { background: rgba(196,125,18,.2); }
 
 .review-btn {
   width: 100%; margin: 4px 0 9px; padding: 7px 10px; border-radius: 8px; font-size: 12.5px; font-weight: 600;

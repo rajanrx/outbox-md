@@ -1,8 +1,10 @@
 /* Reading surface — editorial, on warm paper. */
 .reader {
-  max-width: 980px;
+  /* fluid: fill the pane so collapsing a panel actually widens the text.
+     padding is pane-relative (%), so it scales as panels open/close. */
+  max-width: none;
   margin: 0 auto;
-  padding: 56px 64px 140px;
+  padding: 56px clamp(40px, 8%, 150px) 140px;
   color: var(--ink);
   font-family: var(--font-ui);
   font-size: 16.5px;
@@ -17,6 +19,7 @@
   line-height: 1.12;
   color: #14130F;
   margin: 2.2em 0 0.6em;
+  scroll-margin-top: 24px;
 }
 .reader h1 { font-size: 2.9rem; font-weight: 600; margin-top: 0; letter-spacing: -0.02em; }
 .reader h2 {
@@ -48,12 +51,13 @@
   border: 1px solid var(--line);
 }
 .reader pre {
-  background: #1A1820; color: #E7E2D8; border: 1px solid #2A2730;
-  padding: 18px 20px; border-radius: 12px; overflow: auto;
+  background: var(--paper-2); color: var(--ink); border: 1px solid var(--line);
+  padding: 16px 18px; border-radius: 10px; overflow: auto;
   margin: 1.4em 0; font-size: 13.5px; line-height: 1.6;
-  box-shadow: 0 14px 34px -22px rgba(20,15,5,.5);
 }
 .reader pre code { background: none; border: 0; padding: 0; font-size: inherit; color: inherit; }
+/* a mermaid diagram lives inside a <pre> — drop the code-block frame so it blends */
+.reader pre:has(.mermaid-block) { background: none; border: 0; padding: 0; margin: 0; }
 
 .reader table { border-collapse: separate; border-spacing: 0; width: 100%; margin: 1.4em 0; font-size: 0.94em; }
 .reader thead th { background: var(--paper-2); }
@@ -63,10 +67,9 @@
 
 .reader ::selection { background: rgba(227,166,63,.30); }
 
+/* diagrams float on the page — no heavy frame */
 .mermaid-block {
-  margin: 1.8em 0; padding: 26px; background: #fff; border: 1px solid var(--line);
-  border-radius: 14px; overflow: auto; box-shadow: 0 18px 40px -28px rgba(20,15,5,.18);
+  margin: 2em 0; padding: 8px 0; overflow: auto; text-align: center;
 }
-/* fill the reader width so diagrams render large and legible */
 .mermaid-block svg { display: block; margin: 0 auto; width: 100%; height: auto; max-width: 760px; }
 .mermaid-block.wide svg { max-width: 100%; }
