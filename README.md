@@ -50,8 +50,8 @@ The 2-minute **intro** is at the top. Two more, for going deeper:
 <table>
 <tr>
 <td width="50%" valign="top">
-  <a href="https://www.youtube.com/watch?v=0RwuXV6jmKY"><img src="docs/media/tutorial-thumb.png" alt="Tutorial" width="100%"></a>
-  <p align="center"><b>▶ <a href="https://www.youtube.com/watch?v=0RwuXV6jmKY">Using outbox-md</a></b><br/>Run it → comment → connect an agent → accept</p>
+  <a href="https://www.youtube.com/watch?v=4VH7NT095ms"><img src="docs/media/tutorial-thumb.png" alt="Tutorial" width="100%"></a>
+  <p align="center"><b>▶ <a href="https://www.youtube.com/watch?v=4VH7NT095ms">Using outbox-md</a></b><br/>Run it → comment → connect an agent → accept</p>
 </td>
 <td width="50%" valign="top">
   <a href="https://www.youtube.com/watch?v=VmuwLniMU9M"><img src="docs/media/deepdive-thumb.png" alt="Deep dive" width="100%"></a>
