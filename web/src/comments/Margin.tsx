@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { computeAnchor } from "../anchor/anchor";
 import { rangeForAnchor, commentAtPoint } from "../anchor/highlight";
 import { postComment, reply, type Comment } from "../api";
@@ -50,7 +50,6 @@ export function Margin({ docId, content, rootRef, comments, onChange }: {
   const [focused, setFocused] = useState<string | null>(null);
   const [offscreen, setOffscreen] = useState<Set<string>>(new Set());
   const [pinned, setPinned] = useState<Set<string>>(new Set());
-  const lockUntil = useRef(0); // suppress scroll-driven focus during programmatic scroll
 
   // Load pins for the current doc (persisted in localStorage).
   useEffect(() => {
@@ -66,7 +65,6 @@ export function Margin({ docId, content, rootRef, comments, onChange }: {
 
   // Jump the reader to a comment and focus it (explicit navigation).
   const jumpTo = (c: Comment) => {
-    lockUntil.current = performance.now() + 700;
     setFocused(c.id);
     if (rootRef.current) scrollReaderToAnchor(rootRef.current, content, c.anchor);
   };
@@ -76,8 +74,9 @@ export function Margin({ docId, content, rootRef, comments, onChange }: {
     if (rootRef.current) paintHighlights(rootRef.current, content, comments, focused);
   }, [comments, content, focused, rootRef]);
 
-  // As the reader scrolls, focus the comment nearest the top of the viewport and
-  // track which comments are off-screen (so pinned cards can offer a jump button).
+  // Track which comments' anchored text is off-screen so a focused/pinned card
+  // can offer a "scroll to text" button. The shown comment never changes on
+  // scroll — only on click or prev/next.
   useEffect(() => {
     const root = rootRef.current;
     const pane = root && paneOf(root);
@@ -86,21 +85,15 @@ export function Margin({ docId, content, rootRef, comments, onChange }: {
     const compute = () => {
       raf = 0;
       const pr = pane.getBoundingClientRect();
-      const anchorLine = pr.top + 120;
       const off = new Set<string>();
-      let best: string | null = null;
-      let bestDist = Infinity;
       for (const c of comments) {
         if (c.status === "resolved") continue;
         const r = rangeForAnchor(root, content, c.anchor);
         if (!r) continue;
         const b = r.getBoundingClientRect();
         if (b.bottom < pr.top + 8 || b.top > pr.bottom - 8) off.add(c.id);
-        const dist = Math.abs(b.top - anchorLine);
-        if (dist < bestDist) { bestDist = dist; best = c.id; }
       }
       setOffscreen(off);
-      if (best && performance.now() >= lockUntil.current) setFocused(best);
     };
     const onScroll = () => { if (!raf) raf = requestAnimationFrame(compute); };
     compute();
@@ -206,7 +199,7 @@ export function Margin({ docId, content, rootRef, comments, onChange }: {
 
       {!shown.length && !pending && (
         <div className="margin-empty">
-          {total > 0 ? "Scroll to a highlighted passage, or use ‹ › to step through comments." : "Select text in the document to add a comment."}
+          {total > 0 ? "Click a highlighted passage, or use ‹ › to step through comments." : "Select text in the document to add a comment."}
         </div>
       )}
     </div>
