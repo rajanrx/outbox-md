@@ -21,8 +21,8 @@
 /* new-comment composer */
 .margin-new {
   margin-bottom: 14px; padding: 10px; animation: rise .25s var(--ease) both;
-  background: var(--chrome-2); border: 1px solid var(--accent); border-radius: var(--radius);
-  box-shadow: 0 10px 26px -16px rgba(196,125,18,.5);
+  background: var(--chrome-2); border: 1px solid rgba(196,125,18,.28); border-radius: var(--radius);
+  box-shadow: 0 4px 16px -14px rgba(196,125,18,.25);
 }
 .margin-new textarea {
   width: 100%; min-height: 64px; resize: vertical; box-sizing: border-box;
@@ -52,7 +52,7 @@
   animation: rise .3s var(--ease) both; cursor: pointer;
   transition: border-color .15s, box-shadow .15s;
 }
-.card.active { border-color: var(--accent); box-shadow: 0 6px 20px -14px rgba(196,125,18,.5); }
+.card.active { border-color: rgba(196,125,18,.22); box-shadow: 0 3px 14px -12px rgba(196,125,18,.25); }
 .card.pinned { border-left: 3px solid var(--accent); }
 
 .card-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
