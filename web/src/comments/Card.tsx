@@ -15,6 +15,8 @@ const PinIcon = ({ filled }: { filled: boolean }) => (
   </svg>
 );
 
+const initial = (who: string) => (who?.[0] || "?").toUpperCase();
+
 export function Card({ comment, currentContent, active = false, pinned = false, offscreen = false, onActivate, onJump, onTogglePin, onChange }: {
   comment: Comment;
   currentContent: string;
@@ -37,12 +39,12 @@ export function Card({ comment, currentContent, active = false, pinned = false, 
   }, [active]);
 
   const stop = (e: React.MouseEvent, fn?: () => void) => { e.stopPropagation(); fn?.(); };
+  const sendReply = async () => { if (!draft.trim()) return; await reply(comment.id, draft); setDraft(""); await load(); };
 
   return (
     <div ref={ref} className={"card" + (active ? " active" : "") + (pinned ? " pinned" : "")} data-comment={comment.id} onClick={onActivate}>
-      <div className="card-head">
-        <span className={`who who-${comment.authorIdentity}`}>{comment.authorIdentity}</span>
-        <span className={`status status-${comment.status}`}>{comment.status}</span>
+      <div className="card-bar">
+        <span className={`status-tag status-${comment.status}`}>{comment.status}</span>
         <span className="card-tools">
           {offscreen && (
             <button className="ic-btn" title="Scroll to text" aria-label="Scroll to text" onClick={(e) => stop(e, onJump)}><LocateIcon /></button>
@@ -50,23 +52,36 @@ export function Card({ comment, currentContent, active = false, pinned = false, 
           <button className={"ic-btn" + (pinned ? " on" : "")} title={pinned ? "Unpin" : "Pin"} aria-label={pinned ? "Unpin" : "Pin"} onClick={(e) => stop(e, onTogglePin)}><PinIcon filled={pinned} /></button>
         </span>
       </div>
-      {thread.length === 0 && <div className="msg msg-empty">No comment text yet.</div>}
-      {thread.map((m) => (
-        <div key={m.id} className="msg">
-          <span className={`msg-who who-${m.authorIdentity}`}>{m.authorIdentity}</span>
-          <span className="msg-body">{m.body}</span>
-        </div>
-      ))}
+
+      <div className="posts">
+        {thread.length === 0 && <div className="post-empty">No comment text yet.</div>}
+        {thread.map((m) => (
+          <div key={m.id} className="post">
+            <span className={`avatar who-${m.authorIdentity}`}>{initial(m.authorIdentity)}</span>
+            <div className="post-main">
+              <div className="post-author">{m.authorIdentity}</div>
+              <div className="post-text">{m.body}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
       {comment.status === "addressed" && (
         <button className="review-btn" onClick={(e) => stop(e, () => setShowDiff(true))}>Review suggestion</button>
       )}
+
       {comment.status !== "resolved" && (
         <div className="card-actions" onClick={(e) => e.stopPropagation()}>
-          <input value={draft} placeholder="Reply…" onChange={(e) => setDraft(e.target.value)} />
-          <button disabled={!draft.trim()} onClick={async () => { await reply(comment.id, draft); setDraft(""); await load(); }}>Reply</button>
-          <button className="btn-primary" onClick={async () => { await resolve(comment.id); onChange(); }}>Resolve</button>
+          <input
+            value={draft} placeholder="Reply…"
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendReply(); } }}
+          />
+          <button className="link-btn" disabled={!draft.trim()} onClick={sendReply}>Reply</button>
+          <button className="link-btn resolve" onClick={async () => { await resolve(comment.id); onChange(); }}>Resolve</button>
         </div>
       )}
+
       {showDiff && <DiffPanel commentId={comment.id} currentContent={currentContent} onDone={() => { setShowDiff(false); onChange(); }} />}
     </div>
   );

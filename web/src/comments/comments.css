@@ -45,70 +45,74 @@
   color: var(--chrome-soft);
 }
 
+/* ── comment card — clean, Jira-like ── */
 .card {
   background: var(--chrome-2); border: 1px solid var(--chrome-line); border-radius: var(--radius);
-  padding: 12px 13px; margin-bottom: 11px; font-size: 13px; color: var(--chrome-ink);
+  padding: 10px 12px 12px; margin-bottom: 11px; color: var(--ink);
   animation: rise .3s var(--ease) both; cursor: pointer;
   transition: border-color .15s, box-shadow .15s;
 }
-.card.active {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent), 0 10px 26px -16px rgba(196,125,18,.55);
-}
+.card.active { border-color: var(--accent); box-shadow: 0 6px 20px -14px rgba(196,125,18,.5); }
 .card.pinned { border-left: 3px solid var(--accent); }
-.card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
+
+.card-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.status-tag {
+  font-size: 11px; font-weight: 600; text-transform: capitalize; color: var(--chrome-soft);
+}
+.status-tag::before {
+  content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+  background: currentColor; margin-right: 6px; vertical-align: 1px;
+}
+.status-open { color: var(--accent); }
+.status-addressed { color: var(--accent); }
+.status-resolved { color: var(--agent); }
+.status-detached { color: #c9603f; }
+
 .card-tools { margin-left: auto; display: flex; align-items: center; gap: 2px; }
 .ic-btn {
-  width: 26px; height: 26px; display: grid; place-items: center; border-radius: 6px;
-  background: transparent; border: 1px solid transparent; color: var(--chrome-soft);
-  transition: background .12s, color .12s, border-color .12s;
+  width: 24px; height: 24px; display: grid; place-items: center; border-radius: 6px;
+  background: transparent; border: 0; color: var(--chrome-soft);
+  transition: background .12s, color .12s;
 }
-.ic-btn:hover { background: var(--chrome-3); color: var(--accent); border-color: var(--chrome-line); }
+.ic-btn:hover { background: var(--chrome-3); color: var(--accent); }
 .ic-btn.on { color: var(--accent); }
 .ic-btn svg { width: 15px; height: 15px; }
-.who {
-  font-size: 11px; font-weight: 650; letter-spacing: .3px; padding: 2px 9px; border-radius: 20px;
-}
-.who-human { color: var(--accent); background: var(--accent-soft); }
-.who-agent { color: var(--agent); background: rgba(70,181,166,.14); }
-.status {
-  font-size: 10px; text-transform: uppercase; letter-spacing: .7px; color: var(--chrome-soft);
-  border: 1px solid var(--chrome-line); padding: 2px 8px; border-radius: 20px;
-}
-.status-addressed { color: var(--accent); border-color: rgba(227,166,63,.4); }
-.status-resolved { color: var(--agent); border-color: rgba(70,181,166,.4); }
-.status-detached { color: #d4806a; border-color: rgba(212,128,106,.4); }
 
-/* forum-style thread posts */
-.msg {
-  display: flex; flex-direction: column; gap: 3px;
-  padding: 8px 10px; margin: 6px 0; border-radius: 8px;
-  background: var(--chrome); border: 1px solid var(--chrome-line);
+/* thread posts: avatar + name + body, no boxes */
+.posts { display: flex; flex-direction: column; gap: 12px; }
+.post { display: flex; gap: 9px; align-items: flex-start; }
+.avatar {
+  flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 11px; font-weight: 700; color: #fff; background: var(--chrome-soft);
 }
-.msg-who { font-size: 11px; font-weight: 650; letter-spacing: .2px; }
-.msg-body { font-size: 12.5px; line-height: 1.5; color: var(--ink); white-space: pre-wrap; }
-.msg-empty { color: var(--chrome-soft); font-style: italic; background: none; border: 0; padding: 4px 0; }
+.avatar.who-human { background: var(--accent); }
+.avatar.who-agent { background: var(--agent); }
+.post-main { min-width: 0; flex: 1; }
+.post-author { font-size: 12.5px; font-weight: 650; text-transform: capitalize; color: var(--ink); line-height: 1.3; }
+.post-text { font-size: 13px; line-height: 1.55; color: var(--ink); white-space: pre-wrap; margin-top: 1px; }
+.post-empty { font-size: 12.5px; color: var(--chrome-soft); font-style: italic; }
 
 .review-btn {
-  width: 100%; margin: 4px 0 9px; padding: 7px 10px; border-radius: 8px; font-size: 12.5px; font-weight: 600;
-  background: var(--accent-soft); color: var(--accent); border: 1px solid rgba(227,166,63,.4);
+  width: 100%; margin: 10px 0 0; padding: 7px 10px; border-radius: 8px; font-size: 12.5px; font-weight: 600;
+  background: var(--accent-soft); color: var(--accent); border: 1px solid rgba(196,125,18,.3);
   transition: background .15s;
 }
-.review-btn:hover { background: rgba(227,166,63,.22); }
+.review-btn:hover { background: rgba(196,125,18,.18); }
 
-.card-actions { display: flex; gap: 6px; margin-top: 9px; align-items: center; }
+/* reply row: plain input + subtle text actions */
+.card-actions { display: flex; gap: 4px; margin-top: 12px; align-items: center; }
 .card-actions input {
   flex: 1; min-width: 0; background: var(--chrome); border: 1px solid var(--chrome-line);
-  color: var(--chrome-ink); border-radius: 7px; padding: 6px 9px; font-size: 12.5px; outline: none;
+  color: var(--ink); border-radius: 7px; padding: 7px 10px; font-size: 12.5px; outline: none;
   transition: border-color .15s;
 }
 .card-actions input::placeholder { color: var(--chrome-soft); }
 .card-actions input:focus { border-color: var(--accent); }
-.card-actions button {
-  border-radius: 7px; padding: 6px 11px; font-size: 12.5px; font-weight: 600; border: 1px solid var(--chrome-line);
-  background: var(--chrome-3); color: var(--chrome-ink); transition: background .15s, opacity .15s;
+.link-btn {
+  flex: none; background: none; border: 0; padding: 6px 8px; border-radius: 6px;
+  font-size: 12.5px; font-weight: 600; color: var(--ink-soft); transition: background .12s, color .12s;
 }
-.card-actions button:hover:not(:disabled) { background: var(--chrome-3); }
-.card-actions button:disabled { opacity: .4; cursor: default; }
-.card-actions .btn-primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
-.card-actions .btn-primary:hover:not(:disabled) { filter: brightness(1.06); background: var(--accent); }
+.link-btn:hover:not(:disabled) { background: var(--chrome-3); color: var(--ink); }
+.link-btn:disabled { opacity: .4; cursor: default; }
+.link-btn.resolve { color: var(--agent); }
+.link-btn.resolve:hover { background: rgba(43,140,127,.12); color: var(--agent); }
