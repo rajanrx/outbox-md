@@ -202,3 +202,47 @@ func (s *Service) Accept(commentID string) (domain.Version, error) {
 	}
 	return newVer, nil
 }
+
+// Approve pins the current version as the approved baseline. Valid only from
+// draft; the on-disk file already equals the current version, so no rewrite is
+// needed. Identity is server-set (LocalHuman), never taken from the request.
+func (s *Service) Approve(docID, note string) (domain.Approval, error) {
+	doc, err := s.store.GetDocument(docID)
+	if err != nil {
+		return domain.Approval{}, err
+	}
+	if doc.Status != domain.DocDraft {
+		return domain.Approval{}, errors.New("already approved — use re-approve")
+	}
+	if err := s.store.SetDocumentApproval(docID, doc.CurrentVersionID, domain.DocApproved); err != nil {
+		return domain.Approval{}, err
+	}
+	return s.store.CreateApproval(domain.Approval{
+		DocID: docID, VersionID: doc.CurrentVersionID, ApprovedBy: LocalHuman, Note: note,
+	})
+}
+
+// Reapprove advances the baseline to the working head and writes it to disk.
+// Valid only while amending with pending changes ahead of the baseline.
+func (s *Service) Reapprove(docID, note string) (domain.Approval, error) {
+	doc, err := s.store.GetDocument(docID)
+	if err != nil {
+		return domain.Approval{}, err
+	}
+	if doc.Status != domain.DocAmending || doc.CurrentVersionID == doc.ApprovedVersionID {
+		return domain.Approval{}, errors.New("nothing to re-approve")
+	}
+	ver, err := s.store.GetVersion(doc.CurrentVersionID)
+	if err != nil {
+		return domain.Approval{}, err
+	}
+	if err := s.writeFile(doc.Path, ver.Content); err != nil {
+		return domain.Approval{}, err
+	}
+	if err := s.store.SetDocumentApproval(docID, doc.CurrentVersionID, domain.DocApproved); err != nil {
+		return domain.Approval{}, err
+	}
+	return s.store.CreateApproval(domain.Approval{
+		DocID: docID, VersionID: doc.CurrentVersionID, ApprovedBy: LocalHuman, Note: note,
+	})
+}

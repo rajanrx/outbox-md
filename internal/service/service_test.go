@@ -269,3 +269,37 @@ func TestRejectSuggestionReopens(t *testing.T) {
 		t.Fatalf("status = %s, want open", got.Status)
 	}
 }
+
+func TestApprovePinsBaseline(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _ string) error { return nil })
+	doc, _, _ := s.CreateDocument("a.md", "v1", "human")
+
+	app, err := svc.Approve(doc.ID, "looks good")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if app.ApprovedBy != "human" {
+		t.Errorf("approvedBy = %q, want human", app.ApprovedBy)
+	}
+	got, _ := s.GetDocument(doc.ID)
+	if got.Status != domain.DocApproved || got.ApprovedVersionID != doc.CurrentVersionID {
+		t.Fatalf("doc = %+v, want approved at current version", got)
+	}
+	// Approving again is rejected — use re-approve.
+	if _, err := svc.Approve(doc.ID, ""); err == nil {
+		t.Error("second approve should be rejected")
+	}
+}
+
+func TestReapproveRejectedWhenNothingPending(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _ string) error { return nil })
+	doc, _, _ := s.CreateDocument("a.md", "v1", "human")
+	_, _ = svc.Approve(doc.ID, "")
+	if _, err := svc.Reapprove(doc.ID, ""); err == nil {
+		t.Error("reapprove on approved doc with no pending changes should be rejected")
+	}
+}
