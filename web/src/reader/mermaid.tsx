@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import mermaid from "mermaid";
 
-mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "strict" });
+mermaid.initialize({ startOnLoad: false, theme: "default", securityLevel: "strict" });
 
 export function MermaidBlock({ chart }: { chart: string }) {
   const [svg, setSvg] = useState<string>("");
