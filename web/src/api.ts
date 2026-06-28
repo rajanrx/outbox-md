@@ -1,5 +1,4 @@
-import type { Anchor } from "./lib/selection";
-export type { Anchor };
+export type Anchor = { start: number; end: number };
 
 export type Comment = {
   id: string;
