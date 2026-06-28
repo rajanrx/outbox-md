@@ -8,3 +8,22 @@ node_modules/
 # that lets the Go `embed` directive compile without a frontend build.
 web/dist/*
 !web/dist/index.html
+
+# Video render intermediates — ignore the per-video work/ dirs, keep final outputs
+docs/media/out/*/work/
+
+# Python
+__pycache__/
+*.pyc
+
+# Background music track (free-to-use; fetched via docs/media/bgm/CREDITS.md, not redistributed here)
+docs/media/bgm/*.mp3
+docs/media/out/**/*.mp3
+
+# Video scripts (kept locally, not committed)
+docs/media/*.script.json
+
+# Video tooling & docs kept local — repo carries only the finished multimedia
+*.py
+docs/media/bgm/
+docs/specs/2026-06-28-intro-videos-design.md

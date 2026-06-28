@@ -2,6 +2,16 @@
 
 > Local-first, agent-agnostic review for AI-generated Markdown specs.
 
+<div align="center">
+
+<a href="https://www.youtube.com/watch?v=CNT49m0xBOY">
+  <img src="docs/media/explainer-thumb.png" alt="Watch: What is outbox-md?" width="100%">
+</a>
+
+<em>▶ <b><a href="https://www.youtube.com/watch?v=CNT49m0xBOY">What is outbox-md?</a></b> — the 2-minute intro</em>
+
+</div>
+
 **Status:** pre-alpha — walking skeleton.
 
 Read and inline-annotate AI-generated Markdown. Your comments never edit the document directly — they enter an ordered **outbox** and are processed asynchronously by any AI agent connected over MCP. The agent proposes a tracked change or replies in a thread; you accept, and the file is rewritten and versioned. The document is never corrupted.
@@ -20,6 +30,27 @@ docker run --rm -p 8080:8080 -e OUTBOX_DEV=1 -v "$PWD/sample:/data" outbox-md:de
 ```
 
 Agents connect over MCP at `http://localhost:8080/mcp` (Streamable HTTP). With `OUTBOX_DEV=1`, the agent loop can also be driven over HTTP for testing (`/api/dev/claim`, `/api/dev/propose`).
+
+## Watch & learn
+
+The 2-minute **intro** is at the top. Two more, for going deeper:
+
+<div align="center">
+<table>
+<tr>
+<td width="50%" valign="top">
+  <a href="https://www.youtube.com/watch?v=0RwuXV6jmKY"><img src="docs/media/tutorial-thumb.png" alt="Tutorial" width="100%"></a>
+  <p align="center"><b>▶ <a href="https://www.youtube.com/watch?v=0RwuXV6jmKY">Using outbox-md</a></b><br/>Run it → comment → connect an agent → accept</p>
+</td>
+<td width="50%" valign="top">
+  <a href="https://www.youtube.com/watch?v=VmuwLniMU9M"><img src="docs/media/deepdive-thumb.png" alt="Deep dive" width="100%"></a>
+  <p align="center"><b>▶ <a href="https://www.youtube.com/watch?v=VmuwLniMU9M">Architecture &amp; Vision</a></b><br/>The hard parts and where it's headed — for builders</p>
+</td>
+</tr>
+</table>
+</div>
+
+A podcast-style Q&A between **Andrew** and **Ava** — narration via [edge-tts](https://github.com/rany2/edge-tts) (no API key), slides via Pillow, assembly via ffmpeg. Background music: *"Coffee & Streets"* by [Aylex](https://aylex.net) (no-copyright), mixed at 16%.
 
 ## Design
 
