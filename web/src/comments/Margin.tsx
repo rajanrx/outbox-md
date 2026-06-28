@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { computeAnchor } from "../anchor/anchor";
 import { rangeForAnchor, commentAtPoint } from "../anchor/highlight";
 import { postComment, reply, type Comment } from "../api";
@@ -50,6 +50,8 @@ export function Margin({ docId, content, rootRef, comments, onChange }: {
   const [focused, setFocused] = useState<string | null>(null);
   const [offscreen, setOffscreen] = useState<Set<string>>(new Set());
   const [pinned, setPinned] = useState<Set<string>>(new Set());
+  // anchored DOM ranges, computed off the scroll path so scrolling stays smooth
+  const rangeCache = useRef<Map<string, Range>>(new Map());
 
   // Load pins for the current doc (persisted in localStorage).
   useEffect(() => {
@@ -74,32 +76,44 @@ export function Margin({ docId, content, rootRef, comments, onChange }: {
     if (rootRef.current) paintHighlights(rootRef.current, content, comments, focused);
   }, [comments, content, focused, rootRef]);
 
+  // Rebuild the anchored-range cache only when comments/content change (the
+  // expensive diff-match-patch mapping). Never on scroll.
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const m = new Map<string, Range>();
+    for (const c of comments) {
+      if (c.status === "resolved") continue;
+      const r = rangeForAnchor(root, content, c.anchor);
+      if (r) m.set(c.id, r);
+    }
+    rangeCache.current = m;
+  }, [comments, content, rootRef]);
+
   // Track which comments' anchored text is off-screen so a focused/pinned card
   // can offer a "scroll to text" button. The shown comment never changes on
-  // scroll — only on click or prev/next.
+  // scroll — only on click or prev/next. This runs on the scroll path, so it
+  // only reads cached rects (cheap) and only sets state when the set changes.
   useEffect(() => {
     const root = rootRef.current;
     const pane = root && paneOf(root);
-    if (!root || !pane) return;
+    if (!pane) return;
     let raf = 0;
     const compute = () => {
       raf = 0;
       const pr = pane.getBoundingClientRect();
       const off = new Set<string>();
-      for (const c of comments) {
-        if (c.status === "resolved") continue;
-        const r = rangeForAnchor(root, content, c.anchor);
-        if (!r) continue;
+      for (const [cid, r] of rangeCache.current) {
         const b = r.getBoundingClientRect();
-        if (b.bottom < pr.top + 8 || b.top > pr.bottom - 8) off.add(c.id);
+        if (b.bottom < pr.top + 8 || b.top > pr.bottom - 8) off.add(cid);
       }
-      setOffscreen(off);
+      setOffscreen((prev) => (prev.size === off.size && [...off].every((x) => prev.has(x)) ? prev : off));
     };
     const onScroll = () => { if (!raf) raf = requestAnimationFrame(compute); };
     compute();
     pane.addEventListener("scroll", onScroll, { passive: true });
     return () => { pane.removeEventListener("scroll", onScroll); if (raf) cancelAnimationFrame(raf); };
-  }, [comments, content, rootRef]);
+  }, [comments, rootRef]);
 
   // Click a marked passage → focus its thread.
   useEffect(() => {
@@ -150,12 +164,15 @@ export function Margin({ docId, content, rootRef, comments, onChange }: {
   if (focusedC) shown.push(focusedC);
   for (const c of comments) if (pinned.has(c.id) && c.id !== focused) shown.push(c);
 
-  const idx = comments.findIndex((c) => c.id === focused);
-  const total = comments.length;
+  // Navigate only open comments — resolved ones have no highlight, so landing on
+  // them scrolls to an unmarked spot. Resolved are reachable only by their thread.
+  const navComments = comments.filter((c) => c.status !== "resolved");
+  const idx = navComments.findIndex((c) => c.id === focused);
+  const total = navComments.length;
   const go = (delta: number) => {
     if (!total) return;
     const base = idx < 0 ? (delta > 0 ? -1 : 0) : idx;
-    jumpTo(comments[(base + delta + total) % total]);
+    jumpTo(navComments[(base + delta + total) % total]);
   };
 
   return (
