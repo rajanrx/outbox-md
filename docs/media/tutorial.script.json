@@ -1,6 +1,8 @@
 {
   "title": "Using outbox-md",
   "gif": false,
+  "bgm": "docs/media/bgm/coffee-and-streets.mp3",
+  "bgm_volume": 0.16,
   "slides": [
     { "id": 0, "kind": "title", "title": "Using outbox-md", "subtitle": "From zero to your first AI-applied edit" },
     { "id": 1, "kind": "bullets", "title": "1 · Run it", "bullets": [

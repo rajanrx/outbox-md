@@ -1,6 +1,8 @@
 {
   "title": "What is outbox-md?",
   "gif": true,
+  "bgm": "docs/media/bgm/coffee-and-streets.mp3",
+  "bgm_volume": 0.16,
   "slides": [
     { "id": 0, "kind": "title", "title": "outbox-md", "subtitle": "Safe, async review for AI-generated Markdown specs" },
     { "id": 1, "kind": "bullets", "title": "The problem", "bullets": [

@@ -15,3 +15,6 @@ docs/media/out/
 # Python
 __pycache__/
 *.pyc
+
+# Background music track (free-to-use; fetched via docs/media/bgm/CREDITS.md, not redistributed here)
+docs/media/bgm/*.mp3

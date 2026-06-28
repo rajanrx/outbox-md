@@ -32,19 +32,20 @@ Agents connect over MCP at `http://localhost:8080/mcp` (Streamable HTTP). With `
 
 ## Watch & learn
 
-| Explainer — *"What is outbox-md?"* | Tutorial — *"Using outbox-md"* |
-|:---:|:---:|
-| [![Explainer](docs/media/explainer-thumb.png)](https://youtu.be/REPLACE_WITH_EXPLAINER_VIDEO_ID) | [![Tutorial](docs/media/tutorial-thumb.png)](https://youtu.be/REPLACE_WITH_TUTORIAL_VIDEO_ID) |
-| The problem, the outbox model, and how to contribute | Run it → comment → connect an agent → accept |
+| Explainer — *"What is outbox-md?"* | Tutorial — *"Using outbox-md"* | Deep dive — *"Architecture & vision"* |
+|:---:|:---:|:---:|
+| [![Explainer](docs/media/explainer-thumb.png)](https://youtu.be/REPLACE_WITH_EXPLAINER_VIDEO_ID) | [![Tutorial](docs/media/tutorial-thumb.png)](https://youtu.be/REPLACE_WITH_TUTORIAL_VIDEO_ID) | [![Deep dive](docs/media/deepdive-thumb.png)](https://youtu.be/REPLACE_WITH_DEEPDIVE_VIDEO_ID) |
+| The problem, the outbox model, and how to contribute | Run it → comment → connect an agent → accept | Architecture, the hard parts, and where it's headed (for builders) |
 
 The videos are a podcast-style Q&A between **Andrew** and **Ava**, rendered from committed scripts and slides:
 
 ```bash
 python3 scripts/build_video.py docs/media/explainer.script.json docs/media/out/explainer
 python3 scripts/build_video.py docs/media/tutorial.script.json  docs/media/out/tutorial
+python3 scripts/build_video.py docs/media/deepdive.script.json  docs/media/out/deepdive
 ```
 
-Narration uses [edge-tts](https://github.com/rany2/edge-tts) (Andrew/Ava neural voices, no API key); slides are rendered with Pillow; assembly is ffmpeg. Edit the `*.script.json` files and re-run to update. The MP4s live on YouTube; only the scripts, slides, thumbnails, and hero GIF are committed.
+Narration uses [edge-tts](https://github.com/rany2/edge-tts) (Andrew/Ava neural voices, no API key); slides are rendered with Pillow; assembly is ffmpeg. Background music is *"Coffee & Streets"* by [Aylex](https://aylex.net) (no-copyright), mixed at 16% — see [`docs/media/bgm/CREDITS.md`](docs/media/bgm/CREDITS.md). Edit the `*.script.json` files and re-run to update. The MP4s live on YouTube; only the scripts, slides, thumbnails, and hero GIF are committed.
 
 ## Design
 

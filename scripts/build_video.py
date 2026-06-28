@@ -125,6 +125,99 @@ def render_slide_img(slide):
             cap = slide["caption"]
             tw = d.textlength(cap, font=cf)
             d.text(((W - tw) // 2, cy + bh // 2 + 70), cap, font=cf, fill=MUTED)
+    elif kind == "callout":
+        d.rectangle([160, 330, 184, 760], fill=ACCENT)
+        qf = font(78, True)
+        lines = wrap(d, slide["title"], qf, W - 460)
+        y = (H - len(lines) * 96) // 2 - 30
+        for ln in lines:
+            d.text((232, y), ln, font=qf, fill=FG)
+            y += 96
+        if slide.get("subtitle"):
+            sf = font(42)
+            for ln in wrap(d, slide["subtitle"], sf, W - 460):
+                d.text((232, y + 24), ln, font=sf, fill=MUTED)
+                y += 56
+    elif kind == "arch":
+        d.text((160, 130), slide["title"], font=font(68, True), fill=FG)
+
+        def cbox(box, label, outline, fsize=36):
+            rounded(d, box, 24, fill=PANEL, outline=outline, width=4)
+            ff = font(fsize, True)
+            ls = label.split("\n")
+            yy = (box[1] + box[3]) // 2 - len(ls) * (fsize + 6) // 2
+            for s in ls:
+                tw = d.textlength(s, font=ff)
+                d.text(((box[0] + box[2]) // 2 - tw // 2, yy), s, font=ff, fill=FG)
+                yy += fsize + 6
+
+        cy = 560
+        cbox([110, cy - 110, 470, cy + 110], slide.get("left", "Browser"), BLUE, 36)
+        cx0, cx1 = 560, 1410
+        rounded(d, [cx0, 330, cx1, 790], 28, fill=(18, 22, 28), outline=ACCENT, width=5)
+        d.text((cx0 + 34, 356), slide.get("container_title", "outbox-md — one Go binary"),
+               font=font(32, True), fill=ACCENT)
+        by, bh, gap = 426, 74, 14
+        for b in slide.get("container_boxes", []):
+            rounded(d, [cx0 + 40, by, cx1 - 40, by + bh], 16, fill=PANEL, outline=MUTED, width=2)
+            bf = font(30, True)
+            d.text((cx0 + 64, by + bh // 2 - 19), b, font=bf, fill=FG)
+            by += bh + gap
+        cbox([1500, cy - 140, 1850, cy + 140], slide.get("right", "Any agent\nvia MCP"), BLUE, 34)
+        for (a, b, lbl) in [((470, cy), (560, cy), slide.get("left_label", "HTTP/WS")),
+                            ((1410, cy), (1500, cy), "MCP")]:
+            d.line([a[0], a[1], b[0], b[1]], fill=BLUE, width=6)
+            d.polygon([(b[0], b[1]), (b[0] - 18, b[1] - 12), (b[0] - 18, b[1] + 12)], fill=BLUE)
+            d.text((a[0] + 6, a[1] - 44), lbl, font=font(24, True), fill=MUTED)
+    elif kind == "flow":
+        d.text((160, 120), slide["title"], font=font(68, True), fill=FG)
+        steps = slide.get("steps", [])
+        n = max(len(steps), 1)
+        top, bottom = 270, 800
+        bh = min(96, (bottom - top - (n - 1) * 26) // n)
+        gap = ((bottom - top) - n * bh) // max(n - 1, 1) if n > 1 else 0
+        sf = font(32, True)
+        x0, x1 = 430, 1490
+        y = top
+        for i, s in enumerate(steps):
+            rounded(d, [x0, y, x1, y + bh], 18, fill=PANEL, outline=ACCENT, width=3)
+            d.ellipse([x0 - 72, y + bh // 2 - 26, x0 - 20, y + bh // 2 + 26], fill=ACCENT)
+            num = str(i + 1)
+            nw = d.textlength(num, font=sf)
+            d.text((x0 - 46 - nw // 2, y + bh // 2 - 19), num, font=sf, fill=BG)
+            ls = wrap(d, s, sf, x1 - x0 - 80)[:2]
+            yy = y + bh // 2 - len(ls) * 20
+            for ln in ls:
+                d.text((x0 + 40, yy), ln, font=sf, fill=FG)
+                yy += 40
+            if i < n - 1:
+                ax = (x0 + x1) // 2
+                d.line([ax, y + bh, ax, y + bh + gap], fill=BLUE, width=5)
+                d.polygon([(ax, y + bh + gap), (ax - 11, y + bh + gap - 16), (ax + 11, y + bh + gap - 16)], fill=BLUE)
+            y += bh + gap
+    elif kind == "timeline":
+        d.text((160, 150), slide["title"], font=font(68, True), fill=FG)
+        phases = slide.get("phases", [])
+        n = max(len(phases), 1)
+        lx0, lx1, ly = 300, 1620, 560
+        d.line([lx0, ly, lx1, ly], fill=MUTED, width=4)
+        step = (lx1 - lx0) // max(n - 1, 1) if n > 1 else 0
+        lf, sff = font(34, True), font(28)
+        for i, p in enumerate(phases):
+            x = lx0 + step * i if n > 1 else (lx0 + lx1) // 2
+            col = ACCENT if p.get("done") else BLUE
+            d.ellipse([x - 16, ly - 16, x + 16, ly + 16], fill=col, outline=FG, width=3)
+            above = (i % 2 == 0)
+            llines = wrap(d, p["label"], lf, 320)
+            slines = wrap(d, p.get("sub", ""), sff, 340) if p.get("sub") else []
+            block = llines + slines
+            yy = ly - 70 - len(block) * 38 if above else ly + 46
+            for j, ln in enumerate(block):
+                fnt = lf if j < len(llines) else sff
+                colr = FG if j < len(llines) else MUTED
+                tw = d.textlength(ln, font=fnt)
+                d.text((max(20, min(W - 20 - tw, x - tw // 2)), yy), ln, font=fnt, fill=colr)
+                yy += 38
     else:  # bullets
         d.text((160, 150), slide["title"], font=font(76, True), fill=FG)
         bf = font(50)
@@ -218,9 +311,29 @@ def main():
     with open(listfile, "w") as f:
         for s in segs:
             f.write(f"file '{os.path.abspath(s)}'\n")
+    narration = os.path.join(work, "narration.mp4")
+    run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", listfile, "-c", "copy", narration])
+
     final = os.path.join(out_dir, "final.mp4")
-    run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", listfile, "-c", "copy", final])
-    print(f"wrote {final} ({duration(final):.1f}s)")
+    bgm = script.get("bgm")
+    if bgm and os.path.exists(bgm):
+        vol = script.get("bgm_volume", 0.16)
+        dur = duration(narration)
+        fade_out = max(dur - 3, 0)
+        run([
+            "ffmpeg", "-y", "-i", narration, "-stream_loop", "-1", "-i", bgm,
+            "-filter_complex",
+            f"[1:a]volume={vol},afade=t=in:st=0:d=2,afade=t=out:st={fade_out:.2f}:d=3[bg];"
+            f"[0:a][bg]amix=inputs=2:duration=first:normalize=0[a]",
+            "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+            "-shortest", final,
+        ])
+        print(f"wrote {final} with bgm at vol {vol} ({duration(final):.1f}s)")
+    else:
+        run(["ffmpeg", "-y", "-i", narration, "-c", "copy", final])
+        if bgm:
+            print(f"  (bgm '{bgm}' not found — rendered without music)")
+        print(f"wrote {final} ({duration(final):.1f}s)")
 
     thumb = os.path.join(out_dir, "thumbnail.png")
     slide0 = os.path.join(work, "slide_0.png")
