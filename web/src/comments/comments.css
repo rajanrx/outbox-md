@@ -63,6 +63,12 @@
   content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%;
   background: currentColor; margin-right: 6px; vertical-align: 1px;
 }
+.post-approval-tag {
+  font-size: 10.5px; font-weight: 600; line-height: 1; letter-spacing: .01em;
+  padding: 3px 7px; border-radius: 999px; text-transform: lowercase;
+  color: #c47d12; background: rgba(196,125,18,.1); border: 1px solid rgba(196,125,18,.28);
+}
+
 .status-open { color: var(--accent); }
 .status-addressed { color: var(--accent); }
 .status-resolved { color: var(--agent); }

@@ -44,6 +44,9 @@ export function Card({ comment, currentContent, active = false, pinned = false, 
     <div ref={ref} className={"card" + (active ? " active" : "") + (pinned ? " pinned" : "")} data-comment={comment.id} onClick={onActivate}>
       <div className="card-bar">
         <span className={`status-tag status-${comment.status}`}>{comment.status}</span>
+        {comment.postApproval && (
+          <span className="post-approval-tag" title="Feedback added after approval">post-approval</span>
+        )}
         <span className="card-tools">
           {offscreen && (
             <button className="ic-btn" title="Scroll to text" aria-label="Scroll to text" onClick={(e) => stop(e, onJump)}><LocateIcon /></button>

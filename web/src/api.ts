@@ -5,6 +5,7 @@ export type Comment = {
   anchor: Anchor;
   status: string;
   authorIdentity: string;
+  postApproval: boolean;
 };
 export type DocView = {
   document: { id: string; path: string; status: "draft" | "approved" | "amending"; approvedVersionId: string };
