@@ -12,42 +12,139 @@
 
 </div>
 
-**Status:** pre-alpha — walking skeleton.
+Read and inline-annotate AI-generated Markdown in your browser. Your comments **never edit the document directly** — they enter an ordered **outbox** and are processed asynchronously by *any* AI agent connected over **MCP**. The agent proposes a tracked change or replies in a thread; you accept; the file is rewritten and versioned. **The document is never corrupted.**
 
-Read and inline-annotate AI-generated Markdown. Your comments never edit the document directly — they enter an ordered **outbox** and are processed asynchronously by any AI agent connected over MCP. The agent proposes a tracked change or replies in a thread; you accept, and the file is rewritten and versioned. The document is never corrupted.
+- **Local-first** — one container pointed at a folder of `.md` files. Nothing leaves your machine.
+- **Bring-your-own-agent** — ships **no LLM credentials** and embeds no model. Connect Claude, GPT, or anything that speaks MCP.
+- **Safe by construction** — feedback is ordered, edits are tracked changes you approve, and the on-disk file is never silently changed.
 
-- **Local-first** — runs in one Docker container pointed at a folder of `.md` files.
-- **Bring-your-own-agent** — ships **no LLM credentials** and embeds no model. Any agent connects via MCP.
-- **Zero secrets** — nothing leaves your machine.
+---
 
-## Quickstart (walking skeleton)
+## How it works
 
-```bash
-OUTBOX_DEV=1 docker compose up -d --build
-# open http://localhost:8181  — shows this repo's own specs by default
+```
+            you (browser)                         your AI agent (MCP)
+   ┌───────────────────────────┐        ┌──────────────────────────────┐
+   │ select text → comment ────┼──┐     │ list open comments           │
+   │ read threads / suggestions│  │      │ claim → propose change / reply│
+   │ accept  ──────────────────┼──┼──▶  │                              │
+   └───────────────────────────┘  │      └──────────────────────────────┘
+                                   ▼
+                         ordered outbox (the queue)
+                                   │
+                       accept → file rewritten + versioned
 ```
 
-To review **your own** folder of `.md` files, point `OUTBOX_DIR` at it:
+You comment. Comments queue. Your agent processes them in order and proposes tracked changes. You accept. The `.md` is updated and versioned — never edited out from under you.
+
+---
+
+## 1. Run it
 
 ```bash
-OUTBOX_DIR=path/to/your/specs OUTBOX_DEV=1 docker compose up -d --build
+# point it at your folder of .md specs (defaults to this repo's docs/specs)
+OUTBOX_DIR=path/to/your/specs docker compose up -d --build
 ```
 
-`/data` must be a **folder** of `.md` files, not a single file.
+Open **http://localhost:8181** — read your specs and start commenting.
+
+- `OUTBOX_DIR` must be a **folder** of `.md` files, not a single file.
+- Port taken? Change the host side in `docker-compose.yml` (`"8181:8181"` → `"9090:8181"`), then use that port everywhere below.
 
 <details><summary>Without compose (<code>docker run</code>)</summary>
 
 ```bash
-docker build -t outbox-md:dev .
-docker run --rm -p 8181:8181 -e OUTBOX_DEV=1 -v "$PWD/specs:/data" outbox-md:dev
+docker build -t outbox-md .
+docker run --rm -p 8181:8181 -v "$PWD/specs:/data" outbox-md
 ```
 </details>
 
-Agents connect over MCP at `http://localhost:8181/mcp` (Streamable HTTP). With `OUTBOX_DEV=1`, the agent loop can also be driven over HTTP for testing (`/api/dev/claim`, `/api/dev/propose`).
+---
+
+## 2. Connect your AI agent (MCP)
+
+outbox-md exposes a **Streamable-HTTP MCP server** — install it in your AI client the same way you'd add any remote MCP server, with one URL:
+
+```
+http://localhost:8181/mcp
+```
+
+No API key, no config files to hand-edit secrets into — the server ships zero credentials. It just needs to be **running** (step 1).
+
+**Claude Code**
+```bash
+claude mcp add --transport http outbox-md http://localhost:8181/mcp
+# -s project  → commit to this repo's .mcp.json (shared)   |   -s user → all your projects
+claude mcp list   # should show: outbox-md ✓ connected
+```
+
+**Claude Desktop / Cursor / Windsurf** (and other config-file clients) — add to the `mcpServers` block:
+```json
+{
+  "mcpServers": {
+    "outbox-md": { "url": "http://localhost:8181/mcp" }
+  }
+}
+```
+
+<details><summary>Stdio-only client? Bridge it with <code>mcp-remote</code></summary>
+
+```json
+{
+  "mcpServers": {
+    "outbox-md": { "command": "npx", "args": ["-y", "mcp-remote", "http://localhost:8181/mcp"] }
+  }
+}
+```
+</details>
+
+Once connected, your agent gets five tools:
+
+| Tool | What the agent does |
+|---|---|
+| `read_doc` | Read a document's content + lifecycle status |
+| `list_open_comments` | See the ordered outbox of feedback awaiting work |
+| `claim_comment` | Claim comment(s) to work on → gets a token |
+| `propose_suggestion` | Propose a tracked-change edit (full replacement) |
+| `reply_in_thread` | Counter, clarify, or discuss instead of editing |
+
+Resolving comments and approving documents stay **human-only** — agents can't accept their own work.
+
+> **Just want to try the loop without wiring up an agent?** Start with `OUTBOX_DEV=1` and the same flow is drivable over plain HTTP (`/api/dev/claim`, `/api/dev/propose`) for testing.
+
+---
+
+## 3. The loop, end to end
+
+1. **You** open the doc, select a sentence, leave a comment. It joins the outbox (the doc is untouched).
+2. **Your agent** calls `list_open_comments`, `claim_comment`, then `propose_suggestion` (a tracked change) or `reply_in_thread`.
+3. **You** review the suggestion as an inline diff and **Accept** — the `.md` is rewritten and a new version recorded — or reply to push back.
+4. When a spec is ready, **Approve** it to pin a baseline. After that, edits become **tracked amendments** that need re-approval, so an approved doc is never silently changed.
+5. **History** shows the full decision log — who commented, proposed, edited, and approved, and why.
+
+---
+
+## What's inside
+
+- **Reader** — rendered Markdown (GFM, syntax highlighting, Mermaid) with select-to-comment.
+- **Comments & threads** — anchored to the exact text; discuss, counter, resolve.
+- **Suggestions** — agent edits shown as inline diffs you accept or reject.
+- **Governance** — `draft → approved → amending → approved`: approve to pin a baseline; post-approval edits accumulate as amendments until you re-approve.
+- **Decision log** — a per-document **History** timeline of every comment, proposal, edit, and approval.
+
+---
+
+## Status & limitations
+
+Past walking-skeleton: the review loop, governance, and audit log all work and are covered by tests. Honest caveats before you rely on it:
+
+- **Local-first & unauthenticated** — designed for a single user on `localhost`. **Don't expose the port to a network** without putting auth in front of it (see [`SECURITY.md`](SECURITY.md)).
+- **Supervise long agent runs** — if an agent claims comments and crashes, those claims aren't auto-recovered yet (no reaper). Fine while you're watching; not yet fire-and-forget.
+- **Agents respond, they don't initiate** — an agent acts on comments *you* raise; it can't open new ones (AI-council is on the roadmap).
+
+---
 
 ## Watch & learn
-
-The 2-minute **intro** is at the top. Two more, for going deeper:
 
 <div align="center">
 <table>
@@ -66,8 +163,9 @@ The 2-minute **intro** is at the top. Two more, for going deeper:
 
 ## Design
 
-See the full design spec: [`docs/specs/2026-06-27-outbox-md-design.md`](docs/specs/2026-06-27-outbox-md-design.md).
-Implementation plan: [`docs/plans/2026-06-27-phase0-and-v1-core.md`](docs/plans/2026-06-27-phase0-and-v1-core.md).
+- Core design: [`docs/specs/2026-06-27-outbox-md-design.md`](docs/specs/2026-06-27-outbox-md-design.md)
+- Governance seam: [`docs/specs/2026-06-28-governance-seam-design.md`](docs/specs/2026-06-28-governance-seam-design.md)
+- Decision log: [`docs/specs/2026-06-30-decision-log-design.md`](docs/specs/2026-06-30-decision-log-design.md)
 
 ## License
 
