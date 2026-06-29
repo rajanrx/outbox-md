@@ -43,6 +43,7 @@ export default function App() {
     return v ? clampTreeW(v) : 270;
   });
   const rootRef = useRef<HTMLDivElement>(null);
+  const docReflectedRef = useRef(false);
 
   useEffect(() => { localStorage.setItem(COMMENTS_W_KEY, String(commentsW)); }, [commentsW]);
   useEffect(() => { localStorage.setItem(TREE_W_KEY, String(treeW)); }, [treeW]);
@@ -81,7 +82,32 @@ export default function App() {
     if (docId) setView(await getDoc(docId));
   }, [docId]);
 
-  useEffect(() => { listDocs().then((d) => { setDocs(d ?? []); if (d?.length) setDocId(d[0].id); }); }, []);
+  useEffect(() => {
+    listDocs().then((d) => {
+      const list = d ?? [];
+      setDocs(list);
+      if (!list.length) return;
+      const wantPath = new URLSearchParams(window.location.search).get("doc");
+      const match = wantPath ? list.find((x) => x.path === wantPath) : undefined;
+      setDocId(match ? match.id : list[0].id);
+    });
+  }, []);
+  // Reflect the open document in the URL (?doc=<path>) so refresh restores it.
+  // replaceState (not pushState) to avoid history-stack spam.
+  useEffect(() => {
+    if (!docId) return;
+    const path = docs.find((d) => d.id === docId)?.path;
+    if (!path) return;
+    // The first run restores from the URL — keep its hash (the section to scroll
+    // to). Every later run is a user-driven doc switch, so drop the stale section
+    // hash (it belonged to the previously-open file).
+    const keepHash = !docReflectedRef.current;
+    docReflectedRef.current = true;
+    if (new URLSearchParams(window.location.search).get("doc") === path && keepHash) return;
+    const enc = encodeURIComponent(path).replace(/%2F/g, "/");
+    const hash = keepHash ? window.location.hash : "";
+    window.history.replaceState(null, "", `${window.location.pathname}?doc=${enc}${hash}`);
+  }, [docId, docs]);
   useEffect(() => {
     if (!docId) return;
     refresh();
