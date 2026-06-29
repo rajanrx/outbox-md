@@ -79,7 +79,7 @@ button { font-family: inherit; cursor: pointer; }
   flex: none; background: var(--chrome); overflow: hidden;
   transition: width .24s var(--ease), opacity .2s var(--ease);
 }
-.tree-panel { width: 270px; border-right: 1px solid var(--chrome-line); }
+.tree-panel { width: 270px; border-right: 1px solid var(--chrome-line); position: relative; }
 .comments-panel { width: 420px; border-left: 1px solid var(--chrome-line); position: relative; }
 .tree-panel.collapsed, .comments-panel.collapsed { width: 0 !important; opacity: 0; }
 
@@ -89,6 +89,13 @@ button { font-family: inherit; cursor: pointer; }
   cursor: col-resize; background: transparent; transition: background .15s;
 }
 .resize-handle:hover, .resize-handle:active { background: var(--accent); opacity: .5; }
+
+/* drag-to-resize handle on the file-tree panel's right edge */
+.tree-resize-handle {
+  position: absolute; right: -3px; top: 0; width: 7px; height: 100%; z-index: 5;
+  cursor: col-resize; background: transparent; transition: background .15s;
+}
+.tree-resize-handle:hover, .tree-resize-handle:active { background: var(--accent); opacity: .5; }
 .panel-head {
   height: 38px; display: flex; align-items: center; gap: 8px; padding: 0 14px;
   font-size: 11px; letter-spacing: 1.4px; text-transform: uppercase; color: var(--chrome-soft);

@@ -23,6 +23,8 @@ const PanelRightIcon = () => (
 
 const COMMENTS_W_KEY = "outbox.commentsWidth";
 const clampW = (w: number) => Math.min(760, Math.max(300, w));
+const TREE_W_KEY = "outbox.treeWidth";
+const clampTreeW = (w: number) => Math.min(560, Math.max(180, w));
 
 export default function App() {
   const [docs, setDocs] = useState<{ id: string; path: string }[]>([]);
@@ -36,13 +38,33 @@ export default function App() {
     const v = Number(localStorage.getItem(COMMENTS_W_KEY));
     return v ? clampW(v) : 420;
   });
+  const [treeW, setTreeW] = useState(() => {
+    const v = Number(localStorage.getItem(TREE_W_KEY));
+    return v ? clampTreeW(v) : 270;
+  });
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { localStorage.setItem(COMMENTS_W_KEY, String(commentsW)); }, [commentsW]);
+  useEffect(() => { localStorage.setItem(TREE_W_KEY, String(treeW)); }, [treeW]);
 
   const startResize = (e: React.MouseEvent) => {
     e.preventDefault();
     const onMove = (ev: MouseEvent) => setCommentsW(clampW(window.innerWidth - ev.clientX));
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    };
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
+
+  const startTreeResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const onMove = (ev: MouseEvent) => setTreeW(clampTreeW(ev.clientX));
     const onUp = () => {
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
@@ -112,7 +134,8 @@ export default function App() {
       </div>
 
       <div className="workbench">
-        <aside className={"tree-panel" + (treeOpen ? "" : " collapsed")}>
+        <aside className={"tree-panel" + (treeOpen ? "" : " collapsed")} style={{ width: treeOpen ? treeW : 0 }}>
+          {treeOpen && <div className="tree-resize-handle" onMouseDown={startTreeResize} title="Drag to resize" />}
           <div className="panel-head">Explorer</div>
           <div className="panel-body"><FileTree docs={docs} activeId={docId} onSelect={setDocId} /></div>
         </aside>
