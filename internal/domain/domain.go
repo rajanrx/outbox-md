@@ -84,3 +84,12 @@ type ThreadMessage struct {
 	AuthorIdentity string `json:"authorIdentity"`
 	Body           string `json:"body"`
 }
+
+type LogEntry struct {
+	Time       string `json:"time"`
+	Kind       string `json:"kind"`       // created | comment | proposal | edit | approval
+	Actor      string `json:"actor"`
+	Detail     string `json:"detail"`     // comment excerpt OR approval note OR ""
+	Version    int    `json:"version"`    // version ordinal for created/edit/approval; 0 otherwise
+	ReApproval bool   `json:"reApproval"` // approval after the first (amendment sign-off)
+}
