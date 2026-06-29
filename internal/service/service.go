@@ -2,8 +2,10 @@ package service
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/rajanrx/outbox-md/internal/anchor"
+	"github.com/rajanrx/outbox-md/internal/config"
 	"github.com/rajanrx/outbox-md/internal/domain"
 	"github.com/rajanrx/outbox-md/internal/store"
 )
@@ -11,25 +13,40 @@ import (
 type Service struct {
 	store     *store.Store
 	writeFile func(path, content string) error
+	cfg       config.Config
 }
 
 func New(st *store.Store, writeFile func(path, content string) error) *Service {
-	return &Service{store: st, writeFile: writeFile}
+	return &Service{store: st, writeFile: writeFile, cfg: config.Defaults()}
 }
+
+// SetConfig replaces the effective configuration (called once at startup with
+// the loaded outbox.yaml).
+func (s *Service) SetConfig(cfg config.Config) { s.cfg = cfg }
+
+// Config returns the effective configuration (read-only view for the API).
+func (s *Service) Config() config.Config { return s.cfg }
 
 func (s *Service) PostComment(docID string, a domain.Anchor, author string) (domain.Comment, error) {
 	doc, err := s.store.GetDocument(docID)
 	if err != nil {
 		return domain.Comment{}, err
 	}
+	governed := doc.Status == domain.DocApproved || doc.Status == domain.DocAmending
+	if governed && !s.cfg.Approval.PostApprovalComments {
+		return domain.Comment{}, errors.New("comments are disabled on approved documents")
+	}
 	return s.store.CreateComment(domain.Comment{
 		DocID: docID, AgainstVersionID: doc.CurrentVersionID, Anchor: a,
 		AuthorIdentity: author, Owner: author, Status: domain.CommentOpen,
-		PostApproval: doc.Status == domain.DocApproved || doc.Status == domain.DocAmending,
+		PostApproval: governed,
 	})
 }
 
 func (s *Service) Claim(commentIDs []string, agent string) (string, error) {
+	if len(commentIDs) > s.cfg.Agent.BatchSize {
+		return "", fmt.Errorf("batch size exceeded: at most %d comments per claim", s.cfg.Agent.BatchSize)
+	}
 	token := domain.NewID()
 	for _, id := range commentIDs {
 		if err := s.store.UpdateCommentStatus(id, domain.CommentClaimed, token); err != nil {
