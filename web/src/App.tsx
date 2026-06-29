@@ -23,6 +23,8 @@ const PanelRightIcon = () => (
 
 const COMMENTS_W_KEY = "outbox.commentsWidth";
 const clampW = (w: number) => Math.min(760, Math.max(300, w));
+const TREE_W_KEY = "outbox.treeWidth";
+const clampTreeW = (w: number) => Math.min(560, Math.max(180, w));
 
 export default function App() {
   const [docs, setDocs] = useState<{ id: string; path: string }[]>([]);
@@ -36,9 +38,15 @@ export default function App() {
     const v = Number(localStorage.getItem(COMMENTS_W_KEY));
     return v ? clampW(v) : 420;
   });
+  const [treeW, setTreeW] = useState(() => {
+    const v = Number(localStorage.getItem(TREE_W_KEY));
+    return v ? clampTreeW(v) : 270;
+  });
   const rootRef = useRef<HTMLDivElement>(null);
+  const docReflectedRef = useRef(false);
 
   useEffect(() => { localStorage.setItem(COMMENTS_W_KEY, String(commentsW)); }, [commentsW]);
+  useEffect(() => { localStorage.setItem(TREE_W_KEY, String(treeW)); }, [treeW]);
 
   const startResize = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -55,11 +63,51 @@ export default function App() {
     document.addEventListener("mouseup", onUp);
   };
 
+  const startTreeResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const onMove = (ev: MouseEvent) => setTreeW(clampTreeW(ev.clientX));
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    };
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
+
   const refresh = useCallback(async () => {
     if (docId) setView(await getDoc(docId));
   }, [docId]);
 
-  useEffect(() => { listDocs().then((d) => { setDocs(d ?? []); if (d?.length) setDocId(d[0].id); }); }, []);
+  useEffect(() => {
+    listDocs().then((d) => {
+      const list = d ?? [];
+      setDocs(list);
+      if (!list.length) return;
+      const wantPath = new URLSearchParams(window.location.search).get("doc");
+      const match = wantPath ? list.find((x) => x.path === wantPath) : undefined;
+      setDocId(match ? match.id : list[0].id);
+    });
+  }, []);
+  // Reflect the open document in the URL (?doc=<path>) so refresh restores it.
+  // replaceState (not pushState) to avoid history-stack spam.
+  useEffect(() => {
+    if (!docId) return;
+    const path = docs.find((d) => d.id === docId)?.path;
+    if (!path) return;
+    // The first run restores from the URL — keep its hash (the section to scroll
+    // to). Every later run is a user-driven doc switch, so drop the stale section
+    // hash (it belonged to the previously-open file).
+    const keepHash = !docReflectedRef.current;
+    docReflectedRef.current = true;
+    if (new URLSearchParams(window.location.search).get("doc") === path && keepHash) return;
+    const enc = encodeURIComponent(path).replace(/%2F/g, "/");
+    const hash = keepHash ? window.location.hash : "";
+    window.history.replaceState(null, "", `${window.location.pathname}?doc=${enc}${hash}`);
+  }, [docId, docs]);
   useEffect(() => {
     if (!docId) return;
     refresh();
@@ -112,7 +160,8 @@ export default function App() {
       </div>
 
       <div className="workbench">
-        <aside className={"tree-panel" + (treeOpen ? "" : " collapsed")}>
+        <aside className={"tree-panel" + (treeOpen ? "" : " collapsed")} style={{ width: treeOpen ? treeW : 0 }}>
+          {treeOpen && <div className="tree-resize-handle" onMouseDown={startTreeResize} title="Drag to resize" />}
           <div className="panel-head">Explorer</div>
           <div className="panel-body"><FileTree docs={docs} activeId={docId} onSelect={setDocId} /></div>
         </aside>

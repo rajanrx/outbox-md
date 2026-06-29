@@ -25,7 +25,7 @@ func NewServer(h *Handlers) *mcp.Server {
 	})
 
 	type listOut struct {
-		Comments []domain.Comment `json:"comments"`
+		Comments []OpenComment `json:"comments"`
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_open_comments",
@@ -81,5 +81,27 @@ func NewServer(h *Handlers) *mcp.Server {
 		return nil, replyOut{OK: err == nil}, err
 	})
 
+	// process_outbox bundles the agent workflow as an MCP prompt so a connected
+	// agent can pull the playbook for working the queue instead of guessing it.
+	s.AddPrompt(&mcp.Prompt{
+		Name:        "process_outbox",
+		Description: "The workflow for an AI agent processing the outbox of open comments on a Markdown spec.",
+	}, func(_ context.Context, _ *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		return &mcp.GetPromptResult{
+			Description: "How to process the outbox in outbox-md.",
+			Messages: []*mcp.PromptMessage{{
+				Role:    "user",
+				Content: &mcp.TextContent{Text: processOutboxGuidance},
+			}},
+		}, nil
+	})
+
 	return s
 }
+
+const processOutboxGuidance = `You are processing the outbox for a Markdown spec in outbox-md. Work the queue IN ORDER and do not exceed the configured batch size.
+1. Call ` + "`list_open_comments`" + ` — each item includes the anchored ` + "`excerpt`" + ` (the text the human flagged) and the ` + "`thread`" + ` (their feedback).
+2. For a comment you'll act on, call ` + "`read_doc`" + ` for full context, then ` + "`claim_comment`" + ` to get a token.
+3. Respond with EITHER ` + "`propose_suggestion`" + ` (a tracked-change edit — provide the FULL replacement document content) OR ` + "`reply_in_thread`" + ` (to counter, clarify, or discuss) — using the claim token and your agent identity.
+4. You CANNOT resolve comments or approve documents — those are human-only. Never attempt them.
+Keep edits minimal and faithful to the feedback; the human reviews every suggestion before it touches the file.`

@@ -23,8 +23,53 @@ func (h *Handlers) ReadDoc(docID string) (map[string]any, error) {
 	return map[string]any{"document": doc, "content": ver.Content}, nil
 }
 
-func (h *Handlers) ListOpenComments() ([]domain.Comment, error) {
-	return h.St.ListOpenComments()
+// OpenComment enriches a queued comment with the context an agent needs to act
+// on it: the document path, the anchored excerpt (the text the comment refers
+// to), and the thread (the human's feedback is stored as the first message).
+type OpenComment struct {
+	domain.Comment
+	DocPath string                 `json:"docPath"`
+	Excerpt string                 `json:"excerpt"` // the anchored text the comment refers to
+	Thread  []domain.ThreadMessage `json:"thread"`  // the human's feedback (and any prior discussion)
+}
+
+func (h *Handlers) ListOpenComments() ([]OpenComment, error) {
+	comments, err := h.St.ListOpenComments()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]OpenComment, 0, len(comments))
+	for _, c := range comments {
+		oc := OpenComment{Comment: c, Thread: []domain.ThreadMessage{}}
+		// Don't fail the whole list if one lookup errors — just skip that field.
+		if doc, err := h.St.GetDocument(c.DocID); err == nil {
+			oc.DocPath = doc.Path
+		}
+		if ver, err := h.St.GetVersion(c.AgainstVersionID); err == nil {
+			oc.Excerpt = excerpt(ver.Content, c.Anchor.Start, c.Anchor.End)
+		}
+		if thread, err := h.St.ListThread(c.ID); err == nil && thread != nil {
+			oc.Thread = thread
+		}
+		out = append(out, oc)
+	}
+	return out, nil
+}
+
+// excerpt slices the anchored text from content using RUNE offsets, clamping
+// out-of-range anchors and returning "" when the range is empty or inverted.
+func excerpt(content string, start, end int) string {
+	r := []rune(content)
+	if start < 0 {
+		start = 0
+	}
+	if end > len(r) {
+		end = len(r)
+	}
+	if start >= end {
+		return ""
+	}
+	return string(r[start:end])
 }
 
 func (h *Handlers) ClaimComment(ids []string, agent string) (string, error) {
