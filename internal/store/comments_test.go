@@ -43,3 +43,24 @@ func TestCommentAndSuggestionRoundTrip(t *testing.T) {
 		t.Fatalf("status = %s, want detached", got.Status)
 	}
 }
+
+func TestCommentPostApprovalRoundTrips(t *testing.T) {
+	s, _ := Open(":memory:")
+	defer s.Close()
+	doc, _, _ := s.CreateDocument("a.md", "hi", "human")
+	c, err := s.CreateComment(domain.Comment{
+		DocID: doc.ID, AgainstVersionID: doc.CurrentVersionID,
+		Anchor: domain.Anchor{Start: 0, End: 1}, AuthorIdentity: "human",
+		Owner: "human", Status: domain.CommentOpen, PostApproval: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetComment(c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.PostApproval {
+		t.Error("postApproval = false, want true")
+	}
+}

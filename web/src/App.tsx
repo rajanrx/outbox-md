@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { listDocs, getDoc, type DocView } from "./api";
+import { listDocs, getDoc, approve, reapprove, type DocView } from "./api";
 import { FileTree } from "./docs/FileTree";
 import { Reader } from "./reader/Reader";
 import { Margin } from "./comments/Margin";
+import { BaselineDiff } from "./governance/BaselineDiff";
+import "./governance/governance.css";
 
 const PanelLeftIcon = () => (
   <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -27,6 +29,7 @@ export default function App() {
   const [view, setView] = useState<DocView | null>(null);
   const [treeOpen, setTreeOpen] = useState(true);
   const [commentsOpen, setCommentsOpen] = useState(true);
+  const [showBaseline, setShowBaseline] = useState(false);
   const [commentsW, setCommentsW] = useState(() => {
     const v = Number(localStorage.getItem(COMMENTS_W_KEY));
     return v ? clampW(v) : 420;
@@ -68,7 +71,7 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <div className="topbar">
+      <div className="topbar" style={{ position: "relative" }}>
         <div className="brand"><span className="dot" /><b>outbox</b><span>·md</span></div>
         {crumbs.length > 0 && (
           <div className="crumbs">
@@ -78,9 +81,26 @@ export default function App() {
             <span className="leaf">{crumbs[crumbs.length - 1]}</span>
           </div>
         )}
+        {view && (
+          <div className="lifecycle-controls" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span className={`lifecycle ${view.document.status}`}>{view.document.status}</span>
+            {view.document.status === "draft" && (
+              <button className="gov-btn" onClick={async () => { await approve(docId); refresh(); }}>Approve</button>
+            )}
+            {view.document.status === "amending" && (
+              <>
+                <button className="gov-btn ghost" onClick={() => setShowBaseline((v) => !v)}>View changes</button>
+                <button className="gov-btn" onClick={async () => { await reapprove(docId); setShowBaseline(false); refresh(); }}>Re-approve</button>
+              </>
+            )}
+          </div>
+        )}
         <div className="spacer" />
         <button className={"icon-btn" + (treeOpen ? " on" : "")} title="Toggle files" onClick={() => setTreeOpen((v) => !v)}><PanelLeftIcon /></button>
         <button className={"icon-btn" + (commentsOpen ? " on" : "")} title="Toggle comments" onClick={() => setCommentsOpen((v) => !v)}><PanelRightIcon /></button>
+        {showBaseline && view && (
+          <BaselineDiff baseline={view.baselineContent} current={view.content} onClose={() => setShowBaseline(false)} />
+        )}
       </div>
 
       <div className="workbench">

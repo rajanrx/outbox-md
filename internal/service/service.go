@@ -25,6 +25,7 @@ func (s *Service) PostComment(docID string, a domain.Anchor, author string) (dom
 	return s.store.CreateComment(domain.Comment{
 		DocID: docID, AgainstVersionID: doc.CurrentVersionID, Anchor: a,
 		AuthorIdentity: author, Owner: author, Status: domain.CommentOpen,
+		PostApproval: doc.Status == domain.DocApproved || doc.Status == domain.DocAmending,
 	})
 }
 
@@ -160,11 +161,25 @@ func (s *Service) Accept(commentID string) (domain.Version, error) {
 	// step failed, we compensate the on-disk file back to the current version.
 	// The invariant — the file on disk equals the current version's content —
 	// holds whether Accept succeeds or fails.
+	// draft writes the file directly; an approved/amending doc accumulates the
+	// new version ahead of the baseline and leaves the on-disk file untouched
+	// (the baseline) until re-approval.
+	governed := doc.Status == domain.DocApproved || doc.Status == domain.DocAmending
 	wrote := false
-	newVer, err := s.store.AddVersionTx(doc.ID, oldVer.ID, sg.ProposedContent, sg.CreatedBy, func(v domain.Version) error {
-		wrote = true
-		return s.writeFile(doc.Path, v.Content)
-	})
+	var newVer domain.Version
+	if governed {
+		// A governed accept accumulates the new version ahead of the baseline and
+		// flips status to amending inside the version transaction — CAS-guarded on
+		// the current pointer and never touching approved_version_id. It writes no
+		// disk (the on-disk file stays the baseline until re-approval).
+		newVer, err = s.store.AddGovernedVersionTx(doc.ID, oldVer.ID, sg.ProposedContent, sg.CreatedBy)
+	} else {
+		writeFn := func(v domain.Version) error {
+			wrote = true
+			return s.writeFile(doc.Path, v.Content)
+		}
+		newVer, err = s.store.AddVersionTx(doc.ID, oldVer.ID, sg.ProposedContent, sg.CreatedBy, writeFn)
+	}
 	if err != nil {
 		if wrote {
 			_ = s.writeFile(doc.Path, oldVer.Content)
@@ -173,7 +188,7 @@ func (s *Service) Accept(commentID string) (domain.Version, error) {
 			// Lost the race: re-queue so the agent can re-propose against the new
 			// current version — but conditionally, so we never flip a suggestion
 			// the winning accept already marked accepted (same-comment duplicate
-			// accept) back to rejected/open.
+			// accept) back to rejected/open. Governed accepts requeue identically.
 			_ = s.store.RejectSuggestionIfProposed(sg.ID)
 			_ = s.store.ReopenCommentIfNotResolved(commentID)
 		}
@@ -201,4 +216,71 @@ func (s *Service) Accept(commentID string) (domain.Version, error) {
 		_ = s.store.RebaseComment(oc.ID, newVer.ID, na, oc.Status)
 	}
 	return newVer, nil
+}
+
+// Approve pins the current version as the approved baseline. Valid only from
+// draft; the on-disk file already equals the current version, so no rewrite is
+// needed. Identity is server-set (LocalHuman), never taken from the request.
+func (s *Service) Approve(docID, note string) (domain.Approval, error) {
+	doc, err := s.store.GetDocument(docID)
+	if err != nil {
+		return domain.Approval{}, err
+	}
+	if doc.Status != domain.DocDraft {
+		return domain.Approval{}, errors.New("already approved — use re-approve")
+	}
+	// CAS-guarded pin: only pin the baseline if the current pointer is still the
+	// version we read. A concurrent draft accept that advanced current between the
+	// read above and this pin makes the guard fail, so we never pin a stale
+	// baseline behind the new current.
+	if err := s.store.SetDocumentApprovalIfCurrent(docID, doc.CurrentVersionID, doc.CurrentVersionID, domain.DocApproved); err != nil {
+		if errors.Is(err, store.ErrVersionConflict) {
+			return domain.Approval{}, errors.New("document changed during approval; retry")
+		}
+		return domain.Approval{}, err
+	}
+	return s.store.CreateApproval(domain.Approval{
+		DocID: docID, VersionID: doc.CurrentVersionID, ApprovedBy: LocalHuman, Note: note,
+	})
+}
+
+// Reapprove advances the baseline to the working head and writes it to disk.
+// Valid only while amending with pending changes ahead of the baseline.
+func (s *Service) Reapprove(docID, note string) (domain.Approval, error) {
+	doc, err := s.store.GetDocument(docID)
+	if err != nil {
+		return domain.Approval{}, err
+	}
+	if doc.Status != domain.DocAmending || doc.CurrentVersionID == doc.ApprovedVersionID {
+		return domain.Approval{}, errors.New("nothing to re-approve")
+	}
+	ver, err := s.store.GetVersion(doc.CurrentVersionID)
+	if err != nil {
+		return domain.Approval{}, err
+	}
+	// Advance the baseline and write the head to disk inside one CAS-guarded tx.
+	// If a concurrent accept moved the current pointer under us the CAS fails and
+	// nothing is written. Capture the prior baseline content so we can compensate
+	// the on-disk file if the write ran but the commit then failed.
+	oldBaseline, err := s.store.GetVersion(doc.ApprovedVersionID)
+	if err != nil {
+		return domain.Approval{}, err
+	}
+	wrote := false
+	err = s.store.ReapproveTx(docID, doc.CurrentVersionID, ver.Content, func() error {
+		wrote = true
+		return s.writeFile(doc.Path, ver.Content)
+	})
+	if err != nil {
+		if wrote {
+			_ = s.writeFile(doc.Path, oldBaseline.Content)
+		}
+		if errors.Is(err, store.ErrVersionConflict) {
+			return domain.Approval{}, errors.New("document changed during re-approval; retry")
+		}
+		return domain.Approval{}, err
+	}
+	return s.store.CreateApproval(domain.Approval{
+		DocID: docID, VersionID: doc.CurrentVersionID, ApprovedBy: LocalHuman, Note: note,
+	})
 }

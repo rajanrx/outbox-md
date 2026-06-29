@@ -1,0 +1,31 @@
+.lifecycle {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 650;
+  letter-spacing: .3px; text-transform: uppercase; padding: 3px 10px; border-radius: 20px;
+  border: 1px solid var(--chrome-line); color: var(--chrome-soft);
+}
+.lifecycle::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.lifecycle.draft { color: var(--chrome-soft); }
+.lifecycle.approved { color: var(--agent); border-color: rgba(43,140,127,.4); }
+.lifecycle.amending { color: var(--accent); border-color: rgba(196,125,18,.4); }
+
+.gov-btn {
+  height: 30px; padding: 0 14px; border-radius: 8px; font-size: 12.5px; font-weight: 650;
+  border: 1px solid transparent; background: var(--accent); color: var(--accent-ink);
+}
+.gov-btn:hover { filter: brightness(1.06); }
+.gov-btn.ghost { background: var(--chrome-2); color: var(--ink); border-color: var(--chrome-line); }
+.gov-btn.ghost:hover { background: var(--chrome-3); filter: none; }
+
+.baseline-diff {
+  position: absolute; top: 50px; right: 0; width: min(720px, 60vw); max-height: 70vh;
+  z-index: 20; display: flex; flex-direction: column; overflow: hidden;
+  background: var(--chrome-2); border: 1px solid var(--chrome-line);
+  border-radius: 0 0 0 12px; box-shadow: 0 24px 60px -28px rgba(20,15,5,.4);
+}
+.baseline-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 8px 12px; font-size: 12px; font-weight: 650; color: var(--ink-soft);
+  background: var(--chrome); border-bottom: 1px solid var(--chrome-line);
+}
+.baseline-close { width: 26px; height: 26px; border: 0; border-radius: 6px; background: none; font-size: 18px; color: var(--ink-soft); }
+.baseline-close:hover { background: var(--chrome-3); color: var(--ink); }
