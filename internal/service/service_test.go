@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/rajanrx/outbox-md/internal/config"
 	"github.com/rajanrx/outbox-md/internal/domain"
 	"github.com/rajanrx/outbox-md/internal/store"
 )
@@ -605,5 +606,46 @@ func TestGovernedAcceptReapproveInterleavingNeverCorrupts(t *testing.T) {
 			t.Fatalf("iter %d: unexpected status %q", i, final.Status)
 		}
 		s.Close()
+	}
+}
+
+func TestClaimRejectsOverBatchSize(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _ string) error { return nil })
+	svc.SetConfig(config.Config{Agent: config.AgentConfig{BatchSize: 2}, Approval: config.ApprovalConfig{PostApprovalComments: true}})
+
+	doc, _, _ := s.CreateDocument("a.md", "hello world", "human")
+	c1, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 1}, "human")
+	c2, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 1, End: 2}, "human")
+	c3, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 2, End: 3}, "human")
+
+	if _, err := svc.Claim([]string{c1.ID, c2.ID, c3.ID}, "agent"); err == nil {
+		t.Fatal("claiming 3 with batch_size 2 should be rejected")
+	}
+	if got, _ := s.GetComment(c1.ID); got.Status != domain.CommentOpen {
+		t.Errorf("c1 status = %s, want open (over-batch claim must claim nothing)", got.Status)
+	}
+	if _, err := svc.Claim([]string{c1.ID, c2.ID}, "agent"); err != nil {
+		t.Fatalf("within-cap claim failed: %v", err)
+	}
+}
+
+func TestPostCommentBlockedOnApprovedWhenDisabled(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _ string) error { return nil })
+	svc.SetConfig(config.Config{Agent: config.AgentConfig{BatchSize: 5}, Approval: config.ApprovalConfig{PostApprovalComments: false}})
+
+	doc, _, _ := s.CreateDocument("a.md", "hello", "human")
+	if _, err := svc.Approve(doc.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 1}, "human"); err == nil {
+		t.Fatal("post-approval comment should be rejected when disabled")
+	}
+	svc.SetConfig(config.Config{Agent: config.AgentConfig{BatchSize: 5}, Approval: config.ApprovalConfig{PostApprovalComments: true}})
+	if _, err := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 1}, "human"); err != nil {
+		t.Fatalf("post-approval comment should be allowed when enabled: %v", err)
 	}
 }
