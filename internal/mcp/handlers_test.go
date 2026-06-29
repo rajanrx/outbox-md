@@ -34,6 +34,42 @@ func TestHandlersDriveTheLoop(t *testing.T) {
 	}
 }
 
+func TestListOpenCommentsExposesExcerptAndThread(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := service.New(s, func(_, _ string) error { return nil })
+	h := &Handlers{Svc: svc, St: s}
+	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
+	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 6, End: 11}, "human") // anchors "world"
+	if _, err := svc.HumanReply(c.ID, "please clarify X"); err != nil {
+		t.Fatal(err)
+	}
+
+	open, err := h.ListOpenComments()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(open) != 1 {
+		t.Fatalf("open = %d, want 1", len(open))
+	}
+	oc := open[0]
+	if oc.DocPath != "spec.md" {
+		t.Errorf("DocPath = %q, want %q", oc.DocPath, "spec.md")
+	}
+	if oc.Excerpt != "world" {
+		t.Errorf("Excerpt = %q, want %q", oc.Excerpt, "world")
+	}
+	found := false
+	for _, m := range oc.Thread {
+		if m.Body == "please clarify X" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("Thread missing human feedback: %+v", oc.Thread)
+	}
+}
+
 func TestReadDocExposesLifecycle(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()

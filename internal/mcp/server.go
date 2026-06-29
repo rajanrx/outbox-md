@@ -25,7 +25,7 @@ func NewServer(h *Handlers) *mcp.Server {
 	})
 
 	type listOut struct {
-		Comments []domain.Comment `json:"comments"`
+		Comments []OpenComment `json:"comments"`
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_open_comments",
