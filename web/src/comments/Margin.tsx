@@ -8,19 +8,32 @@ import "./comments.css";
 const CSSh = CSS as any;
 const canHighlight = () => "Highlight" in window && CSSh.highlights;
 
-function paintHighlights(root: HTMLElement, source: string, comments: Comment[], focusedId: string | null) {
+function paintHighlights(
+  root: HTMLElement,
+  source: string,
+  comments: Comment[],
+  focusedId: string | null,
+  pending: { start: number; end: number } | null,
+) {
   if (!canHighlight()) return;
   const ranges: Range[] = [];
-  let focusedRange: Range | null = null;
+  let activeRange: Range | null = null;
   for (const c of comments) {
     if (c.status === "resolved") continue;
     const r = rangeForAnchor(root, source, c.anchor);
     if (!r) continue;
-    if (c.id === focusedId) focusedRange = r;
+    if (c.id === focusedId) activeRange = r;
     else ranges.push(r);
   }
+  // A pending (locked-in) comment keeps its passage marked while the composer is
+  // open, so the highlight never "disappears" the moment the native selection is
+  // collapsed by clicking the composer.
+  if (pending) {
+    const pr = rangeForAnchor(root, source, pending);
+    if (pr) activeRange = pr;
+  }
   CSSh.highlights.set("comment", new (window as any).Highlight(...ranges));
-  if (focusedRange) CSSh.highlights.set("comment-active", new (window as any).Highlight(focusedRange));
+  if (activeRange) CSSh.highlights.set("comment-active", new (window as any).Highlight(activeRange));
   else CSSh.highlights.delete("comment-active");
 }
 
@@ -52,6 +65,9 @@ export function Margin({ docId, content, rootRef, comments, onChange }: {
   const [pinned, setPinned] = useState<Set<string>>(new Set());
   // anchored DOM ranges, computed off the scroll path so scrolling stays smooth
   const rangeCache = useRef<Map<string, Range>>(new Map());
+  // the comments panel itself — mouseups inside it must not disturb a pending
+  // comment the user is composing.
+  const marginRef = useRef<HTMLDivElement>(null);
 
   // Load pins for the current doc (persisted in localStorage).
   useEffect(() => {
@@ -71,10 +87,10 @@ export function Margin({ docId, content, rootRef, comments, onChange }: {
     if (rootRef.current) scrollReaderToAnchor(rootRef.current, content, c.anchor);
   };
 
-  // Paint precise marks; the focused comment gets the stronger mark.
+  // Paint precise marks; the focused (or pending) comment gets the stronger mark.
   useEffect(() => {
-    if (rootRef.current) paintHighlights(rootRef.current, content, comments, focused);
-  }, [comments, content, focused, rootRef]);
+    if (rootRef.current) paintHighlights(rootRef.current, content, comments, focused, pending);
+  }, [comments, content, focused, pending, rootRef]);
 
   // Rebuild the anchored-range cache only when comments/content change (the
   // expensive diff-match-patch mapping). Never on scroll.
@@ -129,15 +145,50 @@ export function Margin({ docId, content, rootRef, comments, onChange }: {
     return () => root.removeEventListener("click", onClick);
   }, [content, comments, rootRef]);
 
-  // Select prose → surface an existing comment, or offer to create one.
+  // Pointer cursor over commented passages. The CSS Custom Highlight API can't
+  // set `cursor`, so hit-test the pointer against the cached anchor ranges (the
+  // exact highlighted text) on a rAF-throttled mousemove and toggle the cursor —
+  // no diff-match-patch work on the hover path.
   useEffect(() => {
-    const onUp = () => {
+    const root = rootRef.current;
+    if (!root) return;
+    let raf = 0;
+    let lx = 0, ly = 0;
+    const overComment = (x: number, y: number) => {
+      for (const r of rangeCache.current.values()) {
+        const rects = r.getClientRects();
+        for (let i = 0; i < rects.length; i++) {
+          const b = rects[i];
+          if (x >= b.left && x <= b.right && y >= b.top && y <= b.bottom) return true;
+        }
+      }
+      return false;
+    };
+    const apply = () => { raf = 0; root.style.cursor = overComment(lx, ly) ? "pointer" : ""; };
+    const onMove = (e: MouseEvent) => { lx = e.clientX; ly = e.clientY; if (!raf) raf = requestAnimationFrame(apply); };
+    root.addEventListener("mousemove", onMove);
+    return () => {
+      root.removeEventListener("mousemove", onMove);
+      if (raf) cancelAnimationFrame(raf);
+      root.style.cursor = "";
+    };
+  }, [comments, rootRef]);
+
+  // Select prose → surface an existing comment, or offer to create one. Once a
+  // pending comment is opened it stays "locked in" on the right until the user
+  // submits or cancels it: a collapsed selection (e.g. clicking the composer,
+  // which clears the native highlight) must NOT discard it, and mouseups inside
+  // the comments panel are ignored entirely so clicking Comment/Cancel/the
+  // textarea can't tear the composer down before submitComment runs.
+  useEffect(() => {
+    const onUp = (e: MouseEvent) => {
+      if (e.target instanceof Node && marginRef.current?.contains(e.target)) return;
       const selection = window.getSelection();
-      if (!selection || selection.isCollapsed || !rootRef.current) return setPending(null);
+      if (!selection || selection.isCollapsed || !rootRef.current) return;
       const range = selection.getRangeAt(0);
-      if (!rootRef.current.contains(range.commonAncestorContainer)) return setPending(null);
+      if (!rootRef.current.contains(range.commonAncestorContainer)) return;
       const a = computeAnchor(content, rootRef.current, range);
-      if (!a) return setPending(null);
+      if (!a) return;
       const hit = comments
         .filter((c) => c.status !== "resolved" && c.anchor.start < a.end && c.anchor.end > a.start)
         .sort((x, y) => (x.anchor.end - x.anchor.start) - (y.anchor.end - y.anchor.start))[0];
@@ -176,7 +227,7 @@ export function Margin({ docId, content, rootRef, comments, onChange }: {
   };
 
   return (
-    <div className="margin">
+    <div className="margin" ref={marginRef}>
       {total > 0 && (
         <div className="margin-nav">
           <button onClick={() => go(-1)} title="Previous comment" aria-label="Previous comment">‹</button>
