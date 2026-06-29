@@ -45,6 +45,11 @@ func NewAPI(svc *service.Service, st *store.Store) http.Handler {
 		}, nil)
 	})
 
+	mux.HandleFunc("GET /api/docs/{id}/log", func(w http.ResponseWriter, r *http.Request) {
+		log, err := st.ListDecisionLog(r.PathValue("id"))
+		writeJSON(w, log, err)
+	})
+
 	mux.HandleFunc("POST /api/docs/{id}/approve", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			Note string `json:"note"`

@@ -129,3 +129,29 @@ func TestDevClaimAndPropose(t *testing.T) {
 		t.Fatalf("propose: %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestDecisionLogEndpoint(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := service.New(s, func(_, _ string) error { return nil })
+	h := NewAPI(svc, s)
+
+	doc, v1, _ := s.CreateDocument("spec.md", "hello world", "human")
+	_, _ = s.CreateComment(domain.Comment{
+		DocID: doc.ID, AgainstVersionID: v1.ID, Anchor: domain.Anchor{Start: 6, End: 11},
+		AuthorIdentity: "human", Owner: "human", Status: domain.CommentOpen,
+	})
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("GET", "/api/docs/"+doc.ID+"/log", nil))
+	if rr.Code != 200 {
+		t.Fatalf("status = %d, body %s", rr.Code, rr.Body.String())
+	}
+	var log []domain.LogEntry
+	if err := json.Unmarshal(rr.Body.Bytes(), &log); err != nil {
+		t.Fatal(err)
+	}
+	if len(log) != 2 || log[0].Kind != "created" || log[1].Kind != "comment" || log[1].Detail != "world" {
+		t.Fatalf("log = %+v, want [created, comment(world)]", log)
+	}
+}
