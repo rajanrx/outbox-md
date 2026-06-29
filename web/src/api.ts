@@ -15,6 +15,19 @@ export type DocView = {
 };
 export type Suggestion = { id: string; proposedContent: string; state: string };
 
+export type LogEntry = {
+  time: string;
+  kind: "created" | "comment" | "proposal" | "edit" | "approval";
+  actor: string;
+  detail: string;
+  version: number;
+  reApproval: boolean;
+};
+
+export async function getLog(id: string): Promise<LogEntry[]> {
+  return (await fetch(`/api/docs/${id}/log`)).json();
+}
+
 export async function approve(id: string, note = ""): Promise<unknown> {
   const r = await fetch(`/api/docs/${id}/approve`, { method: "POST", body: JSON.stringify({ note }) });
   return r.ok ? r.json() : null;

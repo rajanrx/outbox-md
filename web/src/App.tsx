@@ -4,6 +4,7 @@ import { FileTree } from "./docs/FileTree";
 import { Reader } from "./reader/Reader";
 import { Margin } from "./comments/Margin";
 import { BaselineDiff } from "./governance/BaselineDiff";
+import { DecisionLog } from "./log/DecisionLog";
 import "./governance/governance.css";
 
 const PanelLeftIcon = () => (
@@ -30,6 +31,7 @@ export default function App() {
   const [treeOpen, setTreeOpen] = useState(true);
   const [commentsOpen, setCommentsOpen] = useState(true);
   const [showBaseline, setShowBaseline] = useState(false);
+  const [showLog, setShowLog] = useState(false);
   const [commentsW, setCommentsW] = useState(() => {
     const v = Number(localStorage.getItem(COMMENTS_W_KEY));
     return v ? clampW(v) : 420;
@@ -95,11 +97,17 @@ export default function App() {
             )}
           </div>
         )}
+        {view && (
+          <button className="gov-btn ghost" onClick={() => setShowLog((v) => !v)}>History</button>
+        )}
         <div className="spacer" />
         <button className={"icon-btn" + (treeOpen ? " on" : "")} title="Toggle files" onClick={() => setTreeOpen((v) => !v)}><PanelLeftIcon /></button>
         <button className={"icon-btn" + (commentsOpen ? " on" : "")} title="Toggle comments" onClick={() => setCommentsOpen((v) => !v)}><PanelRightIcon /></button>
         {showBaseline && view && (
           <BaselineDiff baseline={view.baselineContent} current={view.content} onClose={() => setShowBaseline(false)} />
+        )}
+        {showLog && view && (
+          <DecisionLog docId={docId} onClose={() => setShowLog(false)} />
         )}
       </div>
 

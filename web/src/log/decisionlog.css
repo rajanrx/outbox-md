@@ -1,0 +1,24 @@
+.log-panel {
+  position: absolute; top: 50px; right: 0; width: min(560px, 60vw); max-height: 72vh;
+  z-index: 20; display: flex; flex-direction: column; overflow: hidden;
+  background: var(--chrome-2); border: 1px solid var(--chrome-line);
+  border-radius: 0 0 0 12px; box-shadow: 0 24px 60px -28px rgba(20,15,5,.4);
+}
+.log-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 9px 14px; font-size: 12px; font-weight: 650; color: var(--ink-soft);
+  background: var(--chrome); border-bottom: 1px solid var(--chrome-line);
+}
+.log-close { width: 26px; height: 26px; border: 0; border-radius: 6px; background: none; font-size: 18px; color: var(--ink-soft); }
+.log-close:hover { background: var(--chrome-3); color: var(--ink); }
+.log-list { list-style: none; margin: 0; padding: 8px 0; overflow-y: auto; }
+.log-row { display: flex; gap: 10px; padding: 8px 14px; align-items: flex-start; }
+.log-ic { flex: none; width: 20px; text-align: center; color: var(--chrome-soft); }
+.kind-approval .log-ic { color: var(--agent); }
+.kind-comment .log-ic, .kind-proposal .log-ic { color: var(--accent); }
+.log-body { font-size: 13px; line-height: 1.5; color: var(--ink); }
+.log-actor { font-weight: 650; text-transform: capitalize; }
+.who-human { color: var(--accent); }
+.who-agent { color: var(--agent); }
+.log-time { font-size: 11px; color: var(--chrome-soft); margin-top: 2px; font-variant-numeric: tabular-nums; }
+.log-empty { padding: 24px; text-align: center; color: var(--chrome-soft); font-size: 13px; }
