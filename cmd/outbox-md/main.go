@@ -12,6 +12,7 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/rajanrx/outbox-md/internal/api"
+	"github.com/rajanrx/outbox-md/internal/config"
 	"github.com/rajanrx/outbox-md/internal/mcp"
 	"github.com/rajanrx/outbox-md/internal/service"
 	"github.com/rajanrx/outbox-md/internal/store"
@@ -159,6 +160,7 @@ func main() {
 		}
 		return atomicWrite(target, content)
 	})
+	svc.SetConfig(config.Load(dir))
 	if err := importMarkdown(st, dir); err != nil {
 		log.Fatal(err)
 	}

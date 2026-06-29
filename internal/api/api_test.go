@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rajanrx/outbox-md/internal/config"
 	"github.com/rajanrx/outbox-md/internal/domain"
 	"github.com/rajanrx/outbox-md/internal/service"
 	"github.com/rajanrx/outbox-md/internal/store"
@@ -153,5 +154,40 @@ func TestDecisionLogEndpoint(t *testing.T) {
 	}
 	if len(log) != 2 || log[0].Kind != "created" || log[1].Kind != "comment" || log[1].Detail != "world" {
 		t.Fatalf("log = %+v, want [created, comment(world)]", log)
+	}
+}
+
+func TestConfigEndpoint(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := service.New(s, func(_, _ string) error { return nil })
+	h := NewAPI(svc, s)
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("GET", "/api/config", nil))
+	if rr.Code != 200 {
+		t.Fatalf("status = %d", rr.Code)
+	}
+	var got struct {
+		Agent struct {
+			BatchSize int `json:"batchSize"`
+		} `json:"agent"`
+		Approval struct {
+			PostApprovalComments bool `json:"postApprovalComments"`
+		} `json:"approval"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Agent.BatchSize != 5 || !got.Approval.PostApprovalComments {
+		t.Errorf("default config = %+v, want {batch 5, postApproval true}", got)
+	}
+
+	svc.SetConfig(config.Config{Agent: config.AgentConfig{BatchSize: 9}, Approval: config.ApprovalConfig{PostApprovalComments: false}})
+	rr2 := httptest.NewRecorder()
+	h.ServeHTTP(rr2, httptest.NewRequest("GET", "/api/config", nil))
+	_ = json.Unmarshal(rr2.Body.Bytes(), &got)
+	if got.Agent.BatchSize != 9 || got.Approval.PostApprovalComments {
+		t.Errorf("after SetConfig = %+v, want {batch 9, postApproval false}", got)
 	}
 }

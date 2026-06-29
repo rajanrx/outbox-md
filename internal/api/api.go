@@ -13,6 +13,10 @@ import (
 func NewAPI(svc *service.Service, st *store.Store) http.Handler {
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, svc.Config(), nil)
+	})
+
 	mux.HandleFunc("GET /api/docs", func(w http.ResponseWriter, _ *http.Request) {
 		docs, err := st.ListDocuments()
 		writeJSON(w, docs, err)
