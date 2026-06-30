@@ -8,7 +8,9 @@ import (
 
 // kindOrder is a deterministic tiebreak for events that share a one-second
 // created_at timestamp.
-var kindOrder = map[string]int{"created": 0, "comment": 1, "proposal": 2, "edit": 3, "approval": 4}
+var kindOrder = map[string]int{
+	"created": 0, "comment": 1, "candidate": 2, "synthesis": 3, "proposal": 4, "edit": 5, "approval": 6,
+}
 
 const excerptMax = 80
 
@@ -98,6 +100,56 @@ func (s *Store) ListDecisionLog(docID string) ([]domain.LogEntry, error) {
 	}
 	srows.Close()
 	if err := srows.Err(); err != nil {
+		return nil, err
+	}
+
+	// council candidates (joined to the doc via candidate_sets → comments) →
+	// candidate. Detail carries the member's lens + verdict so history shows what
+	// each lens concluded; (created_at, rowid) keeps same-second members ordered.
+	cdrows, err := s.DB.Query(
+		`SELECT cd.agent_identity, cd.lens, cd.verdict, cd.created_at
+		 FROM candidates cd
+		 JOIN candidate_sets cs ON cd.candidate_set_id = cs.id
+		 JOIN comments c ON cs.comment_id = c.id
+		 WHERE c.doc_id=? ORDER BY cd.created_at, cd.rowid`, docID)
+	if err != nil {
+		return nil, err
+	}
+	for cdrows.Next() {
+		var by, lens, verdict, at string
+		if err := cdrows.Scan(&by, &lens, &verdict, &at); err != nil {
+			cdrows.Close()
+			return nil, err
+		}
+		out = append(out, domain.LogEntry{Time: at, Kind: "candidate", Actor: by, Detail: lens + ": " + verdict})
+	}
+	cdrows.Close()
+	if err := cdrows.Err(); err != nil {
+		return nil, err
+	}
+
+	// council syntheses (joined to the doc via candidate_sets → comments) →
+	// synthesis. Detail preserves the dissent line so an approved spec carries the
+	// record of what the skeptic said.
+	syrows, err := s.DB.Query(
+		`SELECT sy.created_by, sy.dissent, sy.created_at
+		 FROM syntheses sy
+		 JOIN candidate_sets cs ON sy.candidate_set_id = cs.id
+		 JOIN comments c ON cs.comment_id = c.id
+		 WHERE c.doc_id=? ORDER BY sy.created_at, sy.rowid`, docID)
+	if err != nil {
+		return nil, err
+	}
+	for syrows.Next() {
+		var by, dissent, at string
+		if err := syrows.Scan(&by, &dissent, &at); err != nil {
+			syrows.Close()
+			return nil, err
+		}
+		out = append(out, domain.LogEntry{Time: at, Kind: "synthesis", Actor: by, Detail: dissent})
+	}
+	syrows.Close()
+	if err := syrows.Err(); err != nil {
 		return nil, err
 	}
 
