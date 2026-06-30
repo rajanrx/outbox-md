@@ -1,0 +1,7 @@
+# The repo root .gitignore ignores *.py (this is a Go/JS project). Re-include
+# the runner's Python sources so they aren't silently dropped from commits.
+!*.py
+
+# ...but keep build artifacts ignored.
+__pycache__/
+*.pyc

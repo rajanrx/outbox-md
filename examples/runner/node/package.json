@@ -1,0 +1,17 @@
+{
+  "name": "outbox-runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Reference webhook runner for outbox-md (Node, stdlib-only).",
+  "engines": {
+    "node": ">=18"
+  },
+  "bin": {
+    "outbox-runner": "./index.js"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test"
+  }
+}
