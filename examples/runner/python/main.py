@@ -8,6 +8,8 @@ Receives outbox-md webhooks, verifies them, and drives a single-agent loop
 Run:  python main.py        (see examples/runner/README.md)
 """
 
+import sys
+
 from api import APIBackend
 from cli import CLIBackend
 from config import host_port, load_config
@@ -25,7 +27,17 @@ def main():
     host, port = host_port(cfg.addr)
     server = create_server(cfg, new_backend(cfg), host, port)
 
-    signing = "on (HMAC-SHA256 enforced)" if cfg.secret else "off (no secret set — accepting unsigned)"
+    if cfg.secret:
+        signing = "on (HMAC-SHA256 enforced)"
+    elif cfg.allow_unsigned:
+        signing = "off (RUNNER_ALLOW_UNSIGNED set — accepting UNSIGNED, NOT recommended)"
+    else:
+        signing = "default-deny (no secret set — refusing unsigned)"
+        print(
+            "runner: refusing unsigned webhooks; set OUTBOX_WEBHOOK_SECRET, "
+            "or RUNNER_ALLOW_UNSIGNED=1 to allow unsigned (NOT recommended).",
+            file=sys.stderr,
+        )
     print(f"outbox-runner listening on {cfg.addr}")
     print(f"  agent mode : {cfg.agent_mode}")
     print(f"  signing    : {signing}")

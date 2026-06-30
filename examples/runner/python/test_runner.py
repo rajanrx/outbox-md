@@ -22,12 +22,19 @@ class VerifySignatureTest(unittest.TestCase):
         body = b'{"event":"comment.created"}'
         secret = "shh"
         good = sign(secret, body)
-        self.assertTrue(verify_signature(secret, body, good), "valid passes")
-        self.assertFalse(verify_signature(secret, b'{"event":"x"}', good), "tampered fails")
-        self.assertFalse(verify_signature(secret, body, "sha256=deadbeef"), "wrong sig fails")
-        self.assertFalse(verify_signature(secret, body, ""), "missing sig fails")
-        self.assertTrue(verify_signature("", body, ""), "no secret accepts unsigned")
-        self.assertTrue(verify_signature("", body, "sha256=whatever"), "no secret ignores header")
+        self.assertTrue(verify_signature(secret, False, body, good), "valid passes")
+        self.assertFalse(verify_signature(secret, False, b'{"event":"x"}', good), "tampered fails")
+        self.assertFalse(verify_signature(secret, False, body, "sha256=deadbeef"), "wrong sig fails")
+        self.assertFalse(verify_signature(secret, False, body, ""), "missing sig fails")
+        self.assertFalse(verify_signature("", False, body, ""), "no secret default-denies")
+        self.assertFalse(verify_signature("", False, body, "sha256=whatever"), "no secret default-denies even with a header")
+        self.assertTrue(verify_signature("", True, body, ""), "no secret + allow-unsigned accepts")
+        self.assertTrue(verify_signature("", True, body, "sha256=whatever"), "no secret + allow-unsigned ignores header")
+
+    def test_non_ascii_signature_header_rejects_cleanly(self):
+        body = b'{"event":"comment.created"}'
+        # A non-ASCII X-Outbox-Signature must fail closed (False), not raise.
+        self.assertFalse(verify_signature("shh", False, body, "sha256=café—" + "ÿ"))
 
 
 class EventNameTest(unittest.TestCase):
@@ -90,6 +97,58 @@ class HTTPFilteringTest(unittest.TestCase):
 
             time.sleep(0.05)
             self.assertEqual(backend.calls, 1, "only the allowed, signed event ran the agent")
+        finally:
+            server.shutdown()
+
+
+class AuthPolicyHTTPTest(unittest.TestCase):
+    """Default-deny, allow-unsigned opt-in, and the pre-auth body cap, over HTTP."""
+
+    def _serve(self, cfg):
+        backend = _CountingBackend()
+        server = create_server(cfg, backend, "127.0.0.1", 0)
+        port = server.server_address[1]
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        return server, backend, f"http://127.0.0.1:{port}/"
+
+    def _post(self, base, event, body):
+        headers = {"X-Outbox-Event": event, "Content-Type": "application/json"}
+        req = urllib.request.Request(base, data=body, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req) as resp:
+                return resp.status
+        except urllib.error.HTTPError as e:
+            e.close()
+            return e.code
+
+    def test_default_deny_unsigned(self):
+        cfg = Config(secret="", allow_unsigned=False, events=parse_events("comment.created"), debounce_ms=5)
+        server, backend, base = self._serve(cfg)
+        try:
+            self.assertEqual(self._post(base, "comment.created", b'{"event":"comment.created"}'), 401)
+            time.sleep(0.03)
+            self.assertEqual(backend.calls, 0, "default-deny rejects unsigned")
+        finally:
+            server.shutdown()
+
+    def test_allow_unsigned_accepts(self):
+        cfg = Config(secret="", allow_unsigned=True, events=parse_events("comment.created"), debounce_ms=5)
+        server, backend, base = self._serve(cfg)
+        try:
+            self.assertEqual(self._post(base, "comment.created", b'{"event":"comment.created"}'), 202)
+            time.sleep(0.05)
+            self.assertEqual(backend.calls, 1, "unsigned accepted under explicit opt-in")
+        finally:
+            server.shutdown()
+
+    def test_oversize_body_rejected(self):
+        cfg = Config(secret="", allow_unsigned=True, max_body_bytes=16, events=parse_events("comment.created"), debounce_ms=5)
+        server, backend, base = self._serve(cfg)
+        try:
+            big = b'{"event":"comment.created","pad":"' + b"x" * 4096 + b'"}'
+            self.assertEqual(self._post(base, "comment.created", big), 413)
+            time.sleep(0.03)
+            self.assertEqual(backend.calls, 0, "oversize body rejected before run")
         finally:
             server.shutdown()
 

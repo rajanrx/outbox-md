@@ -10,17 +10,19 @@ function sign(secret, body) {
   return "sha256=" + crypto.createHmac("sha256", secret).update(body).digest("hex");
 }
 
-test("verifySignature: valid passes / tampered fails / no-secret accepts", () => {
+test("verifySignature: valid passes / tampered fails / default-deny + allow-unsigned", () => {
   const body = Buffer.from('{"event":"comment.created"}');
   const secret = "shh";
   const good = sign(secret, body);
 
-  assert.equal(verifySignature(secret, body, good), true, "valid passes");
-  assert.equal(verifySignature(secret, Buffer.from('{"event":"x"}'), good), false, "tampered fails");
-  assert.equal(verifySignature(secret, body, "sha256=deadbeef"), false, "wrong sig fails");
-  assert.equal(verifySignature(secret, body, ""), false, "missing sig fails");
-  assert.equal(verifySignature("", body, ""), true, "no secret accepts unsigned");
-  assert.equal(verifySignature("", body, "sha256=whatever"), true, "no secret ignores header");
+  assert.equal(verifySignature(secret, false, body, good), true, "valid passes");
+  assert.equal(verifySignature(secret, false, Buffer.from('{"event":"x"}'), good), false, "tampered fails");
+  assert.equal(verifySignature(secret, false, body, "sha256=deadbeef"), false, "wrong sig fails");
+  assert.equal(verifySignature(secret, false, body, ""), false, "missing sig fails");
+  assert.equal(verifySignature("", false, body, ""), false, "no secret default-denies");
+  assert.equal(verifySignature("", false, body, "sha256=whatever"), false, "no secret default-denies even with a header");
+  assert.equal(verifySignature("", true, body, ""), true, "no secret + allow-unsigned accepts");
+  assert.equal(verifySignature("", true, body, "sha256=whatever"), true, "no secret + allow-unsigned ignores header");
 });
 
 test("eventName: header preferred, body fallback", () => {
@@ -53,6 +55,8 @@ test("event filtering + signing end-to-end", async () => {
   let calls = 0;
   const cfg = {
     secret: "shh",
+    allowUnsigned: false,
+    maxBodyBytes: 1 << 20,
     events: parseEvents("comment.created,comment.replied"),
     debounceMs: 5,
     agentMode: "cli",
@@ -76,6 +80,70 @@ test("event filtering + signing end-to-end", async () => {
 
   await new Promise((r) => setTimeout(r, 40));
   assert.equal(calls, 1, "only the one allowed, signed event ran the agent");
+  await new Promise((r) => server.close(r));
+});
+
+test("default-deny: no secret + no allow-unsigned → 401, agent never runs", async () => {
+  let calls = 0;
+  const cfg = {
+    secret: "",
+    allowUnsigned: false,
+    maxBodyBytes: 1 << 20,
+    events: parseEvents("comment.created"),
+    debounceMs: 5,
+    agentMode: "cli",
+  };
+  const server = createServer(cfg, { run: async () => { calls += 1; } });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const { port } = server.address();
+  const base = `http://127.0.0.1:${port}/`;
+
+  assert.equal(await postEvent(base, { event: "comment.created", body: '{"event":"comment.created"}' }), 401);
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(calls, 0, "default-deny rejects unsigned");
+  await new Promise((r) => server.close(r));
+});
+
+test("allow-unsigned: no secret + RUNNER_ALLOW_UNSIGNED → 202, agent runs", async () => {
+  let calls = 0;
+  const cfg = {
+    secret: "",
+    allowUnsigned: true,
+    maxBodyBytes: 1 << 20,
+    events: parseEvents("comment.created"),
+    debounceMs: 5,
+    agentMode: "cli",
+  };
+  const server = createServer(cfg, { run: async () => { calls += 1; } });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const { port } = server.address();
+  const base = `http://127.0.0.1:${port}/`;
+
+  assert.equal(await postEvent(base, { event: "comment.created", body: '{"event":"comment.created"}' }), 202);
+  await new Promise((r) => setTimeout(r, 40));
+  assert.equal(calls, 1, "unsigned accepted under explicit opt-in");
+  await new Promise((r) => server.close(r));
+});
+
+test("oversize body → 413 before auth, agent never runs", async () => {
+  let calls = 0;
+  const cfg = {
+    secret: "",
+    allowUnsigned: true,
+    maxBodyBytes: 16,
+    events: parseEvents("comment.created"),
+    debounceMs: 5,
+    agentMode: "cli",
+  };
+  const server = createServer(cfg, { run: async () => { calls += 1; } });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const { port } = server.address();
+  const base = `http://127.0.0.1:${port}/`;
+
+  const big = '{"event":"comment.created","pad":"' + "x".repeat(4096) + '"}';
+  assert.equal(await postEvent(base, { event: "comment.created", body: big }), 413);
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(calls, 0, "oversize body rejected before run");
   await new Promise((r) => server.close(r));
 });
 

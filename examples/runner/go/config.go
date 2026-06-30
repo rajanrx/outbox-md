@@ -13,9 +13,15 @@ import (
 type Config struct {
 	// Addr is the listen address for the webhook HTTP server (RUNNER_ADDR).
 	Addr string
-	// Secret is the shared HMAC secret (OUTBOX_WEBHOOK_SECRET). Empty ⇒ signing
-	// is not enforced (mirrors the server: it only signs when a secret is set).
+	// Secret is the shared HMAC secret (OUTBOX_WEBHOOK_SECRET). Empty ⇒ requests
+	// are accepted only when AllowUnsigned is set (default-deny otherwise).
 	Secret string
+	// AllowUnsigned permits unsigned requests when no Secret is set
+	// (RUNNER_ALLOW_UNSIGNED=1|true). Default false ⇒ no secret means reject.
+	AllowUnsigned bool
+	// MaxBodyBytes caps the raw request body read before auth (RUNNER_MAX_BODY_BYTES);
+	// a larger body is rejected with 413 before any work, bounding pre-auth memory.
+	MaxBodyBytes int64
 	// Events is the set of event names the runner acts on (RUNNER_EVENTS). Any
 	// event not in this set is acknowledged with 200 and ignored.
 	Events map[string]bool
@@ -53,11 +59,24 @@ const DefaultPrompt = "Process the open outbox comments using the outbox-md tool
 // outbox-md MCP tools so the run is non-interactive.
 const DefaultAgentCmd = "claude -p {prompt} --allowedTools mcp__outbox-md__*"
 
+// DefaultMaxBodyBytes is the request-body cap when RUNNER_MAX_BODY_BYTES is unset
+// or invalid: 1 MiB, plenty for these webhooks.
+const DefaultMaxBodyBytes int64 = 1 << 20
+
 func env(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
 	return def
+}
+
+// envBool reports whether key is set to "1" or "true" (case-insensitive).
+func envBool(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true":
+		return true
+	}
+	return false
 }
 
 // parseEvents splits a comma-separated list into a set, trimming blanks.
@@ -78,17 +97,23 @@ func LoadConfig() Config {
 	if err != nil || debounceMS < 0 {
 		debounceMS = 1500
 	}
+	maxBody, err := strconv.ParseInt(env("RUNNER_MAX_BODY_BYTES", "1048576"), 10, 64)
+	if err != nil || maxBody <= 0 {
+		maxBody = DefaultMaxBodyBytes
+	}
 	return Config{
-		Addr:      env("RUNNER_ADDR", ":8787"),
-		Secret:    os.Getenv("OUTBOX_WEBHOOK_SECRET"),
-		Events:    parseEvents(env("RUNNER_EVENTS", "comment.created,comment.replied")),
-		Debounce:  time.Duration(debounceMS) * time.Millisecond,
-		AgentMode: env("RUNNER_AGENT_MODE", "cli"),
-		AgentCmd:  env("RUNNER_AGENT_CMD", DefaultAgentCmd),
-		Prompt:    env("RUNNER_PROMPT", DefaultPrompt),
-		MCPURL:    env("OUTBOX_MCP_URL", "http://localhost:8181/mcp"),
-		APIKey:    os.Getenv("ANTHROPIC_API_KEY"),
-		Model:     env("ANTHROPIC_MODEL", "claude-sonnet-4-5"),
-		AgentID:   env("RUNNER_AGENT_ID", "outbox-runner"),
+		Addr:          env("RUNNER_ADDR", ":8787"),
+		Secret:        os.Getenv("OUTBOX_WEBHOOK_SECRET"),
+		AllowUnsigned: envBool("RUNNER_ALLOW_UNSIGNED"),
+		MaxBodyBytes:  maxBody,
+		Events:        parseEvents(env("RUNNER_EVENTS", "comment.created,comment.replied")),
+		Debounce:      time.Duration(debounceMS) * time.Millisecond,
+		AgentMode:     env("RUNNER_AGENT_MODE", "cli"),
+		AgentCmd:      env("RUNNER_AGENT_CMD", DefaultAgentCmd),
+		Prompt:        env("RUNNER_PROMPT", DefaultPrompt),
+		MCPURL:        env("OUTBOX_MCP_URL", "http://localhost:8181/mcp"),
+		APIKey:        os.Getenv("ANTHROPIC_API_KEY"),
+		Model:         env("ANTHROPIC_MODEL", "claude-sonnet-4-5"),
+		AgentID:       env("RUNNER_AGENT_ID", "outbox-runner"),
 	}
 }

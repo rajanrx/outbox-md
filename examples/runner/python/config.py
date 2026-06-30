@@ -21,9 +21,18 @@ DEFAULT_PROMPT = (
 DEFAULT_AGENT_CMD = "claude -p {prompt} --allowedTools mcp__outbox-md__*"
 
 
+# Request-body cap when RUNNER_MAX_BODY_BYTES is unset or invalid: 1 MiB.
+DEFAULT_MAX_BODY_BYTES = 1024 * 1024
+
+
 def _env(key: str, default: str) -> str:
     v = os.environ.get(key)
     return v if v else default
+
+
+def _env_bool(key: str) -> bool:
+    """Report whether key is set to '1' or 'true' (case-insensitive)."""
+    return os.environ.get(key, "").strip().lower() in ("1", "true")
 
 
 def parse_events(csv: str) -> set:
@@ -35,6 +44,8 @@ def parse_events(csv: str) -> set:
 class Config:
     addr: str = ":8787"
     secret: str = ""
+    allow_unsigned: bool = False
+    max_body_bytes: int = DEFAULT_MAX_BODY_BYTES
     events: set = field(default_factory=set)
     debounce_ms: int = 1500
     agent_mode: str = "cli"
@@ -53,9 +64,17 @@ def load_config() -> Config:
             debounce_ms = 1500
     except ValueError:
         debounce_ms = 1500
+    try:
+        max_body_bytes = int(_env("RUNNER_MAX_BODY_BYTES", str(DEFAULT_MAX_BODY_BYTES)))
+        if max_body_bytes <= 0:
+            max_body_bytes = DEFAULT_MAX_BODY_BYTES
+    except ValueError:
+        max_body_bytes = DEFAULT_MAX_BODY_BYTES
     return Config(
         addr=_env("RUNNER_ADDR", ":8787"),
         secret=os.environ.get("OUTBOX_WEBHOOK_SECRET", ""),
+        allow_unsigned=_env_bool("RUNNER_ALLOW_UNSIGNED"),
+        max_body_bytes=max_body_bytes,
         events=parse_events(_env("RUNNER_EVENTS", "comment.created,comment.replied")),
         debounce_ms=debounce_ms,
         agent_mode=_env("RUNNER_AGENT_MODE", "cli"),

@@ -36,9 +36,15 @@ func main() {
 	cfg := LoadConfig()
 	server := NewServer(cfg, newBackend(cfg))
 
-	signing := "off (no secret set — accepting unsigned)"
-	if cfg.Secret != "" {
+	signing := "default-deny (no secret set — refusing unsigned)"
+	switch {
+	case cfg.Secret != "":
 		signing = "on (HMAC-SHA256 enforced)"
+	case cfg.AllowUnsigned:
+		signing = "off (RUNNER_ALLOW_UNSIGNED set — accepting UNSIGNED, NOT recommended)"
+	default:
+		log.Printf("runner: refusing unsigned webhooks; set OUTBOX_WEBHOOK_SECRET, " +
+			"or RUNNER_ALLOW_UNSIGNED=1 to allow unsigned (NOT recommended).")
 	}
 	log.Printf("outbox-runner listening on %s", cfg.Addr)
 	log.Printf("  agent mode : %s", cfg.AgentMode)

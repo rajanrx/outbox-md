@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -22,15 +23,15 @@ type Backend interface {
 
 // verifySignature reports whether the request is authentic.
 //
-//   - secret == "" → signing is not enforced; accept (mirrors the server, which
-//     only signs when a secret is configured).
-//   - secret set, header missing/wrong → reject.
+//   - secret set, header valid → accept; header missing/wrong → reject.
+//   - secret == "" → default-deny: reject unless allowUnsigned is set (an
+//     explicit opt-in for the unsigned, no-secret configuration).
 //
 // The compare is constant-time over the hex digests. body must be the RAW
 // request bytes — the same bytes the server signed — read before any parsing.
-func verifySignature(secret string, body []byte, header string) bool {
+func verifySignature(secret string, allowUnsigned bool, body []byte, header string) bool {
 	if secret == "" {
-		return true
+		return allowUnsigned
 	}
 	if header == "" {
 		return false
@@ -140,12 +141,19 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	body, err := io.ReadAll(r.Body)
+	// Cap the raw body read BEFORE auth so a large/streamed body cannot OOM the
+	// process pre-verification. HMAC still covers the exact bytes read.
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, s.cfg.MaxBodyBytes))
 	if err != nil {
+		var mbe *http.MaxBytesError
+		if errors.As(err, &mbe) {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, "read error", http.StatusBadRequest)
 		return
 	}
-	if !verifySignature(s.cfg.Secret, body, r.Header.Get("X-Outbox-Signature")) {
+	if !verifySignature(s.cfg.Secret, s.cfg.AllowUnsigned, body, r.Header.Get("X-Outbox-Signature")) {
 		http.Error(w, "invalid signature", http.StatusUnauthorized)
 		return
 	}

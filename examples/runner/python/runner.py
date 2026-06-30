@@ -11,23 +11,28 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
-def verify_signature(secret: str, body: bytes, header: str) -> bool:
+def verify_signature(secret: str, allow_unsigned: bool, body: bytes, header: str) -> bool:
     """Report whether the request is authentic.
 
-    - secret falsy  -> signing not enforced; accept (mirrors the server, which
-      only signs when a secret is configured).
-    - secret set, header missing/wrong -> reject.
+    - secret set, header valid -> accept; header missing/wrong -> reject.
+    - secret falsy -> default-deny: reject unless allow_unsigned is set (an
+      explicit opt-in for the unsigned, no-secret configuration).
 
     `body` MUST be the raw request bytes — the exact bytes the server signed.
     """
     if not secret:
-        return True
+        return allow_unsigned
     if not header:
         return False
     got = header[len("sha256="):] if header.startswith("sha256=") else header
     want = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
-    # compare_digest is constant-time and length-safe.
-    return hmac.compare_digest(got, want)
+    # compare_digest is constant-time and length-safe. It raises TypeError on a
+    # non-ASCII header (attacker-controlled); treat that as a clean reject rather
+    # than a noisy 500, matching Go/Node's fail-closed behavior.
+    try:
+        return hmac.compare_digest(got, want)
+    except TypeError:
+        return False
 
 
 def event_name(header: str, body: bytes) -> str:
@@ -107,11 +112,20 @@ class _Handler(BaseHTTPRequestHandler):
             self._respond(404, "not found\n")
 
     def do_POST(self):  # noqa: N802 - BaseHTTPRequestHandler API
-        length = int(self.headers.get("Content-Length", 0) or 0)
-        body = self.rfile.read(length) if length else b""
         cfg = self.server.cfg
         runner = self.server.runner
-        if not verify_signature(cfg.secret, body, self.headers.get("X-Outbox-Signature", "")):
+        # Cap the raw body BEFORE auth so a large body cannot OOM the process
+        # pre-verification. Reject an oversized Content-Length outright, and cap
+        # the actual read in case the header lies. HMAC still covers the bytes read.
+        try:
+            length = int(self.headers.get("Content-Length", 0) or 0)
+        except ValueError:
+            length = 0
+        if length > cfg.max_body_bytes:
+            self._respond(413, "request body too large\n")
+            return
+        body = self.rfile.read(min(length, cfg.max_body_bytes)) if length else b""
+        if not verify_signature(cfg.secret, cfg.allow_unsigned, body, self.headers.get("X-Outbox-Signature", "")):
             self._respond(401, "invalid signature\n")
             return
         event = event_name(self.headers.get("X-Outbox-Event", ""), body)

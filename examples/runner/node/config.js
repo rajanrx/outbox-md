@@ -14,9 +14,18 @@ export const DEFAULT_PROMPT =
 // tools so the run is non-interactive.
 export const DEFAULT_AGENT_CMD = "claude -p {prompt} --allowedTools mcp__outbox-md__*";
 
+// Request-body cap when RUNNER_MAX_BODY_BYTES is unset or invalid: 1 MiB.
+export const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
+
 function env(key, def) {
   const v = process.env[key];
   return v !== undefined && v !== "" ? v : def;
+}
+
+// envBool reports whether key is set to "1" or "true" (case-insensitive).
+function envBool(key) {
+  const v = (process.env[key] || "").trim().toLowerCase();
+  return v === "1" || v === "true";
 }
 
 // parseEvents turns a comma-separated list into a Set, trimming blanks.
@@ -32,9 +41,13 @@ export function parseEvents(csv) {
 export function loadConfig() {
   let debounceMs = parseInt(env("RUNNER_DEBOUNCE_MS", "1500"), 10);
   if (Number.isNaN(debounceMs) || debounceMs < 0) debounceMs = 1500;
+  let maxBodyBytes = parseInt(env("RUNNER_MAX_BODY_BYTES", "1048576"), 10);
+  if (Number.isNaN(maxBodyBytes) || maxBodyBytes <= 0) maxBodyBytes = DEFAULT_MAX_BODY_BYTES;
   return {
     addr: env("RUNNER_ADDR", ":8787"),
     secret: process.env.OUTBOX_WEBHOOK_SECRET || "",
+    allowUnsigned: envBool("RUNNER_ALLOW_UNSIGNED"),
+    maxBodyBytes,
     events: parseEvents(env("RUNNER_EVENTS", "comment.created,comment.replied")),
     debounceMs,
     agentMode: env("RUNNER_AGENT_MODE", "cli"),

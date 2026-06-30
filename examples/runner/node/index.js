@@ -19,9 +19,18 @@ function main() {
   const { host, port } = hostPort(cfg.addr);
 
   server.listen(port, host, () => {
-    const signing = cfg.secret
-      ? "on (HMAC-SHA256 enforced)"
-      : "off (no secret set — accepting unsigned)";
+    let signing;
+    if (cfg.secret) {
+      signing = "on (HMAC-SHA256 enforced)";
+    } else if (cfg.allowUnsigned) {
+      signing = "off (RUNNER_ALLOW_UNSIGNED set — accepting UNSIGNED, NOT recommended)";
+    } else {
+      signing = "default-deny (no secret set — refusing unsigned)";
+      console.warn(
+        "runner: refusing unsigned webhooks; set OUTBOX_WEBHOOK_SECRET, " +
+          "or RUNNER_ALLOW_UNSIGNED=1 to allow unsigned (NOT recommended).",
+      );
+    }
     console.log(`outbox-runner listening on ${cfg.addr}`);
     console.log(`  agent mode : ${cfg.agentMode}`);
     console.log(`  signing    : ${signing}`);

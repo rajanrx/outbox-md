@@ -4,12 +4,12 @@ import crypto from "node:crypto";
 import http from "node:http";
 
 // verifySignature reports whether the request is authentic.
-//   - secret falsy  → signing not enforced; accept (mirrors the server, which
-//     only signs when a secret is configured).
-//   - secret set, header missing/wrong → reject.
+//   - secret set, header valid → accept; header missing/wrong → reject.
+//   - secret falsy → default-deny: reject unless allowUnsigned is set (an
+//     explicit opt-in for the unsigned, no-secret configuration).
 // `body` MUST be the raw request Buffer — the exact bytes the server signed.
-export function verifySignature(secret, body, header) {
-  if (!secret) return true;
+export function verifySignature(secret, allowUnsigned, body, header) {
+  if (!secret) return Boolean(allowUnsigned);
   if (!header) return false;
   const got = header.startsWith("sha256=") ? header.slice("sha256=".length) : header;
   const want = crypto.createHmac("sha256", secret).update(body).digest("hex");
@@ -75,10 +75,25 @@ export class Runner {
   }
 }
 
-function readRawBody(req) {
+// readRawBody buffers the raw request body, capping accumulated length at `max`.
+// On overflow it pauses the stream (so memory stays bounded — the pre-auth DoS
+// fix) and rejects with a tagged error; the handler turns that into a 413. The
+// socket is NOT destroyed here so the 413 response can still be written.
+function readRawBody(req, max) {
   return new Promise((resolve, reject) => {
     const chunks = [];
-    req.on("data", (c) => chunks.push(c));
+    let len = 0;
+    req.on("data", (c) => {
+      len += c.length;
+      if (len > max) {
+        req.pause();
+        const err = new Error("request body too large");
+        err.code = "BODY_TOO_LARGE";
+        reject(err);
+        return;
+      }
+      chunks.push(c);
+    });
     req.on("end", () => resolve(Buffer.concat(chunks)));
     req.on("error", reject);
   });
@@ -98,8 +113,20 @@ export function makeHandler(cfg, runner) {
       res.end("method not allowed\n");
       return;
     }
-    const body = await readRawBody(req);
-    if (!verifySignature(cfg.secret, body, req.headers["x-outbox-signature"])) {
+    let body;
+    try {
+      body = await readRawBody(req, cfg.maxBodyBytes);
+    } catch (e) {
+      if (e && e.code === "BODY_TOO_LARGE") {
+        res.writeHead(413);
+        res.end("request body too large\n");
+      } else {
+        res.writeHead(400);
+        res.end("read error\n");
+      }
+      return;
+    }
+    if (!verifySignature(cfg.secret, cfg.allowUnsigned, body, req.headers["x-outbox-signature"])) {
       res.writeHead(401);
       res.end("invalid signature\n");
       return;

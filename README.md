@@ -196,6 +196,8 @@ Example body:
 
 That's the same MCP toolset from step 2 — just triggered by a push instead of a timer. **Bring your own credentials:** the outbox server ships **zero** LLM keys; your runner holds the model key and does the reasoning, then writes back through MCP. The signature header lets the runner trust that a request really came from your outbox instance.
 
+> **Don't want to build one?** A reference **autonomous runner** ships in [`examples/runner/`](examples/runner/README.md) — Go, Node, and Python, each verifying the signature and driving the claim → propose/reply loop for you. Where the **interactive MCP** above is human-driven (you ask an agent to process the outbox in a chat session), the runner is webhook-driven and hands-off; its default CLI mode reuses your existing coding-agent subscription, so there's **no per-token API cost**.
+
 ### Live updates (SSE)
 
 The browser is the **second sink** for the same events. The UI subscribes — automatically, no setup — to a **Server-Sent Events** stream and re-renders the instant something changes, so a comment, reply, resolution, or approval shows up **without a manual refresh**.

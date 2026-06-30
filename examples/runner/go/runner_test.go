@@ -25,22 +25,25 @@ func TestVerifySignature(t *testing.T) {
 	good := sign(secret, body)
 
 	tests := []struct {
-		name   string
-		secret string
-		body   []byte
-		header string
-		want   bool
+		name          string
+		secret        string
+		allowUnsigned bool
+		body          []byte
+		header        string
+		want          bool
 	}{
-		{"valid passes", secret, body, good, true},
-		{"tampered body fails", secret, []byte(`{"event":"x"}`), good, false},
-		{"wrong signature fails", secret, body, "sha256=deadbeef", false},
-		{"missing signature fails", secret, body, "", false},
-		{"no secret accepts unsigned", "", body, "", true},
-		{"no secret ignores any header", "", body, "sha256=whatever", true},
+		{"valid passes", secret, false, body, good, true},
+		{"tampered body fails", secret, false, []byte(`{"event":"x"}`), good, false},
+		{"wrong signature fails", secret, false, body, "sha256=deadbeef", false},
+		{"missing signature fails", secret, false, body, "", false},
+		{"no secret default-denies", "", false, body, "", false},
+		{"no secret default-denies even with a header", "", false, body, "sha256=whatever", false},
+		{"no secret + allow-unsigned accepts", "", true, body, "", true},
+		{"no secret + allow-unsigned ignores header", "", true, body, "sha256=whatever", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := verifySignature(tt.secret, tt.body, tt.header); got != tt.want {
+			if got := verifySignature(tt.secret, tt.allowUnsigned, tt.body, tt.header); got != tt.want {
 				t.Fatalf("verifySignature = %v, want %v", got, tt.want)
 			}
 		})
@@ -66,8 +69,10 @@ func postEvent(t *testing.T, h http.Handler, cfg Config, event string, body []by
 
 func TestEventFiltering(t *testing.T) {
 	cfg := Config{
-		Events:   parseEvents("comment.created,comment.replied"),
-		Debounce: 5 * time.Millisecond,
+		AllowUnsigned: true, // no secret in this test → opt in to unsigned
+		MaxBodyBytes:  1 << 20,
+		Events:        parseEvents("comment.created,comment.replied"),
+		Debounce:      5 * time.Millisecond,
 	}
 	backend := &stubBackend{}
 	srv := NewServer(cfg, backend)
@@ -93,9 +98,10 @@ func TestEventFiltering(t *testing.T) {
 
 func TestUnauthorizedWhenSecretSet(t *testing.T) {
 	cfg := Config{
-		Secret:   "shh",
-		Events:   parseEvents("comment.created"),
-		Debounce: 5 * time.Millisecond,
+		Secret:       "shh",
+		MaxBodyBytes: 1 << 20,
+		Events:       parseEvents("comment.created"),
+		Debounce:     5 * time.Millisecond,
 	}
 	backend := &stubBackend{}
 	h := NewServer(cfg, backend).Handler()
@@ -109,6 +115,86 @@ func TestUnauthorizedWhenSecretSet(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("bad signature: code = %d, want 401", rec.Code)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if got := atomic.LoadInt32(&backend.calls); got != 0 {
+		t.Fatalf("agent calls = %d, want 0 (rejected before run)", got)
+	}
+}
+
+// TestDefaultDenyUnsigned: no secret + no allow-unsigned → reject every request,
+// signed or not, and never run the agent.
+func TestDefaultDenyUnsigned(t *testing.T) {
+	cfg := Config{
+		MaxBodyBytes: 1 << 20,
+		Events:       parseEvents("comment.created"),
+		Debounce:     5 * time.Millisecond,
+	}
+	backend := &stubBackend{}
+	h := NewServer(cfg, backend).Handler()
+
+	body := []byte(`{"event":"comment.created"}`)
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(string(body)))
+	req.Header.Set("X-Outbox-Event", "comment.created")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("default-deny: code = %d, want 401", rec.Code)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if got := atomic.LoadInt32(&backend.calls); got != 0 {
+		t.Fatalf("agent calls = %d, want 0 (default-deny rejects)", got)
+	}
+}
+
+// TestAllowUnsignedAccepts: no secret + RUNNER_ALLOW_UNSIGNED → unsigned POST is
+// accepted (explicit opt-in) and the agent runs.
+func TestAllowUnsignedAccepts(t *testing.T) {
+	cfg := Config{
+		AllowUnsigned: true,
+		MaxBodyBytes:  1 << 20,
+		Events:        parseEvents("comment.created"),
+		Debounce:      5 * time.Millisecond,
+	}
+	backend := &stubBackend{}
+	h := NewServer(cfg, backend).Handler()
+
+	body := []byte(`{"event":"comment.created"}`)
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(string(body)))
+	req.Header.Set("X-Outbox-Event", "comment.created")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("allow-unsigned: code = %d, want 202", rec.Code)
+	}
+	time.Sleep(40 * time.Millisecond)
+	if got := atomic.LoadInt32(&backend.calls); got != 1 {
+		t.Fatalf("agent calls = %d, want 1 (unsigned accepted)", got)
+	}
+}
+
+// TestOversizeBodyRejected: a body larger than MaxBodyBytes is rejected with 413
+// before signature verification, and the agent never runs.
+func TestOversizeBodyRejected(t *testing.T) {
+	cfg := Config{
+		AllowUnsigned: true,
+		MaxBodyBytes:  16,
+		Events:        parseEvents("comment.created"),
+		Debounce:      5 * time.Millisecond,
+	}
+	backend := &stubBackend{}
+	h := NewServer(cfg, backend).Handler()
+
+	body := []byte(`{"event":"comment.created","pad":"` + strings.Repeat("x", 1024) + `"}`)
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(string(body)))
+	req.Header.Set("X-Outbox-Event", "comment.created")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversize body: code = %d, want 413", rec.Code)
 	}
 	time.Sleep(20 * time.Millisecond)
 	if got := atomic.LoadInt32(&backend.calls); got != 0 {

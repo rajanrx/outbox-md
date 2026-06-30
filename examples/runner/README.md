@@ -129,9 +129,9 @@ The runner mirrors the server's delivery contract (see the repo [`README.md` §4
   - `X-Outbox-Event: <event>` — the event name.
   - `X-Outbox-Signature: sha256=<hex>` — HMAC-SHA256 of the **raw body**, present **only when a secret is set**.
 - **HMAC verification** (all three runners):
-  - Read the **raw body bytes first**, compute `hex(hmac_sha256(secret, body))`, strip the `sha256=` prefix from the header, and **constant-time** compare.
+  - Read the **raw body bytes first** (capped at `RUNNER_MAX_BODY_BYTES`, default 1 MiB — an oversized body is rejected with **`413`** before any work, bounding pre-auth memory), compute `hex(hmac_sha256(secret, body))`, strip the `sha256=` prefix from the header, and **constant-time** compare.
   - Secret set + signature missing/wrong → **`401`**.
-  - **No** secret configured → accept (mirrors the server's optional signing).
+  - **No secret configured → default-deny:** unsigned requests are rejected with **`401`** unless you explicitly opt in with `RUNNER_ALLOW_UNSIGNED=1`. Set `OUTBOX_WEBHOOK_SECRET` for any real deployment; an unauthenticated caller who reaches the port can otherwise drive agent runs (subprocess spawns or metered API calls).
 - **Event filter:** only events in `RUNNER_EVENTS` trigger a run; anything else → **`200`** ignore.
 - **Debounce + single-flight:** a burst of events coalesces into **one** agent run (`RUNNER_DEBOUNCE_MS`); if a run is already in flight, exactly one rerun is queued for after it finishes — never two agent invocations at once.
 
@@ -140,7 +140,9 @@ The runner mirrors the server's delivery contract (see the repo [`README.md` §4
 | Env var | Default | Meaning |
 |---|---|---|
 | `RUNNER_ADDR` | `:8787` | Listen address. |
-| `OUTBOX_WEBHOOK_SECRET` | _(unset)_ | Shared HMAC secret. Unset ⇒ signatures not enforced. |
+| `OUTBOX_WEBHOOK_SECRET` | _(unset)_ | Shared HMAC secret. Unset ⇒ **default-deny**: unsigned requests are rejected unless `RUNNER_ALLOW_UNSIGNED=1`. |
+| `RUNNER_ALLOW_UNSIGNED` | _(unset / false)_ | Set to `1`/`true` to accept **unsigned** requests when no secret is configured (explicit opt-in, NOT recommended). |
+| `RUNNER_MAX_BODY_BYTES` | `1048576` | Max raw request body (bytes); a larger body is rejected with `413` before auth. |
 | `RUNNER_EVENTS` | `comment.created,comment.replied` | Comma-separated events to act on. |
 | `RUNNER_DEBOUNCE_MS` | `1500` | Debounce window (ms). |
 | `RUNNER_AGENT_MODE` | `cli` | `cli` or `api`. |
