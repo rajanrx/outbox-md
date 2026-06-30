@@ -98,6 +98,9 @@ export default function App() {
   // EventSource auto-reconnects; ": connected"/": ping" comment frames are ignored.
   useEffect(() => {
     const es = new EventSource("/api/events");
+    // On (re)connect, refresh immediately — a dropped-then-restored stream may
+    // have missed events, and waiting for the 15s fallback poll would lag the UI.
+    es.onopen = () => refreshRef.current?.();
     const onEvent = (e: MessageEvent) => {
       try {
         const d = JSON.parse(e.data) as { docId?: string };

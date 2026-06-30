@@ -74,8 +74,9 @@ func (h *Hub) Fire(event string, payload any) {
 
 // Enabled reports whether the hub has at least one live subscriber. It
 // implements webhook.Notifier so the service can skip building events nobody is
-// streaming; a browser that reconnects does a full refresh, so events fired
-// while no one was subscribed are intentionally not retained.
+// streaming. A reconnecting browser refreshes immediately (the client calls
+// refresh on the EventSource onopen), with a slow poll as a secondary fallback,
+// so events fired while no one was subscribed are intentionally not retained.
 func (h *Hub) Enabled() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
