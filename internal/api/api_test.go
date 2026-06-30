@@ -66,12 +66,46 @@ func TestApproveEndpointPinsBaseline(t *testing.T) {
 		t.Errorf("status = %q, want approved", got.Status)
 	}
 
-	// Re-approve with nothing pending is a 400.
+	// Re-approve with nothing pending is a 409 with a JSON error body.
 	rr2 := httptest.NewRecorder()
 	req2 := httptest.NewRequest("POST", "/api/docs/"+doc.ID+"/reapprove", nil)
 	h.ServeHTTP(rr2, req2)
-	if rr2.Code != 400 {
-		t.Errorf("reapprove status = %d, want 400", rr2.Code)
+	if rr2.Code != http.StatusConflict {
+		t.Errorf("reapprove status = %d, want 409", rr2.Code)
+	}
+	var errBody struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rr2.Body.Bytes(), &errBody); err != nil || errBody.Error == "" {
+		t.Errorf("reapprove error body = %q (err %v), want JSON {error}", rr2.Body.String(), err)
+	}
+}
+
+// An approve blocked by an unresolved comment must be a 409 with the gate
+// message in the JSON body.
+func TestApproveBlockedByUnresolvedCommentReturns409(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := service.New(s, func(_, _ string) error { return nil })
+	h := NewAPI(svc, s)
+	doc, _, _ := s.CreateDocument("a.md", "v1", "human")
+	if _, err := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 1}, "human"); err != nil {
+		t.Fatal(err)
+	}
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("POST", "/api/docs/"+doc.ID+"/approve", nil))
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("approve status = %d, want 409", rr.Code)
+	}
+	var errBody struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &errBody); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errBody.Error, "unresolved comment") {
+		t.Errorf("error = %q, want it to mention unresolved comment(s)", errBody.Error)
 	}
 }
 

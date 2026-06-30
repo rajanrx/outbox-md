@@ -4,13 +4,40 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/rajanrx/outbox-md/internal/config"
 	"github.com/rajanrx/outbox-md/internal/domain"
 	"github.com/rajanrx/outbox-md/internal/store"
+	"github.com/rajanrx/outbox-md/internal/webhook"
 )
+
+// fakeNotifier captures fired events synchronously on a buffered channel so
+// tests can assert without racing the (otherwise async) HTTP delivery.
+type fakeNotifier struct{ events chan webhook.Event }
+
+func newFakeNotifier() *fakeNotifier { return &fakeNotifier{events: make(chan webhook.Event, 16)} }
+
+func (f *fakeNotifier) Fire(_ string, payload any) {
+	if e, ok := payload.(webhook.Event); ok {
+		f.events <- e
+	}
+}
+
+// next returns the next event or fails if none arrives promptly.
+func (f *fakeNotifier) next(t *testing.T) webhook.Event {
+	t.Helper()
+	select {
+	case e := <-f.events:
+		return e
+	case <-time.After(time.Second):
+		t.Fatal("expected a webhook event, got none")
+		return webhook.Event{}
+	}
+}
 
 // P1: two accepts racing on the same base version must serialize — exactly one
 // wins, and the on-disk file equals the winning version (no clobber).
@@ -628,6 +655,117 @@ func TestClaimRejectsOverBatchSize(t *testing.T) {
 	}
 	if _, err := svc.Claim([]string{c1.ID, c2.ID}, "agent"); err != nil {
 		t.Fatalf("within-cap claim failed: %v", err)
+	}
+}
+
+// Approval is gated on all comments being resolved.
+func TestApproveBlockedByUnresolvedComments(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _ string) error { return nil })
+	doc, _, _ := s.CreateDocument("a.md", "hello world", "human")
+
+	c, err := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// With an open comment, approve must be refused with a descriptive error.
+	_, err = svc.Approve(doc.ID, "")
+	if err == nil {
+		t.Fatal("expected approve to be blocked by the unresolved comment")
+	}
+	if !strings.Contains(err.Error(), "unresolved comment") {
+		t.Fatalf("error = %q, want it to mention unresolved comment(s)", err.Error())
+	}
+	got, _ := s.GetDocument(doc.ID)
+	if got.Status != domain.DocDraft {
+		t.Fatalf("status = %q, want draft (approve must not have pinned)", got.Status)
+	}
+
+	// Resolve it, then approve succeeds.
+	if err := svc.Resolve(c.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Approve(doc.ID, ""); err != nil {
+		t.Fatalf("approve after resolving all comments failed: %v", err)
+	}
+	got, _ = s.GetDocument(doc.ID)
+	if got.Status != domain.DocApproved {
+		t.Fatalf("status = %q, want approved", got.Status)
+	}
+}
+
+// A further human reply re-surfaces a comment the agent already handled (so the
+// polling/in-session agent responds again), unless the comment is resolved.
+func TestHumanReplyReopensComment(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _ string) error { return nil })
+	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
+	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
+
+	// Agent claims and replies → status moves to 'replied' (out of the open queue).
+	tok, _ := svc.Claim([]string{c.ID}, "agent")
+	if err := svc.Reply(c.ID, tok, "done, see edit", "agent"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.GetComment(c.ID); got.Status != domain.CommentReplied {
+		t.Fatalf("status = %q, want replied", got.Status)
+	}
+
+	// A further human reply re-queues it to 'open'.
+	if _, err := svc.HumanReply(c.ID, "actually, one more thing"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.GetComment(c.ID); got.Status != domain.CommentOpen {
+		t.Fatalf("status = %q, want open (reply must re-surface it)", got.Status)
+	}
+	open, _ := s.ListOpenComments()
+	if len(open) != 1 || open[0].ID != c.ID {
+		t.Fatalf("ListOpenComments = %+v, want the reopened comment", open)
+	}
+
+	// A resolved comment is NOT reopened by a further reply.
+	if err := svc.Resolve(c.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.HumanReply(c.ID, "thanks"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.GetComment(c.ID); got.Status != domain.CommentResolved {
+		t.Fatalf("status = %q, want resolved (reply must not reopen a resolved comment)", got.Status)
+	}
+	if open, _ := s.ListOpenComments(); len(open) != 0 {
+		t.Fatalf("ListOpenComments = %+v, want empty (resolved comment must stay closed)", open)
+	}
+}
+
+// PostComment fires a comment.created webhook with the right doc/comment ids.
+func TestPostCommentFiresWebhook(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _ string) error { return nil })
+	fn := newFakeNotifier()
+	svc.SetWebhook(fn)
+
+	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
+	c, err := svc.PostComment(doc.ID, domain.Anchor{Start: 6, End: 11}, "human") // "world"
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	e := fn.next(t)
+	if e.Event != webhook.EventCommentCreated {
+		t.Errorf("event = %q, want %q", e.Event, webhook.EventCommentCreated)
+	}
+	if e.DocID != doc.ID || e.CommentID != c.ID {
+		t.Errorf("ids = doc %q / comment %q, want %q / %q", e.DocID, e.CommentID, doc.ID, c.ID)
+	}
+	if e.DocPath != "spec.md" || e.Excerpt != "world" {
+		t.Errorf("docPath=%q excerpt=%q, want spec.md / world", e.DocPath, e.Excerpt)
+	}
+	if e.TS == "" {
+		t.Error("ts should be set")
 	}
 }
 
