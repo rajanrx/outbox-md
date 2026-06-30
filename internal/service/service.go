@@ -31,37 +31,24 @@ func (s *Service) SetConfig(cfg config.Config) { s.cfg = cfg }
 // no-op; main wires in an HTTP notifier when a webhook URL is configured.
 func (s *Service) SetWebhook(n webhook.Notifier) { s.notify = n }
 
-// excerpt slices the anchored text from content using RUNE offsets, clamping
-// out-of-range anchors and returning "" for an empty or inverted range. It
-// mirrors mcp.excerpt (kept private to that package, so replicated here).
-func excerpt(content string, start, end int) string {
-	r := []rune(content)
-	if start < 0 {
-		start = 0
-	}
-	if end > len(r) {
-		end = len(r)
-	}
-	if start >= end {
-		return ""
-	}
-	return string(r[start:end])
-}
-
 // fireCommentEvent builds and fires a comment-scoped webhook event. All store
 // lookups are best-effort: a failed lookup just leaves its field empty, never
-// blocking or failing the caller's operation.
+// blocking or failing the caller's operation. When no sink is live, it returns
+// before any store read — there is nothing to consume the event.
 func (s *Service) fireCommentEvent(event string, c domain.Comment) {
-	anchor := c.Anchor
+	if !s.notify.Enabled() {
+		return
+	}
+	a := c.Anchor
 	payload := webhook.Event{
-		Event: event, DocID: c.DocID, CommentID: c.ID, Anchor: &anchor,
+		Event: event, DocID: c.DocID, CommentID: c.ID, Anchor: &a,
 		TS: time.Now().UTC().Format(time.RFC3339),
 	}
 	if doc, err := s.store.GetDocument(c.DocID); err == nil {
 		payload.DocPath = doc.Path
 	}
 	if ver, err := s.store.GetVersion(c.AgainstVersionID); err == nil {
-		payload.Excerpt = excerpt(ver.Content, c.Anchor.Start, c.Anchor.End)
+		payload.Excerpt = anchor.Excerpt(ver.Content, c.Anchor.Start, c.Anchor.End)
 	}
 	if thread, err := s.store.ListThread(c.ID); err == nil {
 		payload.Thread = thread
@@ -70,8 +57,11 @@ func (s *Service) fireCommentEvent(event string, c domain.Comment) {
 }
 
 // fireDocApproved fires a document.approved event carrying only the document
-// identity (no comment/anchor/thread).
+// identity (no comment/anchor/thread). It short-circuits when no sink is live.
 func (s *Service) fireDocApproved(doc domain.Document) {
+	if !s.notify.Enabled() {
+		return
+	}
 	s.notify.Fire(webhook.EventDocumentApprove, webhook.Event{
 		Event: webhook.EventDocumentApprove, DocID: doc.ID, DocPath: doc.Path,
 		TS: time.Now().UTC().Format(time.RFC3339),
