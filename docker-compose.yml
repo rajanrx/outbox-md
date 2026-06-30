@@ -1,5 +1,8 @@
 services:
   outbox-md:
+    # Published image (Docker Hub). `docker compose pull` fetches it; a local
+    # clone still rebuilds from source with `docker compose up --build`.
+    image: rajanrauniyar/outbox-md:latest
     build: .
     ports:
       # host:container — change the host side if 8181 is taken
