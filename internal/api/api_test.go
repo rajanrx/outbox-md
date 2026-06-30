@@ -280,3 +280,47 @@ func TestEventsStreamDeliversEvent(t *testing.T) {
 		}
 	}
 }
+
+// TestEventsStreamUnsubscribesOnDisconnect verifies the handler releases its hub
+// subscription when the client goes away (request context cancelled). After the
+// prelude confirms the subscription is live (Enabled true), cancelling the
+// request must drive the handler's deferred unsub, leaving the hub with no
+// subscribers (Enabled false). We poll within a bounded deadline so the handler
+// goroutine has time to observe the cancellation, without flaking.
+func TestEventsStreamUnsubscribesOnDisconnect(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := service.New(s, func(_, _ string) error { return nil })
+	hub := sse.NewHub()
+
+	srv := httptest.NewServer(NewAPI(svc, s, hub))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/api/events", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Read the prelude so we know Subscribe() ran before we assert/cancel.
+	br := bufio.NewReader(resp.Body)
+	if line, err := br.ReadString('\n'); err != nil || !strings.HasPrefix(line, ": connected") {
+		t.Fatalf("prelude = %q, err %v", line, err)
+	}
+	if !hub.Enabled() {
+		t.Fatal("hub not Enabled after subscription")
+	}
+
+	// Disconnect: cancel the request context, then poll until the handler's
+	// deferred unsub runs and the hub drops back to zero subscribers.
+	cancel()
+	resp.Body.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for hub.Enabled() {
+		if time.Now().After(deadline) {
+			t.Fatal("hub still Enabled after client disconnect — handler did not unsubscribe")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}

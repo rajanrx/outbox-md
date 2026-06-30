@@ -23,7 +23,7 @@ the human accepts → the .md is rewritten and a new version is recorded
 
 Work the queue **in order**, and never claim more comments at once than the configured batch size (default **5**; an over-claim is rejected with a clear error telling you the cap).
 
-> **Polling vs. push.** This manual is written for a polling agent (re-run `list_open_comments`). The server can also **push** a webhook the instant a comment is created/replied/resolved (or a doc is approved), so a runner can trigger this exact loop event-driven instead of on a timer — the recommended setup for a long-running agent. See **[Event delivery — webhooks & live updates](README.md#webhooks-replace-polling)** in the README (the browser UI gets the same events live over SSE). Note: a fresh human reply re-opens a comment you already handled, so it reappears in `list_open_comments` for another pass.
+> **Polling vs. push.** This manual is written for a polling agent (re-run `list_open_comments`). The server can also **push** a webhook the instant a comment is created/replied/resolved (or a doc is approved), so a runner can trigger this exact loop event-driven instead of on a timer — the recommended setup for a long-running agent. See **[Event delivery — webhooks & live updates](README.md#4-event-delivery--webhooks--live-updates)** in the README (the browser UI gets the same events live over SSE). Note: a fresh human reply re-opens a comment you already handled, so it reappears in `list_open_comments` for another pass.
 
 ---
 
