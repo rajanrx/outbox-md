@@ -117,6 +117,30 @@ func TestDisabledEventIsNotDelivered(t *testing.T) {
 	}
 }
 
+// Runner-isolation: the agent-action events are deliberately absent from the
+// webhook's DEFAULT Events set, so an HTTPNotifier built with the defaults must
+// NOT deliver them — proving the agent's own reply/suggestion never re-triggers
+// the runner. The four human-action defaults stay allowed.
+func TestAgentEventsNotInDefaultSet(t *testing.T) {
+	n, ok := New(config.WebhookConfig{
+		URL:    "http://example.invalid",
+		Events: config.Defaults().Webhook.Events,
+	}).(*HTTPNotifier)
+	if !ok {
+		t.Fatal("expected an *HTTPNotifier")
+	}
+	for _, e := range []string{EventCommentUpdated, EventSuggestionProposed} {
+		if n.allowed(e) {
+			t.Errorf("allowed(%q) = true, want false (agent events must not reach the runner)", e)
+		}
+	}
+	for _, e := range []string{EventCommentCreated, EventCommentReplied, EventCommentResolved, EventDocumentApprove} {
+		if !n.allowed(e) {
+			t.Errorf("allowed(%q) = false, want true (human-action default)", e)
+		}
+	}
+}
+
 func waitFor(t *testing.T, ch <-chan captured) captured {
 	t.Helper()
 	select {

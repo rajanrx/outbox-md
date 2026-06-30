@@ -813,6 +813,53 @@ func TestPostCommentSinkGate(t *testing.T) {
 	}
 }
 
+// An AGENT reply (Reply) fires comment.updated and an agent proposal (Propose)
+// fires suggestion.proposed. These reach the SSE hub (browser) but, being absent
+// from the webhook's default Events, never re-trigger the HTTP runner.
+func TestAgentActionsFireSSEEvents(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _ string) error { return nil })
+	fn := newFakeNotifier()
+	svc.SetWebhook(fn)
+
+	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
+	cReply, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
+	if e := fn.next(t); e.Event != webhook.EventCommentCreated {
+		t.Fatalf("setup event = %q, want %q", e.Event, webhook.EventCommentCreated)
+	}
+
+	// Agent reply → comment.updated, carrying the comment's identity.
+	tok, _ := svc.Claim([]string{cReply.ID}, "agent")
+	if err := svc.Reply(cReply.ID, tok, "addressed it", "agent"); err != nil {
+		t.Fatal(err)
+	}
+	e := fn.next(t)
+	if e.Event != webhook.EventCommentUpdated {
+		t.Errorf("reply event = %q, want %q", e.Event, webhook.EventCommentUpdated)
+	}
+	if e.DocID != doc.ID || e.CommentID != cReply.ID {
+		t.Errorf("reply ids = doc %q / comment %q, want %q / %q", e.DocID, e.CommentID, doc.ID, cReply.ID)
+	}
+
+	// Agent proposal → suggestion.proposed, carrying the comment it's attached to.
+	cProp, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 6, End: 11}, "human")
+	if e := fn.next(t); e.Event != webhook.EventCommentCreated {
+		t.Fatalf("setup event = %q, want %q", e.Event, webhook.EventCommentCreated)
+	}
+	tok2, _ := svc.Claim([]string{cProp.ID}, "agent")
+	if _, err := svc.Propose(cProp.ID, tok2, "earth", "agent"); err != nil {
+		t.Fatal(err)
+	}
+	e = fn.next(t)
+	if e.Event != webhook.EventSuggestionProposed {
+		t.Errorf("propose event = %q, want %q", e.Event, webhook.EventSuggestionProposed)
+	}
+	if e.DocID != doc.ID || e.CommentID != cProp.ID {
+		t.Errorf("propose ids = doc %q / comment %q, want %q / %q", e.DocID, e.CommentID, doc.ID, cProp.ID)
+	}
+}
+
 func TestPostCommentBlockedOnApprovedWhenDisabled(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()

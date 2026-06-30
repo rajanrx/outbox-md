@@ -27,6 +27,13 @@ const (
 	EventCommentReplied  = "comment.replied"
 	EventCommentResolved = "comment.resolved"
 	EventDocumentApprove = "document.approved"
+
+	// Agent-action events. These are fired so the SSE hub (browser) stays live
+	// when the AGENT acts, but are deliberately ABSENT from the webhook's default
+	// Events set (see config.Defaults) — so the HTTP runner is NOT re-triggered by
+	// the agent's own reply/suggestion, only by human-action events.
+	EventCommentUpdated     = "comment.updated"     // an agent replies in a thread
+	EventSuggestionProposed = "suggestion.proposed" // an agent proposes a tracked change
 )
 
 // Event is the JSON payload POSTed to the webhook URL. Comment events carry the
