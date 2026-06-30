@@ -107,7 +107,10 @@ export default function App() {
         if (!d.docId || d.docId === docIdRef.current) refreshRef.current();
       } catch { /* ignore malformed frames */ }
     };
-    for (const name of ["comment.created", "comment.replied", "comment.resolved", "document.approved"]) {
+    // comment.updated / suggestion.proposed are AGENT-action events: the server
+    // fires them to the SSE hub (browser) but NOT to the webhook runner, so the
+    // UI reflects an agent reply/suggestion live without re-triggering the agent.
+    for (const name of ["comment.created", "comment.replied", "comment.resolved", "document.approved", "comment.updated", "suggestion.proposed"]) {
       es.addEventListener(name, onEvent);
     }
     return () => es.close();

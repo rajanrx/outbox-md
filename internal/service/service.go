@@ -150,6 +150,10 @@ func (s *Service) Propose(commentID, token, content, agent string) (domain.Sugge
 		return domain.Suggestion{}, err
 	}
 	_ = s.store.UpdateCommentStatus(commentID, domain.CommentAddressed, c.ClaimToken)
+	// Push the agent's proposal to the browser (SSE) so the UI reflects it live.
+	// suggestion.proposed is NOT in the webhook's default Events, so the HTTP
+	// runner is not re-triggered by the agent's own action — only the browser is.
+	s.fireCommentEvent(webhook.EventSuggestionProposed, c)
 	return sg, nil
 }
 
@@ -344,7 +348,14 @@ func (s *Service) Reply(commentID, token, body, agent string) error {
 	}); err != nil {
 		return err
 	}
-	return s.store.UpdateCommentStatus(commentID, domain.CommentReplied, c.ClaimToken)
+	if err := s.store.UpdateCommentStatus(commentID, domain.CommentReplied, c.ClaimToken); err != nil {
+		return err
+	}
+	// Push the agent's reply to the browser (SSE) so the UI reflects it live.
+	// comment.updated is NOT in the webhook's default Events, so the HTTP runner
+	// is not re-triggered by the agent's own reply — only the browser is.
+	s.fireCommentEvent(webhook.EventCommentUpdated, c)
+	return nil
 }
 
 func (s *Service) HumanReply(commentID, body string) (domain.ThreadMessage, error) {

@@ -217,9 +217,11 @@ The browser is the **second sink** for the same events. The UI subscribes — au
 GET /api/events     →     Content-Type: text/event-stream
 ```
 
-The stream emits one frame per governance event — the same four as the webhook (`comment.created`, `comment.replied`, `comment.resolved`, `document.approved`) — as `event: <name>` with a `data:` JSON body (the same payload shape as the webhook). `: connected` and `: ping` comment lines (a ~25s heartbeat) keep the connection alive and are ignored by the client. The UI opens this on load and refreshes the affected document on each event; if the stream drops, the browser reconnects automatically and a slow background poll (~15s) covers any gap. No credentials, no config — it's on whenever the server is running.
+The stream emits one frame per change — the four human-action events above (`comment.created`, `comment.replied`, `comment.resolved`, `document.approved`) **plus two agent-action events** so the UI also reflects what the **agent** does live: `comment.updated` (the agent replied in a thread) and `suggestion.proposed` (the agent proposed a tracked change). Each frame is `event: <name>` with a `data:` JSON body (the same payload shape as the webhook). `: connected` and `: ping` comment lines (a ~25s heartbeat) keep the connection alive and are ignored by the client. The UI opens this on load and refreshes the affected document on each event; if the stream drops, the browser reconnects automatically and a slow background poll (~15s) covers any gap. No credentials, no config — it's on whenever the server is running.
 
-Together the two sinks are one **event-delivery** story: **webhook = your machine/runner**, **SSE = your browser**. The same event drives the agent loop and the live UI.
+**Two sinks, two event sets — on purpose.** The **webhook** fires only on **action-needed** events (`comment.created`, human `comment.replied`, `comment.resolved`, `document.approved`), so a runner spawns **only when there's human input to act on** — the agent's own reply or suggestion never re-triggers it (no wasted agent re-runs). The **SSE** stream broadcasts **all** changes, including the agent-action `comment.updated` / `suggestion.proposed`, so the browser stays live the moment the agent writes back — without poking the runner. The agent acts → the browser updates → the loop doesn't restart itself.
+
+Together the two sinks are one **event-delivery** story: **webhook = your machine/runner** (human-action events only), **SSE = your browser** (every change, human or agent).
 
 ---
 
