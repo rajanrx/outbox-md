@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"time"
@@ -42,15 +43,48 @@ type Event struct {
 	TS        string                 `json:"ts"`
 }
 
-// Notifier is the seam the service depends on. The default is Nop.
+// Notifier is the seam the service depends on. The default is Nop. Enabled
+// reports whether any live sink will consume a fired event, letting the service
+// skip the store reads that build the payload when nothing is listening.
 type Notifier interface {
 	Fire(event string, payload any)
+	Enabled() bool
 }
 
 // Nop is the no-op notifier used when no webhook URL is configured.
 type Nop struct{}
 
 func (Nop) Fire(string, any) {}
+
+// Enabled is always false: a Nop consumes nothing.
+func (Nop) Enabled() bool { return false }
+
+// fanout is a Notifier that delivers each event to several sinks in turn.
+type fanout []Notifier
+
+// Fire fans the event out to every non-nil notifier in order.
+func (f fanout) Fire(event string, payload any) {
+	for _, n := range f {
+		if n != nil {
+			n.Fire(event, payload)
+		}
+	}
+}
+
+// Enabled reports whether any non-nil child sink is currently enabled.
+func (f fanout) Enabled() bool {
+	for _, n := range f {
+		if n != nil && n.Enabled() {
+			return true
+		}
+	}
+	return false
+}
+
+// Fanout returns a Notifier that fires every non-nil notifier in ns. It lets one
+// governance event reach multiple sinks — e.g. the HTTP webhook (machine/runner)
+// and the SSE hub (browser) — through the single SetWebhook seam.
+func Fanout(ns ...Notifier) Notifier { return fanout(ns) }
 
 // HTTPNotifier POSTs events to a configured URL, optionally HMAC-signed.
 type HTTPNotifier struct {
@@ -82,6 +116,10 @@ func New(cfg config.WebhookConfig) Notifier {
 func (n *HTTPNotifier) allowed(event string) bool {
 	return len(n.Events) == 0 || n.Events[event]
 }
+
+// Enabled is always true: New guarantees a non-empty URL, so an HTTPNotifier is
+// a live sink for the events its Events filter allows.
+func (n *HTTPNotifier) Enabled() bool { return true }
 
 // Fire marshals the payload and delivers it on a background goroutine. It is a
 // no-op for disabled events and for payloads that fail to marshal.
@@ -127,6 +165,9 @@ func (n *HTTPNotifier) deliver(event string, body []byte) {
 			lastErr = err
 			continue
 		}
+		// Drain the body before closing so the transport can reuse the connection
+		// (keep-alive); an unread body forces a fresh connection on the next POST.
+		_, _ = io.Copy(io.Discard, resp.Body)
 		_ = resp.Body.Close()
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			return

@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"github.com/rajanrx/outbox-md/internal/anchor"
 	"github.com/rajanrx/outbox-md/internal/domain"
 	"github.com/rajanrx/outbox-md/internal/service"
 	"github.com/rajanrx/outbox-md/internal/store"
@@ -46,7 +47,7 @@ func (h *Handlers) ListOpenComments() ([]OpenComment, error) {
 			oc.DocPath = doc.Path
 		}
 		if ver, err := h.St.GetVersion(c.AgainstVersionID); err == nil {
-			oc.Excerpt = excerpt(ver.Content, c.Anchor.Start, c.Anchor.End)
+			oc.Excerpt = anchor.Excerpt(ver.Content, c.Anchor.Start, c.Anchor.End)
 		}
 		if thread, err := h.St.ListThread(c.ID); err == nil && thread != nil {
 			oc.Thread = thread
@@ -54,22 +55,6 @@ func (h *Handlers) ListOpenComments() ([]OpenComment, error) {
 		out = append(out, oc)
 	}
 	return out, nil
-}
-
-// excerpt slices the anchored text from content using RUNE offsets, clamping
-// out-of-range anchors and returning "" when the range is empty or inverted.
-func excerpt(content string, start, end int) string {
-	r := []rune(content)
-	if start < 0 {
-		start = 0
-	}
-	if end > len(r) {
-		end = len(r)
-	}
-	if start >= end {
-		return ""
-	}
-	return string(r[start:end])
 }
 
 func (h *Handlers) ClaimComment(ids []string, agent string) (string, error) {

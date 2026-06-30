@@ -27,6 +27,20 @@ func (f *fakeNotifier) Fire(_ string, payload any) {
 	}
 }
 
+// Enabled is always true so the firing tests below exercise the live-sink path.
+func (f *fakeNotifier) Enabled() bool { return true }
+
+// spyNotifier counts Fire calls and reports a fixed Enabled() value, letting a
+// test assert that a disabled sink short-circuits fireCommentEvent before any
+// Fire (and, by construction, before any store read that builds the payload).
+type spyNotifier struct {
+	enabled bool
+	fires   int
+}
+
+func (s *spyNotifier) Fire(string, any) { s.fires++ }
+func (s *spyNotifier) Enabled() bool    { return s.enabled }
+
 // next returns the next event or fails if none arrives promptly.
 func (f *fakeNotifier) next(t *testing.T) webhook.Event {
 	t.Helper()
@@ -766,6 +780,36 @@ func TestPostCommentFiresWebhook(t *testing.T) {
 	}
 	if e.TS == "" {
 		t.Error("ts should be set")
+	}
+}
+
+// TestPostCommentSinkGate proves the sink-aware short-circuit: a notifier whose
+// Enabled() is false sees zero Fire calls (no event built, no store reads),
+// while an enabled one fires exactly once.
+func TestPostCommentSinkGate(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		enabled   bool
+		wantFires int
+	}{
+		{"disabled sink fires nothing", false, 0},
+		{"enabled sink fires once", true, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := store.Open(":memory:")
+			defer s.Close()
+			svc := New(s, func(_, _ string) error { return nil })
+			spy := &spyNotifier{enabled: tc.enabled}
+			svc.SetWebhook(spy)
+
+			doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
+			if _, err := svc.PostComment(doc.ID, domain.Anchor{Start: 6, End: 11}, "human"); err != nil {
+				t.Fatal(err)
+			}
+			if spy.fires != tc.wantFires {
+				t.Errorf("Fire calls = %d, want %d", spy.fires, tc.wantFires)
+			}
+		})
 	}
 }
 

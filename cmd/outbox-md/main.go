@@ -15,6 +15,7 @@ import (
 	"github.com/rajanrx/outbox-md/internal/config"
 	"github.com/rajanrx/outbox-md/internal/mcp"
 	"github.com/rajanrx/outbox-md/internal/service"
+	"github.com/rajanrx/outbox-md/internal/sse"
 	"github.com/rajanrx/outbox-md/internal/store"
 	"github.com/rajanrx/outbox-md/internal/webhook"
 	"github.com/rajanrx/outbox-md/web"
@@ -163,7 +164,10 @@ func main() {
 	})
 	cfg := config.Load(dir)
 	svc.SetConfig(cfg)
-	svc.SetWebhook(webhook.New(cfg.Webhook))
+	// One governance event fans out to two sinks: the external HTTP runner
+	// (webhook) and every open browser stream (SSE hub).
+	hub := sse.NewHub()
+	svc.SetWebhook(webhook.Fanout(webhook.New(cfg.Webhook), hub))
 	if err := importMarkdown(st, dir); err != nil {
 		log.Fatal(err)
 	}
@@ -172,7 +176,7 @@ func main() {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 	})
-	mux.Handle("/api/", api.NewAPI(svc, st))
+	mux.Handle("/api/", api.NewAPI(svc, st, hub))
 
 	// MCP over Streamable HTTP at /mcp — any agent connects here.
 	mcpServer := mcp.NewServer(&mcp.Handlers{Svc: svc, St: st})

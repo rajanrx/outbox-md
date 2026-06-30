@@ -1,15 +1,19 @@
 package api
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rajanrx/outbox-md/internal/config"
 	"github.com/rajanrx/outbox-md/internal/domain"
 	"github.com/rajanrx/outbox-md/internal/service"
+	"github.com/rajanrx/outbox-md/internal/sse"
 	"github.com/rajanrx/outbox-md/internal/store"
 )
 
@@ -18,7 +22,7 @@ func TestDocAndCommentEndpoints(t *testing.T) {
 	defer s.Close()
 	svc := service.New(s, func(_, _ string) error { return nil })
 	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
-	h := NewAPI(svc, s)
+	h := NewAPI(svc, s, sse.NewHub())
 
 	// list docs
 	rec := httptest.NewRecorder()
@@ -52,7 +56,7 @@ func TestApproveEndpointPinsBaseline(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
 	svc := service.New(s, func(_, _ string) error { return nil })
-	h := NewAPI(svc, s)
+	h := NewAPI(svc, s, sse.NewHub())
 	doc, _, _ := s.CreateDocument("a.md", "v1", "human")
 
 	rr := httptest.NewRecorder()
@@ -87,7 +91,7 @@ func TestApproveBlockedByUnresolvedCommentReturns409(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
 	svc := service.New(s, func(_, _ string) error { return nil })
-	h := NewAPI(svc, s)
+	h := NewAPI(svc, s, sse.NewHub())
 	doc, _, _ := s.CreateDocument("a.md", "v1", "human")
 	if _, err := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 1}, "human"); err != nil {
 		t.Fatal(err)
@@ -113,7 +117,7 @@ func TestDocViewIncludesBaselineContent(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
 	svc := service.New(s, func(_, _ string) error { return nil })
-	h := NewAPI(svc, s)
+	h := NewAPI(svc, s, sse.NewHub())
 	doc, _, _ := s.CreateDocument("a.md", "v1", "human")
 	rrA := httptest.NewRecorder()
 	h.ServeHTTP(rrA, httptest.NewRequest("POST", "/api/docs/"+doc.ID+"/approve", nil))
@@ -144,7 +148,7 @@ func TestDevClaimAndPropose(t *testing.T) {
 	svc := service.New(s, func(_, _ string) error { return nil })
 	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
 	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
-	h := NewAPI(svc, s)
+	h := NewAPI(svc, s, sse.NewHub())
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost,
@@ -169,7 +173,7 @@ func TestDecisionLogEndpoint(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
 	svc := service.New(s, func(_, _ string) error { return nil })
-	h := NewAPI(svc, s)
+	h := NewAPI(svc, s, sse.NewHub())
 
 	doc, v1, _ := s.CreateDocument("spec.md", "hello world", "human")
 	_, _ = s.CreateComment(domain.Comment{
@@ -195,7 +199,7 @@ func TestConfigEndpoint(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
 	svc := service.New(s, func(_, _ string) error { return nil })
-	h := NewAPI(svc, s)
+	h := NewAPI(svc, s, sse.NewHub())
 
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest("GET", "/api/config", nil))
@@ -223,5 +227,56 @@ func TestConfigEndpoint(t *testing.T) {
 	_ = json.Unmarshal(rr2.Body.Bytes(), &got)
 	if got.Agent.BatchSize != 9 || got.Approval.PostApprovalComments {
 		t.Errorf("after SetConfig = %+v, want {batch 9, postApproval false}", got)
+	}
+}
+
+// TestEventsStreamDeliversEvent opens the SSE stream over a real server, posts a
+// comment, and asserts the stream emits the matching event frame. A context
+// timeout acts as the read deadline so a missed event fails fast instead of
+// hanging. The ": connected" prelude is read first to guarantee the subscription
+// is registered before the event fires (no lost-event race).
+func TestEventsStreamDeliversEvent(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := service.New(s, func(_, _ string) error { return nil })
+	hub := sse.NewHub()
+	svc.SetWebhook(hub) // PostComment fires comment.created into the hub
+	doc, _, _ := s.CreateDocument("e.md", "Hello world", "human")
+
+	srv := httptest.NewServer(NewAPI(svc, s, hub))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/api/events", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	br := bufio.NewReader(resp.Body)
+
+	// Read the prelude line so we know Subscribe() ran before we fire.
+	if line, err := br.ReadString('\n'); err != nil || !strings.HasPrefix(line, ": connected") {
+		t.Fatalf("prelude = %q, err %v", line, err)
+	}
+
+	if _, err := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Accumulate lines until we see the event + its data frame (or the context
+	// deadline cancels the read).
+	var buf strings.Builder
+	for {
+		line, err := br.ReadString('\n')
+		if err != nil {
+			t.Fatalf("stream ended before event: got %q (err %v)", buf.String(), err)
+		}
+		buf.WriteString(line)
+		if strings.Contains(buf.String(), "event: comment.created") &&
+			strings.Contains(buf.String(), `"docId":`) {
+			return // success
+		}
 	}
 }

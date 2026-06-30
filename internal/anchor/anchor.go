@@ -58,3 +58,21 @@ func sub(s string, a domain.Anchor) string {
 	}
 	return string(r[a.Start:a.End])
 }
+
+// Excerpt slices the anchored text from content using RUNE offsets, clamping
+// out-of-range anchors and returning "" for an empty or inverted range. It is
+// the single shared helper used to render the text a comment refers to (the mcp
+// open-comment view and the webhook/SSE event payload).
+func Excerpt(content string, start, end int) string {
+	r := []rune(content)
+	if start < 0 {
+		start = 0
+	}
+	if end > len(r) {
+		end = len(r)
+	}
+	if start >= end {
+		return ""
+	}
+	return string(r[start:end])
+}

@@ -2,16 +2,59 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/rajanrx/outbox-md/internal/domain"
 	"github.com/rajanrx/outbox-md/internal/service"
+	"github.com/rajanrx/outbox-md/internal/sse"
 	"github.com/rajanrx/outbox-md/internal/store"
 )
 
-func NewAPI(svc *service.Service, st *store.Store) http.Handler {
+func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub) http.Handler {
 	mux := http.NewServeMux()
+
+	// SSE stream of governance events for live UI updates. The browser opens this
+	// once and refreshes on each event, replacing the old 3s poll (now a fallback).
+	mux.HandleFunc("GET /api/events", func(w http.ResponseWriter, r *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok || hub == nil {
+			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+
+		ch, unsub := hub.Subscribe()
+		defer unsub()
+
+		// Open the stream immediately so the client (and tests) know the
+		// subscription is live, then heartbeat every 25s to keep proxies from
+		// idling the connection out. Both are SSE comment lines the browser ignores.
+		fmt.Fprint(w, ": connected\n\n")
+		flusher.Flush()
+		ping := time.NewTicker(25 * time.Second)
+		defer ping.Stop()
+
+		for {
+			select {
+			case <-r.Context().Done(): // client disconnected
+				return
+			case <-ping.C:
+				fmt.Fprint(w, ": ping\n\n")
+				flusher.Flush()
+			case msg, ok := <-ch:
+				if !ok {
+					return
+				}
+				fmt.Fprintf(w, "event: %s\ndata: %s\n\n", msg.Event, msg.Data)
+				flusher.Flush()
+			}
+		}
+	})
 
 	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, svc.Config(), nil)
