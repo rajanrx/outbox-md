@@ -62,6 +62,8 @@ Pick one:
 - **`propose_suggestion`** — when the fix is an edit. Provide the **full replacement document content** (not a patch); outbox-md renders it to the human as a tracked-change diff. Keep the change minimal and faithful to the feedback.
 - **`reply_in_thread`** — when you need to counter, ask a clarifying question, or discuss instead of editing. Your reply appears under the human's comment.
 
+**Council mode** (driven by the webhook runner): instead of the two above, a council member submits a single lensed review with **`submit_review`** (a `lens`, a `verdict` of `edit` / `reply` / `reject_comment`, a `rationale`, and full replacement `content` iff the verdict is `edit`). Each member's review becomes one **candidate** among N; the human picks. `submit_review` never resolves or writes — it only records a candidate.
+
 Either way, include the claim token and your agent identity.
 
 ---
@@ -87,6 +89,7 @@ These are **human-only** — there are no MCP tools for them, by design, so an a
 
 - **Resolve** a comment
 - **Accept / reject** a suggestion
+- **Pick** a council candidate
 - **Approve / re-approve** a document
 
 You propose and discuss; the human decides. After a document is **approved**, your suggestions become tracked **amendments** that need the human's re-approval — an approved spec is never silently changed.
@@ -102,7 +105,8 @@ You propose and discuss; the human decides. After a document is **approved**, yo
 | `claim_comment` | Claim comment(s) → receive a claim token | — |
 | `propose_suggestion` | Propose a tracked-change edit (full replacement) | — |
 | `reply_in_thread` | Counter, clarify, or discuss | — |
-| Resolve / Accept / Approve | — | **human (UI only)** |
+| `submit_review` | Council mode: record one lensed review (verdict + rationale, edit content iff `edit`) as a candidate | — |
+| Resolve / Accept / Pick / Approve | — | **human (UI only)** |
 
 ---
 

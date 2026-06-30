@@ -145,6 +145,28 @@ func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub) http.Handler {
 		writeJSON(w, sg, nil)
 	})
 
+	// Council read model (roadmap §3): the candidate set + candidates + synthesis.
+	mux.HandleFunc("GET /api/comments/{id}/candidates", func(w http.ResponseWriter, r *http.Request) {
+		view, err := svc.ListCandidates(r.PathValue("id"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		writeJSON(w, view, nil)
+	})
+
+	// Human-only pick. Like resolve/approve, the actor is server-set to the local
+	// human (never taken from the request body), so it cannot be spoofed — and
+	// there is deliberately no MCP equivalent.
+	mux.HandleFunc("POST /api/comments/{id}/candidates/{cid}/pick", func(w http.ResponseWriter, r *http.Request) {
+		cand, err := svc.PickCandidate(r.PathValue("id"), r.PathValue("cid"), service.LocalHuman)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, cand, nil)
+	})
+
 	mux.HandleFunc("POST /api/comments/{id}/accept", func(w http.ResponseWriter, r *http.Request) {
 		v, err := svc.Accept(r.PathValue("id"))
 		writeJSON(w, map[string]any{"version": v}, err)

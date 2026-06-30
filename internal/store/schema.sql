@@ -50,3 +50,31 @@ CREATE TABLE IF NOT EXISTS approvals (
   note TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+-- AI Council (roadmap §3): N candidates + a synthesis per comment, additive.
+CREATE TABLE IF NOT EXISTS candidate_sets (
+  id TEXT PRIMARY KEY,
+  comment_id TEXT NOT NULL UNIQUE REFERENCES comments(id),
+  state TEXT NOT NULL DEFAULT 'gathering',
+  quorum INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS candidates (
+  id TEXT PRIMARY KEY,
+  candidate_set_id TEXT NOT NULL REFERENCES candidate_sets(id),
+  lens TEXT NOT NULL,
+  verdict TEXT NOT NULL,
+  rationale TEXT NOT NULL DEFAULT '',
+  content TEXT NOT NULL DEFAULT '',
+  agent_identity TEXT NOT NULL,
+  chosen INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS syntheses (
+  id TEXT PRIMARY KEY,
+  candidate_set_id TEXT NOT NULL REFERENCES candidate_sets(id),
+  agreement_score REAL NOT NULL DEFAULT 0,
+  dissent TEXT NOT NULL DEFAULT '',
+  suggestion_id TEXT NOT NULL DEFAULT '',
+  created_by TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

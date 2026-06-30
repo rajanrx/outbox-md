@@ -68,3 +68,10 @@ func (h *Handlers) ProposeSuggestion(commentID, token, content, agent string) (d
 func (h *Handlers) ReplyInThread(commentID, token, body, agent string) error {
 	return h.Svc.Reply(commentID, token, body, agent)
 }
+
+// SubmitReview is the council-mode sibling of ProposeSuggestion: it records one
+// member's review as a Candidate instead of a single baseline suggestion. It
+// never resolves or writes disk — picking/accepting stay human-only.
+func (h *Handlers) SubmitReview(commentID, token, lens, verdict, rationale, content, agentIdentity string) (domain.Candidate, error) {
+	return h.Svc.SubmitReview(commentID, token, lens, verdict, rationale, content, agentIdentity)
+}

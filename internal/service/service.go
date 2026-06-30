@@ -148,6 +148,171 @@ func (s *Service) Propose(commentID, token, content, agent string) (domain.Sugge
 	return sg, nil
 }
 
+// --- AI Council (roadmap §3) ---------------------------------------------
+//
+// The council path is ADDED alongside Propose, not on top of it. The server
+// stores candidates and records the decision; it never calls a model, holds a
+// key, or runs quorum/tiebreak/chair logic — that lives in the external webhook
+// runner. The human-only pick/synthesis emit an ordinary Suggestion so the
+// accept-flow is exactly today's.
+
+// CouncilView is the read model for a comment's council: the set, its candidates
+// in submission order, and the synthesis (if recorded).
+type CouncilView struct {
+	Set        domain.CandidateSet `json:"set"`
+	Candidates []domain.Candidate  `json:"candidates"`
+	Synthesis  *domain.Synthesis   `json:"synthesis"`
+}
+
+// SubmitReview records one council member's review as a Candidate. It validates
+// the claim token (members share the comment's token, distinguished by
+// agentIdentity), lazily creates the comment's CandidateSet, and enforces
+// content required iff verdict == edit. It never writes disk, never resolves,
+// and never changes the comment's status — candidates accumulate while the set
+// stays gathering.
+func (s *Service) SubmitReview(commentID, token, lens, verdict, rationale, content, agentIdentity string) (domain.Candidate, error) {
+	if _, err := s.requireToken(commentID, token); err != nil {
+		return domain.Candidate{}, err
+	}
+	switch verdict {
+	case domain.VerdictEdit:
+		if content == "" {
+			return domain.Candidate{}, errors.New("content is required when verdict is edit")
+		}
+	case domain.VerdictReply, domain.VerdictRejectComment:
+		if content != "" {
+			return domain.Candidate{}, fmt.Errorf("content must be empty when verdict is %q", verdict)
+		}
+	default:
+		return domain.Candidate{}, fmt.Errorf("invalid verdict %q", verdict)
+	}
+	set, err := s.store.GetOrCreateCandidateSet(commentID)
+	if err != nil {
+		return domain.Candidate{}, err
+	}
+	return s.store.AddCandidate(domain.Candidate{
+		CandidateSetID: set.ID, Lens: lens, Verdict: verdict,
+		Rationale: rationale, Content: content, AgentIdentity: agentIdentity,
+	})
+}
+
+// ListCandidates returns the council view for a comment: the set, its candidates
+// in order, and the synthesis if any. Returns an error if no set exists yet.
+func (s *Service) ListCandidates(commentID string) (CouncilView, error) {
+	set, ok, err := s.store.GetCandidateSetByComment(commentID)
+	if err != nil {
+		return CouncilView{}, err
+	}
+	if !ok {
+		return CouncilView{}, errors.New("no candidate set for comment")
+	}
+	cands, err := s.store.ListCandidatesByComment(commentID)
+	if err != nil {
+		return CouncilView{}, err
+	}
+	view := CouncilView{Set: set, Candidates: cands}
+	if syn, ok, err := s.store.GetSynthesisByComment(commentID); err != nil {
+		return CouncilView{}, err
+	} else if ok {
+		view.Synthesis = &syn
+	}
+	return view, nil
+}
+
+// RecordSynthesis records the chair's roll-up of a candidate set and, when it
+// carries an edit, emits an ordinary Suggestion via the existing path so the
+// human's accept-flow is unchanged. The chair itself is the external runner;
+// this is the server-side record. (No MCP tool / endpoint drives this in the
+// server slice — it ships with the runner PR; it is exercised directly here.)
+func (s *Service) RecordSynthesis(commentID, dissent, content, createdBy string, agreementScore float64) (domain.Synthesis, error) {
+	c, err := s.store.GetComment(commentID)
+	if err != nil {
+		return domain.Synthesis{}, err
+	}
+	set, err := s.store.GetOrCreateCandidateSet(commentID)
+	if err != nil {
+		return domain.Synthesis{}, err
+	}
+	suggestionID := ""
+	if content != "" {
+		sg, err := s.emitSuggestion(c, content, createdBy)
+		if err != nil {
+			return domain.Synthesis{}, err
+		}
+		suggestionID = sg.ID
+	}
+	syn, err := s.store.RecordSynthesis(domain.Synthesis{
+		CandidateSetID: set.ID, AgreementScore: agreementScore, Dissent: dissent,
+		SuggestionID: suggestionID, CreatedBy: createdBy,
+	})
+	if err != nil {
+		return domain.Synthesis{}, err
+	}
+	_ = s.store.SetCandidateSetState(set.ID, domain.CandidateSetSynthesized)
+	return syn, nil
+}
+
+// PickCandidate is the human decision point: the human chooses a specific
+// candidate over the synthesis. It is HUMAN-ONLY — actor is server-set by the
+// caller (never taken from the request body) and must be the local human, like
+// resolve/approve; there is no MCP tool for it. It marks the chosen candidate,
+// flips the set to decided, and — if the candidate is an edit — emits the
+// accept-eligible Suggestion the human then accepts through the unchanged accept
+// path. It does NOT auto-accept.
+func (s *Service) PickCandidate(commentID, candidateID, actor string) (domain.Candidate, error) {
+	if actor != LocalHuman {
+		return domain.Candidate{}, errors.New("only the local human may pick a candidate")
+	}
+	c, err := s.store.GetComment(commentID)
+	if err != nil {
+		return domain.Candidate{}, err
+	}
+	set, ok, err := s.store.GetCandidateSetByComment(commentID)
+	if err != nil {
+		return domain.Candidate{}, err
+	}
+	if !ok {
+		return domain.Candidate{}, errors.New("no candidate set for comment")
+	}
+	cand, err := s.store.GetCandidate(candidateID)
+	if err != nil {
+		return domain.Candidate{}, err
+	}
+	// Guard: the candidate must belong to this comment's set.
+	if cand.CandidateSetID != set.ID {
+		return domain.Candidate{}, errors.New("candidate does not belong to this comment")
+	}
+	if err := s.store.MarkCandidateChosen(cand.ID); err != nil {
+		return domain.Candidate{}, err
+	}
+	if err := s.store.SetCandidateSetState(set.ID, domain.CandidateSetDecided); err != nil {
+		return domain.Candidate{}, err
+	}
+	cand.Chosen = true
+	if cand.Verdict == domain.VerdictEdit {
+		if _, err := s.emitSuggestion(c, cand.Content, cand.AgentIdentity); err != nil {
+			return domain.Candidate{}, err
+		}
+	}
+	return cand, nil
+}
+
+// emitSuggestion creates a proposed Suggestion against the comment's version and
+// marks the comment addressed — the same accept-eligible shape Propose produces,
+// so the human accepts a council outcome exactly like a single-agent one. It
+// does NOT write disk or accept anything.
+func (s *Service) emitSuggestion(c domain.Comment, content, createdBy string) (domain.Suggestion, error) {
+	sg, err := s.store.CreateSuggestion(domain.Suggestion{
+		CommentID: c.ID, AgainstVersionID: c.AgainstVersionID,
+		ProposedContent: content, State: domain.SuggestionProposed, CreatedBy: createdBy,
+	})
+	if err != nil {
+		return domain.Suggestion{}, err
+	}
+	_ = s.store.UpdateCommentStatus(c.ID, domain.CommentAddressed, c.ClaimToken)
+	return sg, nil
+}
+
 func (s *Service) Reply(commentID, token, body, agent string) error {
 	c, err := s.requireToken(commentID, token)
 	if err != nil {

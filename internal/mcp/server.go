@@ -7,9 +7,9 @@ import (
 	"github.com/rajanrx/outbox-md/internal/domain"
 )
 
-// NewServer registers the five v1-core tools backed by h and returns the
-// SDK server. Mount it over HTTP with mcp.NewStreamableHTTPHandler, or run
-// it over stdio with Server.Run.
+// NewServer registers the v1-core tools (plus the council-mode submit_review)
+// backed by h and returns the SDK server. Mount it over HTTP with
+// mcp.NewStreamableHTTPHandler, or run it over stdio with Server.Run.
 func NewServer(h *Handlers) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "outbox-md", Version: "0.1.0"}, nil)
 
@@ -64,6 +64,23 @@ func NewServer(h *Handlers) *mcp.Server {
 		return nil, sg, err
 	})
 
+	type submitReviewIn struct {
+		CommentID     string `json:"commentId"`
+		Token         string `json:"token" jsonschema:"the claim token from claim_comment"`
+		Lens          string `json:"lens" jsonschema:"the review lens: correctness | completeness | ambiguity | risk | simplicity | skeptic"`
+		Verdict       string `json:"verdict" jsonschema:"the member's stance: edit | reply | reject_comment"`
+		Rationale     string `json:"rationale" jsonschema:"why, in the member's own words"`
+		Content       string `json:"content,omitempty" jsonschema:"the full proposed replacement content; required iff verdict == edit"`
+		AgentIdentity string `json:"agentIdentity" jsonschema:"the council member's identity"`
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "submit_review",
+		Description: "Council-mode sibling of propose_suggestion: record one member's independent review (lens + verdict + rationale, plus full replacement content iff verdict is edit) as a candidate. Never resolves or writes; the human picks.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in submitReviewIn) (*mcp.CallToolResult, domain.Candidate, error) {
+		cd, err := h.SubmitReview(in.CommentID, in.Token, in.Lens, in.Verdict, in.Rationale, in.Content, in.AgentIdentity)
+		return nil, cd, err
+	})
+
 	type replyIn struct {
 		CommentID string `json:"commentId"`
 		Token     string `json:"token"`
@@ -102,6 +119,6 @@ func NewServer(h *Handlers) *mcp.Server {
 const processOutboxGuidance = `You are processing the outbox for a Markdown spec in outbox-md. Work the queue IN ORDER and do not exceed the configured batch size.
 1. Call ` + "`list_open_comments`" + ` — each item includes the anchored ` + "`excerpt`" + ` (the text the human flagged) and the ` + "`thread`" + ` (their feedback).
 2. For a comment you'll act on, call ` + "`read_doc`" + ` for full context, then ` + "`claim_comment`" + ` to get a token.
-3. Respond with EITHER ` + "`propose_suggestion`" + ` (a tracked-change edit — provide the FULL replacement document content) OR ` + "`reply_in_thread`" + ` (to counter, clarify, or discuss) — using the claim token and your agent identity.
-4. You CANNOT resolve comments or approve documents — those are human-only. Never attempt them.
+3. Respond with EITHER ` + "`propose_suggestion`" + ` (a tracked-change edit — provide the FULL replacement document content) OR ` + "`reply_in_thread`" + ` (to counter, clarify, or discuss) — using the claim token and your agent identity. In council mode, submit a lensed review with ` + "`submit_review`" + ` instead (its verdict/rationale and edit content become one candidate among N); the human picks.
+4. You CANNOT resolve comments, pick a candidate, or approve documents — those are human-only. Never attempt them.
 Keep edits minimal and faithful to the feedback; the human reviews every suggestion before it touches the file.`
