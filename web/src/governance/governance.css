@@ -29,3 +29,26 @@
 }
 .baseline-close { width: 26px; height: 26px; border: 0; border-radius: 6px; background: none; font-size: 18px; color: var(--ink-soft); }
 .baseline-close:hover { background: var(--chrome-3); color: var(--ink); }
+
+/* ── disabled governance button (e.g. approval gated on open comments) ── */
+.gov-btn:disabled { opacity: .45; cursor: not-allowed; filter: none; }
+.gov-btn:disabled:hover { filter: none; }
+
+/* ── confirmation modal ── */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 50;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(20, 15, 5, .28); backdrop-filter: blur(3px);
+}
+.modal-card {
+  width: min(420px, 92vw);
+  background: var(--chrome-2); border: 1px solid var(--chrome-line);
+  border-radius: 14px; box-shadow: 0 30px 70px -30px rgba(20, 15, 5, .5);
+  padding: 20px 22px 18px;
+}
+.modal-title {
+  margin: 0 0 8px; font-family: var(--font-display);
+  font-size: 16px; font-weight: 650; color: var(--ink);
+}
+.modal-body { margin: 0 0 18px; font-size: 13.5px; line-height: 1.5; color: var(--ink-soft); }
+.modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
