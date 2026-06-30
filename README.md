@@ -46,32 +46,34 @@ You comment. Comments enter the ordered outbox. The service **fans each event ou
 
 ## 1. Run it
 
-```bash
-# point it at your folder of .md specs (defaults to this repo's docs/specs)
-OUTBOX_DIR=path/to/your/specs docker compose up -d --build
-```
+Two ways to start the server — the **published image** (recommended; no clone) or **from source**. Either way, open **http://localhost:8181** once it's up.
 
-Open **http://localhost:8181** — read your specs and start commenting.
+### Option A — Published image (recommended)
 
-- `OUTBOX_DIR` must be a **folder** of `.md` files, not a single file.
-- Port taken? Change the host side in `docker-compose.yml` (`"8181:8181"` → `"9090:8181"`), then use that port everywhere below.
-
-<details><summary>From the published image (no clone, no build)</summary>
-
-The server image is published to Docker Hub, so you don't need to clone or build:
+No clone, no build; point the volume at your folder of `.md` specs:
 
 ```bash
 docker run --rm -p 8181:8181 -v "$PWD/specs:/data" rajanrauniyar/outbox-md
 ```
-</details>
 
-<details><summary>Without compose, building locally (<code>docker run</code>)</summary>
+- The mounted folder (`-v <folder>:/data`) must be a **folder** of `.md` files, not a single file.
+- Port taken? Map a different host port, e.g. `-p 9090:8181`, and use that port everywhere below.
+- Multi-arch — runs natively on Apple Silicon and amd64 Linux.
+
+### Option B — From source (clone + `docker compose`)
+
+For development or local changes. Clone the repo, then point it at your specs (defaults to this repo's `docs/specs`):
+
+```bash
+OUTBOX_DIR=path/to/your/specs docker compose up -d --build
+```
+
+`docker compose pull` fetches the published image instead of building. Or build a plain image yourself:
 
 ```bash
 docker build -t outbox-md .
 docker run --rm -p 8181:8181 -v "$PWD/specs:/data" outbox-md
 ```
-</details>
 
 ---
 
