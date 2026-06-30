@@ -3,26 +3,96 @@ package service
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/rajanrx/outbox-md/internal/anchor"
 	"github.com/rajanrx/outbox-md/internal/config"
 	"github.com/rajanrx/outbox-md/internal/domain"
 	"github.com/rajanrx/outbox-md/internal/store"
+	"github.com/rajanrx/outbox-md/internal/webhook"
 )
 
 type Service struct {
 	store     *store.Store
 	writeFile func(path, content string) error
 	cfg       config.Config
+	notify    webhook.Notifier
 }
 
 func New(st *store.Store, writeFile func(path, content string) error) *Service {
-	return &Service{store: st, writeFile: writeFile, cfg: config.Defaults()}
+	return &Service{store: st, writeFile: writeFile, cfg: config.Defaults(), notify: webhook.Nop{}}
 }
 
 // SetConfig replaces the effective configuration (called once at startup with
 // the loaded outbox.yaml).
 func (s *Service) SetConfig(cfg config.Config) { s.cfg = cfg }
+
+// SetWebhook installs the notifier fired on governance events. Defaults to a
+// no-op; main wires in an HTTP notifier when a webhook URL is configured.
+func (s *Service) SetWebhook(n webhook.Notifier) { s.notify = n }
+
+// excerpt slices the anchored text from content using RUNE offsets, clamping
+// out-of-range anchors and returning "" for an empty or inverted range. It
+// mirrors mcp.excerpt (kept private to that package, so replicated here).
+func excerpt(content string, start, end int) string {
+	r := []rune(content)
+	if start < 0 {
+		start = 0
+	}
+	if end > len(r) {
+		end = len(r)
+	}
+	if start >= end {
+		return ""
+	}
+	return string(r[start:end])
+}
+
+// fireCommentEvent builds and fires a comment-scoped webhook event. All store
+// lookups are best-effort: a failed lookup just leaves its field empty, never
+// blocking or failing the caller's operation.
+func (s *Service) fireCommentEvent(event string, c domain.Comment) {
+	anchor := c.Anchor
+	payload := webhook.Event{
+		Event: event, DocID: c.DocID, CommentID: c.ID, Anchor: &anchor,
+		TS: time.Now().UTC().Format(time.RFC3339),
+	}
+	if doc, err := s.store.GetDocument(c.DocID); err == nil {
+		payload.DocPath = doc.Path
+	}
+	if ver, err := s.store.GetVersion(c.AgainstVersionID); err == nil {
+		payload.Excerpt = excerpt(ver.Content, c.Anchor.Start, c.Anchor.End)
+	}
+	if thread, err := s.store.ListThread(c.ID); err == nil {
+		payload.Thread = thread
+	}
+	s.notify.Fire(event, payload)
+}
+
+// fireDocApproved fires a document.approved event carrying only the document
+// identity (no comment/anchor/thread).
+func (s *Service) fireDocApproved(doc domain.Document) {
+	s.notify.Fire(webhook.EventDocumentApprove, webhook.Event{
+		Event: webhook.EventDocumentApprove, DocID: doc.ID, DocPath: doc.Path,
+		TS: time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+// unresolvedCount returns the number of comments on docID that are not resolved.
+// Approval is gated on this being zero (see Approve/Reapprove).
+func (s *Service) unresolvedCount(docID string) (int, error) {
+	comments, err := s.store.ListComments(docID)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, c := range comments {
+		if c.Status != domain.CommentResolved {
+			n++
+		}
+	}
+	return n, nil
+}
 
 // Config returns the effective configuration (read-only view for the API).
 func (s *Service) Config() config.Config { return s.cfg }
@@ -36,11 +106,16 @@ func (s *Service) PostComment(docID string, a domain.Anchor, author string) (dom
 	if governed && !s.cfg.Approval.PostApprovalComments {
 		return domain.Comment{}, errors.New("comments are disabled on approved documents")
 	}
-	return s.store.CreateComment(domain.Comment{
+	c, err := s.store.CreateComment(domain.Comment{
 		DocID: docID, AgainstVersionID: doc.CurrentVersionID, Anchor: a,
 		AuthorIdentity: author, Owner: author, Status: domain.CommentOpen,
 		PostApproval: governed,
 	})
+	if err != nil {
+		return domain.Comment{}, err
+	}
+	s.fireCommentEvent(webhook.EventCommentCreated, c)
+	return c, nil
 }
 
 func (s *Service) Claim(commentIDs []string, agent string) (string, error) {
@@ -97,9 +172,23 @@ func (s *Service) Reply(commentID, token, body, agent string) error {
 }
 
 func (s *Service) HumanReply(commentID, body string) (domain.ThreadMessage, error) {
-	return s.store.AddThreadMessage(domain.ThreadMessage{
+	m, err := s.store.AddThreadMessage(domain.ThreadMessage{
 		CommentID: commentID, AuthorIdentity: "human", Body: body,
 	})
+	if err != nil {
+		return m, err
+	}
+	// A further human reply must re-surface the comment for the agent: an agent
+	// that already claimed/replied has dropped it from its outbox, and
+	// list_open_comments only returns 'open'. Re-queue it (unless already
+	// resolved) so the agent responds again.
+	_ = s.store.ReopenCommentIfNotResolved(commentID)
+	// Fire unconditionally — a reply happened even when the reopen was a no-op
+	// (e.g. the comment was already resolved).
+	if c, err := s.store.GetComment(commentID); err == nil {
+		s.fireCommentEvent(webhook.EventCommentReplied, c)
+	}
+	return m, nil
 }
 
 // LocalHuman is the identity of the single local reviewer. This local-first
@@ -119,7 +208,12 @@ func (s *Service) Resolve(commentID string) error {
 	if c.Owner != LocalHuman {
 		return errors.New("only the comment owner may resolve it")
 	}
-	return s.store.UpdateCommentStatus(commentID, domain.CommentResolved, "")
+	if err := s.store.UpdateCommentStatus(commentID, domain.CommentResolved, ""); err != nil {
+		return err
+	}
+	c.Status = domain.CommentResolved
+	s.fireCommentEvent(webhook.EventCommentResolved, c)
+	return nil
 }
 
 func (s *Service) RejectSuggestion(commentID string) error {
@@ -246,6 +340,12 @@ func (s *Service) Approve(docID, note string) (domain.Approval, error) {
 	if doc.Status != domain.DocDraft {
 		return domain.Approval{}, errors.New("already approved — use re-approve")
 	}
+	// Gate: every comment must be resolved before the baseline can be pinned.
+	if n, err := s.unresolvedCount(docID); err != nil {
+		return domain.Approval{}, err
+	} else if n > 0 {
+		return domain.Approval{}, fmt.Errorf("cannot approve: %d unresolved comment(s) — resolve all comments first", n)
+	}
 	// CAS-guarded pin: only pin the baseline if the current pointer is still the
 	// version we read. A concurrent draft accept that advanced current between the
 	// read above and this pin makes the guard fail, so we never pin a stale
@@ -256,9 +356,14 @@ func (s *Service) Approve(docID, note string) (domain.Approval, error) {
 		}
 		return domain.Approval{}, err
 	}
-	return s.store.CreateApproval(domain.Approval{
+	app, err := s.store.CreateApproval(domain.Approval{
 		DocID: docID, VersionID: doc.CurrentVersionID, ApprovedBy: LocalHuman, Note: note,
 	})
+	if err != nil {
+		return domain.Approval{}, err
+	}
+	s.fireDocApproved(doc)
+	return app, nil
 }
 
 // Reapprove advances the baseline to the working head and writes it to disk.
@@ -270,6 +375,12 @@ func (s *Service) Reapprove(docID, note string) (domain.Approval, error) {
 	}
 	if doc.Status != domain.DocAmending || doc.CurrentVersionID == doc.ApprovedVersionID {
 		return domain.Approval{}, errors.New("nothing to re-approve")
+	}
+	// Gate: every comment must be resolved before the baseline advances.
+	if n, err := s.unresolvedCount(docID); err != nil {
+		return domain.Approval{}, err
+	} else if n > 0 {
+		return domain.Approval{}, fmt.Errorf("cannot approve: %d unresolved comment(s) — resolve all comments first", n)
 	}
 	ver, err := s.store.GetVersion(doc.CurrentVersionID)
 	if err != nil {
@@ -297,7 +408,12 @@ func (s *Service) Reapprove(docID, note string) (domain.Approval, error) {
 		}
 		return domain.Approval{}, err
 	}
-	return s.store.CreateApproval(domain.Approval{
+	app, err := s.store.CreateApproval(domain.Approval{
 		DocID: docID, VersionID: doc.CurrentVersionID, ApprovedBy: LocalHuman, Note: note,
 	})
+	if err != nil {
+		return domain.Approval{}, err
+	}
+	s.fireDocApproved(doc)
+	return app, nil
 }

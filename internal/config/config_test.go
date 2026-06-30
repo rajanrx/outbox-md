@@ -55,3 +55,39 @@ func TestLoadZeroBatchSizeCorrected(t *testing.T) {
 		t.Error("batch_size 0 should be corrected to default 5")
 	}
 }
+
+func TestDefaultsEnableAllWebhookEvents(t *testing.T) {
+	w := Defaults().Webhook
+	if w.URL != "" || w.Secret != "" {
+		t.Errorf("default webhook url/secret = %q/%q, want empty", w.URL, w.Secret)
+	}
+	if len(w.Events) != 4 {
+		t.Fatalf("default webhook events = %v, want all four", w.Events)
+	}
+}
+
+func TestLoadWebhookFromYAML(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "webhook:\n  url: http://runner/hook\n  secret: shh\n  events: [comment.created]\n")
+	w := Load(dir).Webhook
+	if w.URL != "http://runner/hook" || w.Secret != "shh" {
+		t.Errorf("webhook = %+v, want url/secret from yaml", w)
+	}
+	if len(w.Events) != 1 || w.Events[0] != "comment.created" {
+		t.Errorf("events = %v, want [comment.created]", w.Events)
+	}
+}
+
+func TestLoadWebhookEnvOverrides(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "webhook:\n  url: http://file/hook\n")
+	t.Setenv("OUTBOX_WEBHOOK_URL", "http://env/hook")
+	t.Setenv("OUTBOX_WEBHOOK_SECRET", "env-secret")
+	w := Load(dir).Webhook
+	if w.URL != "http://env/hook" {
+		t.Errorf("url = %q, want env override", w.URL)
+	}
+	if w.Secret != "env-secret" {
+		t.Errorf("secret = %q, want env override", w.Secret)
+	}
+}

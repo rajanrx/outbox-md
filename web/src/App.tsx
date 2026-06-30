@@ -5,6 +5,7 @@ import { Reader } from "./reader/Reader";
 import { Margin } from "./comments/Margin";
 import { BaselineDiff } from "./governance/BaselineDiff";
 import { DecisionLog } from "./log/DecisionLog";
+import { Modal } from "./Modal";
 import "./governance/governance.css";
 
 const PanelLeftIcon = () => (
@@ -34,6 +35,8 @@ export default function App() {
   const [commentsOpen, setCommentsOpen] = useState(true);
   const [showBaseline, setShowBaseline] = useState(false);
   const [showLog, setShowLog] = useState(false);
+  // Which approval action is awaiting confirmation in the modal (null = closed).
+  const [confirm, setConfirm] = useState<null | "approve" | "reapprove">(null);
   const [commentsW, setCommentsW] = useState(() => {
     const v = Number(localStorage.getItem(COMMENTS_W_KEY));
     return v ? clampW(v) : 420;
@@ -117,7 +120,11 @@ export default function App() {
 
   const activePath = docs.find((d) => d.id === docId)?.path ?? "";
   const crumbs = activePath ? activePath.split("/") : [];
-  const openCount = view?.comments?.filter((c) => c.status !== "resolved").length ?? 0;
+  // Approval is gated on every comment being resolved (the backend enforces it;
+  // this disables the button so a blocked approve is never attempted).
+  const unresolved = view?.comments?.filter((c) => c.status !== "resolved").length ?? 0;
+  const openCount = unresolved;
+  const gateTitle = unresolved ? `Resolve all ${unresolved} comment(s) first` : "";
 
   return (
     <div className="app-shell">
@@ -135,12 +142,12 @@ export default function App() {
           <div className="lifecycle-controls" style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <span className={`lifecycle ${view.document.status}`}>{view.document.status}</span>
             {view.document.status === "draft" && (
-              <button className="gov-btn" onClick={async () => { await approve(docId); refresh(); }}>Approve</button>
+              <button className="gov-btn" disabled={unresolved > 0} title={gateTitle} onClick={() => setConfirm("approve")}>Approve</button>
             )}
             {view.document.status === "amending" && (
               <>
                 <button className="gov-btn ghost" onClick={() => setShowBaseline((v) => !v)}>View changes</button>
-                <button className="gov-btn" onClick={async () => { await reapprove(docId); setShowBaseline(false); refresh(); }}>Re-approve</button>
+                <button className="gov-btn" disabled={unresolved > 0} title={gateTitle} onClick={() => setConfirm("reapprove")}>Re-approve</button>
               </>
             )}
           </div>
@@ -157,6 +164,24 @@ export default function App() {
         {showLog && view && (
           <DecisionLog docId={docId} onClose={() => setShowLog(false)} />
         )}
+        <Modal
+          open={confirm !== null}
+          title={confirm === "reapprove" ? "Re-approve document" : "Approve document"}
+          body={
+            confirm === "reapprove"
+              ? "Re-approve this document? This pins the current version as the approved baseline."
+              : "Approve this document? This pins the current version as the approved baseline."
+          }
+          confirmLabel={confirm === "reapprove" ? "Re-approve" : "Approve"}
+          onCancel={() => setConfirm(null)}
+          onConfirm={async () => {
+            const action = confirm;
+            setConfirm(null);
+            if (action === "approve") await approve(docId);
+            else if (action === "reapprove") { await reapprove(docId); setShowBaseline(false); }
+            refresh();
+          }}
+        />
       </div>
 
       <div className="workbench">

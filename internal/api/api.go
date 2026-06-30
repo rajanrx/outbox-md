@@ -61,7 +61,7 @@ func NewAPI(svc *service.Service, st *store.Store) http.Handler {
 		_ = json.NewDecoder(r.Body).Decode(&in) // body/note optional
 		a, err := svc.Approve(r.PathValue("id"), in.Note)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusConflict, err)
 			return
 		}
 		writeJSON(w, a, nil)
@@ -73,7 +73,7 @@ func NewAPI(svc *service.Service, st *store.Store) http.Handler {
 		_ = json.NewDecoder(r.Body).Decode(&in)
 		a, err := svc.Reapprove(r.PathValue("id"), in.Note)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusConflict, err)
 			return
 		}
 		writeJSON(w, a, nil)
@@ -179,4 +179,13 @@ func writeJSON(w http.ResponseWriter, v any, err error) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// writeJSONError renders an error as a JSON body {"error": "..."} with the given
+// status, so clients (the web UI) can surface the message rather than a raw
+// text/plain body.
+func writeJSONError(w http.ResponseWriter, status int, err error) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 }

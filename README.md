@@ -122,6 +122,71 @@ Resolving comments and approving documents stay **human-only** — agents can't 
 4. When a spec is ready, **Approve** it to pin a baseline. After that, edits become **tracked amendments** that need re-approval, so an approved doc is never silently changed.
 5. **History** shows the full decision log — who commented, proposed, edited, and approved, and why.
 
+**Approval gate.** *Approve* and *Re-approve* are blocked until **every comment is resolved**. The server enforces this — an approve with open comments returns **HTTP 409** with a JSON body (`{"error": "cannot approve: N unresolved comment(s) — resolve all comments first"}`). The UI mirrors the rule: the Approve / Re-approve button is **disabled** while comments are unresolved (with a "resolve all N comment(s) first" tooltip), and clicking it opens a **confirmation modal** before the baseline is pinned.
+
+---
+
+## 4. Webhooks (replace polling)
+
+Instead of polling `list_open_comments`, point outbox at an HTTP **runner** and it will **push** a notification the moment something needs work. Webhooks are optional and off by default.
+
+**Enable it** — set a URL (and optionally a signing secret) via env or `outbox.yaml`:
+
+```bash
+OUTBOX_WEBHOOK_URL=https://your-runner.example/hook \
+OUTBOX_WEBHOOK_SECRET=your-shared-secret \
+docker compose up -d --build
+```
+
+```yaml
+# outbox.yaml (in your OUTBOX_DIR) — env vars override these
+webhook:
+  url: https://your-runner.example/hook
+  secret: your-shared-secret
+  events: [comment.created, comment.replied, comment.resolved, document.approved]  # omit ⇒ all enabled
+```
+
+Env (`OUTBOX_WEBHOOK_URL`, `OUTBOX_WEBHOOK_SECRET`) wins over the file. An empty `url` disables webhooks entirely; an empty/omitted `events` list means **all events are enabled**.
+
+**Events** (one POST per event):
+
+| Event | Fires when |
+|---|---|
+| `comment.created` | a human posts a new comment |
+| `comment.replied` | a human replies again on a comment (also re-opens it for the agent) |
+| `comment.resolved` | a human resolves a comment |
+| `document.approved` | a document is approved **or** re-approved |
+
+**The POST contract** — `Content-Type: application/json`, plus:
+
+- `X-Outbox-Event: <event>` — the event name (also in the body).
+- `X-Outbox-Signature: sha256=<hex>` — present **only when a secret is set**. It is the HMAC-SHA256 of the **raw request body** keyed by the secret. Verify by recomputing `hex(hmac_sha256(secret, body))` over the bytes you received and comparing against the header value (constant-time).
+
+Example body:
+
+```json
+{
+  "event": "comment.created",
+  "docId": "0f9c…",
+  "docPath": "specs/auth.md",
+  "commentId": "7ab2…",
+  "anchor": { "start": 120, "end": 156 },
+  "excerpt": "the exact anchored text the comment refers to",
+  "thread": [{ "id": "…", "commentId": "7ab2…", "authorIdentity": "human", "body": "please clarify X" }],
+  "ts": "2026-06-30T12:00:00Z"
+}
+```
+
+`commentId`, `anchor`, `excerpt`, and `thread` are omitted for `document.approved` (it carries only `docId`/`docPath`/`ts`).
+
+**Delivery semantics** — fire-and-forget: delivery runs on a background goroutine and **never blocks or fails** the originating action. Each POST uses a **5s** client timeout and retries up to **2 times** (after ~200ms then ~800ms) on a transport error or non-2xx response; a final failure is logged to stderr. Treat events as **at-least-once** and best-effort, not guaranteed — the UI/MCP state remains the source of truth.
+
+**Build a webhook-driven runner.** The webhook replaces the poll loop with an event loop:
+
+> `comment.created` / `comment.replied` arrives → runner calls **`list_open_comments`** → **`claim_comment`** → **`propose_suggestion`** (a tracked-change edit) or **`reply_in_thread`**.
+
+That's the same MCP toolset from step 2 — just triggered by a push instead of a timer. **Bring your own credentials:** the outbox server ships **zero** LLM keys; your runner holds the model key and does the reasoning, then writes back through MCP. The signature header lets the runner trust that a request really came from your outbox instance.
+
 ---
 
 ## What's inside

@@ -16,6 +16,7 @@ import (
 	"github.com/rajanrx/outbox-md/internal/mcp"
 	"github.com/rajanrx/outbox-md/internal/service"
 	"github.com/rajanrx/outbox-md/internal/store"
+	"github.com/rajanrx/outbox-md/internal/webhook"
 	"github.com/rajanrx/outbox-md/web"
 )
 
@@ -160,7 +161,9 @@ func main() {
 		}
 		return atomicWrite(target, content)
 	})
-	svc.SetConfig(config.Load(dir))
+	cfg := config.Load(dir)
+	svc.SetConfig(cfg)
+	svc.SetWebhook(webhook.New(cfg.Webhook))
 	if err := importMarkdown(st, dir); err != nil {
 		log.Fatal(err)
 	}
