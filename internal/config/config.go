@@ -52,19 +52,20 @@ func Defaults() Config {
 // defaults (startup never fails on config). batch_size below 1 is corrected.
 func Load(dir string) Config {
 	cfg := Defaults()
-	data, err := os.ReadFile(filepath.Join(dir, "outbox.yaml"))
-	if err != nil {
-		return cfg // not present / unreadable → defaults
+	// Layer outbox.yaml over the defaults when it exists; a missing or malformed
+	// file just leaves the defaults in place (startup never fails on config).
+	if data, err := os.ReadFile(filepath.Join(dir, "outbox.yaml")); err == nil {
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			log.Printf("outbox.yaml: invalid, using defaults: %v", err)
+			cfg = Defaults()
+		} else if cfg.Agent.BatchSize < 1 {
+			cfg.Agent.BatchSize = Defaults().Agent.BatchSize
+		}
 	}
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		log.Printf("outbox.yaml: invalid, using defaults: %v", err)
-		return Defaults()
-	}
-	if cfg.Agent.BatchSize < 1 {
-		cfg.Agent.BatchSize = Defaults().Agent.BatchSize
-	}
-	// Environment overrides win over the file (mirrors the OUTBOX_* pattern used
-	// elsewhere) — handy for injecting a secret without committing it to yaml.
+	// Environment overrides win over the file — and MUST apply even when there is
+	// no outbox.yaml (env-only config is the common case for a containerized
+	// server). Previously these sat behind the no-file early return and were
+	// silently skipped, so OUTBOX_WEBHOOK_URL/SECRET were ignored without a yaml.
 	if v := os.Getenv("OUTBOX_WEBHOOK_URL"); v != "" {
 		cfg.Webhook.URL = v
 	}
