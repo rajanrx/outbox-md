@@ -1,0 +1,173 @@
+package main
+
+import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"io"
+	"log"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+)
+
+// Backend is the pluggable agent driver. cli mode shells out to a coding-agent
+// CLI; api mode talks MCP + an LLM directly. Run is called once per debounced
+// burst and must be safe to call repeatedly (the runner serializes calls).
+type Backend interface {
+	Run() error
+}
+
+// verifySignature reports whether the request is authentic.
+//
+//   - secret == "" → signing is not enforced; accept (mirrors the server, which
+//     only signs when a secret is configured).
+//   - secret set, header missing/wrong → reject.
+//
+// The compare is constant-time over the hex digests. body must be the RAW
+// request bytes — the same bytes the server signed — read before any parsing.
+func verifySignature(secret string, body []byte, header string) bool {
+	if secret == "" {
+		return true
+	}
+	if header == "" {
+		return false
+	}
+	got := strings.TrimPrefix(header, "sha256=")
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(body)
+	want := hex.EncodeToString(mac.Sum(nil))
+	return hmac.Equal([]byte(got), []byte(want))
+}
+
+// Runner debounces incoming webhook triggers and serializes agent runs. A burst
+// of triggers within the debounce window collapses into one run; a trigger that
+// arrives while a run is in flight schedules exactly one rerun afterwards (so a
+// late comment is never dropped, and two agent processes never overlap).
+type Runner struct {
+	debounce time.Duration
+	run      func()
+
+	mu      sync.Mutex
+	timer   *time.Timer
+	running bool
+	pending bool
+}
+
+// NewRunner builds a Runner that calls run (the agent invocation) after each
+// debounced burst.
+func NewRunner(debounce time.Duration, run func()) *Runner {
+	return &Runner{debounce: debounce, run: run}
+}
+
+// Trigger (re)arms the debounce timer. Repeated calls within the window coalesce
+// into a single execute.
+func (r *Runner) Trigger() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.timer != nil {
+		r.timer.Stop()
+	}
+	r.timer = time.AfterFunc(r.debounce, func() { go r.execute() })
+}
+
+// execute runs the agent with single-flight semantics. If a run is already in
+// progress it sets pending and returns; the in-flight loop drains pending and
+// runs once more, so concurrent triggers never start a second process.
+func (r *Runner) execute() {
+	r.mu.Lock()
+	if r.running {
+		r.pending = true
+		r.mu.Unlock()
+		return
+	}
+	r.running = true
+	r.mu.Unlock()
+
+	for {
+		r.run()
+		r.mu.Lock()
+		if r.pending {
+			r.pending = false
+			r.mu.Unlock()
+			continue
+		}
+		r.running = false
+		r.mu.Unlock()
+		return
+	}
+}
+
+// Server is the webhook HTTP front end: verify → filter → debounce → run.
+type Server struct {
+	cfg    Config
+	runner *Runner
+}
+
+// NewServer wires the verify/filter/debounce front end to the agent backend.
+func NewServer(cfg Config, backend Backend) *Server {
+	runner := NewRunner(cfg.Debounce, func() {
+		log.Printf("runner: invoking agent (mode=%s)", cfg.AgentMode)
+		if err := backend.Run(); err != nil {
+			log.Printf("runner: agent run failed: %v", err)
+			return
+		}
+		log.Printf("runner: agent run complete")
+	})
+	return &Server{cfg: cfg, runner: runner}
+}
+
+// eventName returns the event name, preferring the header and falling back to
+// the JSON body's "event" field.
+func eventName(header string, body []byte) string {
+	if header != "" {
+		return header
+	}
+	var p struct {
+		Event string `json:"event"`
+	}
+	_ = json.Unmarshal(body, &p)
+	return p.Event
+}
+
+// handleWebhook is the POST handler mounted at "/". It reads the raw body first,
+// verifies the signature over those exact bytes, filters by event, and triggers
+// a debounced agent run. It always responds fast and never blocks on the agent.
+func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "read error", http.StatusBadRequest)
+		return
+	}
+	if !verifySignature(s.cfg.Secret, body, r.Header.Get("X-Outbox-Signature")) {
+		http.Error(w, "invalid signature", http.StatusUnauthorized)
+		return
+	}
+	event := eventName(r.Header.Get("X-Outbox-Event"), body)
+	if !s.cfg.Events[event] {
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "ignored\n")
+		return
+	}
+	s.runner.Trigger()
+	w.WriteHeader(http.StatusAccepted)
+	_, _ = io.WriteString(w, "accepted\n")
+}
+
+// Handler returns the runner's HTTP handler (webhook at "/", health at
+// "/healthz").
+func (s *Server) Handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "ok\n")
+	})
+	mux.HandleFunc("/", s.handleWebhook)
+	return mux
+}
