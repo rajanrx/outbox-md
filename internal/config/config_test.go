@@ -91,3 +91,20 @@ func TestLoadWebhookEnvOverrides(t *testing.T) {
 		t.Errorf("secret = %q, want env override", w.Secret)
 	}
 }
+
+// Regression: env overrides must apply even when there is NO outbox.yaml — the
+// normal case for a containerized server configured purely via env. Previously
+// Load returned early on a missing file, silently dropping OUTBOX_WEBHOOK_URL /
+// OUTBOX_WEBHOOK_SECRET, so webhooks never fired without a yaml present.
+func TestLoadWebhookEnvOverridesWithoutYAML(t *testing.T) {
+	dir := t.TempDir() // deliberately no outbox.yaml
+	t.Setenv("OUTBOX_WEBHOOK_URL", "http://env/hook")
+	t.Setenv("OUTBOX_WEBHOOK_SECRET", "env-secret")
+	w := Load(dir).Webhook
+	if w.URL != "http://env/hook" {
+		t.Errorf("url = %q, want env override applied without a yaml file", w.URL)
+	}
+	if w.Secret != "env-secret" {
+		t.Errorf("secret = %q, want env override applied without a yaml file", w.Secret)
+	}
+}
