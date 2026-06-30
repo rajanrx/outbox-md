@@ -85,6 +85,31 @@ export default function App() {
     if (docId) setView(await getDoc(docId));
   }, [docId]);
 
+  // Latest refresh + open doc behind refs so the mount-once SSE effect always
+  // calls the current closure without re-subscribing (re-opening the stream) on
+  // every doc switch.
+  const refreshRef = useRef(refresh);
+  useEffect(() => { refreshRef.current = refresh; }, [refresh]);
+  const docIdRef = useRef(docId);
+  useEffect(() => { docIdRef.current = docId; }, [docId]);
+
+  // Live updates: subscribe once to the server's SSE stream. Each governance
+  // event refreshes the view when it concerns the open doc (or carries no docId).
+  // EventSource auto-reconnects; ": connected"/": ping" comment frames are ignored.
+  useEffect(() => {
+    const es = new EventSource("/api/events");
+    const onEvent = (e: MessageEvent) => {
+      try {
+        const d = JSON.parse(e.data) as { docId?: string };
+        if (!d.docId || d.docId === docIdRef.current) refreshRef.current();
+      } catch { /* ignore malformed frames */ }
+    };
+    for (const name of ["comment.created", "comment.replied", "comment.resolved", "document.approved"]) {
+      es.addEventListener(name, onEvent);
+    }
+    return () => es.close();
+  }, []);
+
   useEffect(() => {
     listDocs().then((d) => {
       const list = d ?? [];
@@ -114,7 +139,9 @@ export default function App() {
   useEffect(() => {
     if (!docId) return;
     refresh();
-    const t = setInterval(refresh, 3000);
+    // SSE (above) is the primary live-update path; this slow poll is just a
+    // fallback for missed/dropped events (e.g. a brief stream drop).
+    const t = setInterval(refresh, 15000);
     return () => clearInterval(t);
   }, [docId, refresh]);
 

@@ -52,6 +52,23 @@ type Nop struct{}
 
 func (Nop) Fire(string, any) {}
 
+// fanout is a Notifier that delivers each event to several sinks in turn.
+type fanout []Notifier
+
+// Fire fans the event out to every non-nil notifier in order.
+func (f fanout) Fire(event string, payload any) {
+	for _, n := range f {
+		if n != nil {
+			n.Fire(event, payload)
+		}
+	}
+}
+
+// Fanout returns a Notifier that fires every non-nil notifier in ns. It lets one
+// governance event reach multiple sinks — e.g. the HTTP webhook (machine/runner)
+// and the SSE hub (browser) — through the single SetWebhook seam.
+func Fanout(ns ...Notifier) Notifier { return fanout(ns) }
+
 // HTTPNotifier POSTs events to a configured URL, optionally HMAC-signed.
 type HTTPNotifier struct {
 	URL    string

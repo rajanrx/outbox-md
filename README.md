@@ -23,19 +23,24 @@ Read and inline-annotate AI-generated Markdown in your browser. Your comments **
 ## How it works
 
 ```
-            you (browser)                         your AI agent (MCP)
-   ┌───────────────────────────┐        ┌──────────────────────────────┐
-   │ select text → comment ────┼──┐     │ list open comments           │
-   │ read threads / suggestions│  │      │ claim → propose change / reply│
-   │ accept  ──────────────────┼──┼──▶  │                              │
-   └───────────────────────────┘  │      └──────────────────────────────┘
-                                   ▼
-                         ordered outbox (the queue)
-                                   │
-                       accept → file rewritten + versioned
+        you (browser)                                      your AI agent (runner)
+   ┌───────────────────────────┐                    ┌───────────────────────────────┐
+   │ select text → comment ────┼───┐                │ claim → propose tracked change │
+   │ accept / reply / resolve  │   │                │            or reply            │
+   └───────────────────────────┘   │                └───────────────────────────────┘
+            ▲                       ▼                         ▲            │
+            │              ordered outbox (the queue)         │            │ MCP tools
+            │                       │                         │            ▼
+            │                  fan events out                 │   (writes the suggestion back)
+            │                ┌──────┴───────┐                 │
+            └──── SSE ───────┘              └──── webhook ─────┘
+              (live; browser                (event-driven; runner
+               updates, no refresh)          replaces polling)
+
+                     accept → file rewritten + versioned
 ```
 
-You comment. Comments queue. Your agent processes them in order and proposes tracked changes. You accept. The `.md` is updated and versioned — never edited out from under you.
+You comment. Comments enter the ordered outbox. The service **fans each event out** to two sinks: a **webhook** that pushes your AI-agent runner (event-driven — no polling), and **SSE** that updates the browser live (no refresh). The agent claims a comment and proposes a tracked change or replies; you accept, and the `.md` is rewritten and versioned — never edited out from under you.
 
 ---
 
@@ -126,7 +131,11 @@ Resolving comments and approving documents stay **human-only** — agents can't 
 
 ---
 
-## 4. Webhooks (replace polling)
+## 4. Event delivery — webhooks & live updates
+
+Every governance event fans out to **two sinks**: a **webhook** to your AI-agent runner (machine), and an **SSE** stream to the browser (the UI). Same events, two consumers — the runner acts on them, the UI re-renders from them. Webhooks are covered first; SSE (always on, zero config) is in **[Live updates (SSE)](#live-updates-sse)** below.
+
+### Webhooks (replace polling)
 
 Instead of polling `list_open_comments`, point outbox at an HTTP **runner** and it will **push** a notification the moment something needs work. Webhooks are optional and off by default.
 
@@ -187,6 +196,18 @@ Example body:
 
 That's the same MCP toolset from step 2 — just triggered by a push instead of a timer. **Bring your own credentials:** the outbox server ships **zero** LLM keys; your runner holds the model key and does the reasoning, then writes back through MCP. The signature header lets the runner trust that a request really came from your outbox instance.
 
+### Live updates (SSE)
+
+The browser is the **second sink** for the same events. The UI subscribes — automatically, no setup — to a **Server-Sent Events** stream and re-renders the instant something changes, so a comment, reply, resolution, or approval shows up **without a manual refresh**.
+
+```
+GET /api/events     →     Content-Type: text/event-stream
+```
+
+The stream emits one frame per governance event — the same four as the webhook (`comment.created`, `comment.replied`, `comment.resolved`, `document.approved`) — as `event: <name>` with a `data:` JSON body (the same payload shape as the webhook). `: connected` and `: ping` comment lines (a ~25s heartbeat) keep the connection alive and are ignored by the client. The UI opens this on load and refreshes the affected document on each event; if the stream drops, the browser reconnects automatically and a slow background poll (~15s) covers any gap. No credentials, no config — it's on whenever the server is running.
+
+Together the two sinks are one **event-delivery** story: **webhook = your machine/runner**, **SSE = your browser**. The same event drives the agent loop and the live UI.
+
 ---
 
 ## What's inside
@@ -196,6 +217,7 @@ That's the same MCP toolset from step 2 — just triggered by a push instead of 
 - **Suggestions** — agent edits shown as inline diffs you accept or reject.
 - **Governance** — `draft → approved → amending → approved`: approve to pin a baseline; post-approval edits accumulate as amendments until you re-approve.
 - **Decision log** — a per-document **History** timeline of every comment, proposal, edit, and approval.
+- **Event delivery** — every governance event fans out to a **webhook** (your AI-agent runner) and an **SSE** stream (the browser updates live, no refresh).
 
 ---
 
