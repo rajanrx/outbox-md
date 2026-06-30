@@ -56,7 +56,16 @@ Open **http://localhost:8181** — read your specs and start commenting.
 - `OUTBOX_DIR` must be a **folder** of `.md` files, not a single file.
 - Port taken? Change the host side in `docker-compose.yml` (`"8181:8181"` → `"9090:8181"`), then use that port everywhere below.
 
-<details><summary>Without compose (<code>docker run</code>)</summary>
+<details><summary>From the published image (no clone, no build)</summary>
+
+The server image is published to Docker Hub, so you don't need to clone or build:
+
+```bash
+docker run --rm -p 8181:8181 -v "$PWD/specs:/data" rajanrauniyar/outbox-md
+```
+</details>
+
+<details><summary>Without compose, building locally (<code>docker run</code>)</summary>
 
 ```bash
 docker build -t outbox-md .
