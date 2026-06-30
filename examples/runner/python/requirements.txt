@@ -1,0 +1,6 @@
+# The runner is stdlib-only — no third-party packages are required to run it
+# in the default (cli) mode or to run the tests (python -m unittest).
+#
+# api mode is a stub here (the Go runner is the canonical implementation). If
+# you implement it, you'll add the official MCP client, e.g.:
+#   mcp>=1.0.0
