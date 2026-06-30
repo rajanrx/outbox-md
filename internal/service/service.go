@@ -12,6 +12,11 @@ import (
 	"github.com/rajanrx/outbox-md/internal/webhook"
 )
 
+// ErrNoCandidateSet means a comment has no candidate set yet — a "not found"
+// signal distinct from a genuine store error, so callers (e.g. the API) can
+// map it to 404 rather than 500.
+var ErrNoCandidateSet = errors.New("no candidate set for comment")
+
 type Service struct {
 	store     *store.Store
 	writeFile func(path, content string) error
@@ -174,6 +179,12 @@ func (s *Service) SubmitReview(commentID, token, lens, verdict, rationale, conte
 	if _, err := s.requireToken(commentID, token); err != nil {
 		return domain.Candidate{}, err
 	}
+	switch lens {
+	case domain.LensCorrectness, domain.LensCompleteness, domain.LensAmbiguity,
+		domain.LensRisk, domain.LensSimplicity, domain.LensSkeptic:
+	default:
+		return domain.Candidate{}, fmt.Errorf("invalid lens %q", lens)
+	}
 	switch verdict {
 	case domain.VerdictEdit:
 		if content == "" {
@@ -204,7 +215,7 @@ func (s *Service) ListCandidates(commentID string) (CouncilView, error) {
 		return CouncilView{}, err
 	}
 	if !ok {
-		return CouncilView{}, errors.New("no candidate set for comment")
+		return CouncilView{}, ErrNoCandidateSet
 	}
 	cands, err := s.store.ListCandidatesByComment(commentID)
 	if err != nil {
@@ -248,7 +259,9 @@ func (s *Service) RecordSynthesis(commentID, dissent, content, createdBy string,
 	if err != nil {
 		return domain.Synthesis{}, err
 	}
-	_ = s.store.SetCandidateSetState(set.ID, domain.CandidateSetSynthesized)
+	if err := s.store.SetCandidateSetState(set.ID, domain.CandidateSetSynthesized); err != nil {
+		return domain.Synthesis{}, err
+	}
 	return syn, nil
 }
 
@@ -272,7 +285,13 @@ func (s *Service) PickCandidate(commentID, candidateID, actor string) (domain.Ca
 		return domain.Candidate{}, err
 	}
 	if !ok {
-		return domain.Candidate{}, errors.New("no candidate set for comment")
+		return domain.Candidate{}, ErrNoCandidateSet
+	}
+	// Terminal guard: a set is decided exactly once. A second pick would
+	// double-mark chosen and emit a second orphaned Suggestion, so reject it
+	// before any write.
+	if set.State == domain.CandidateSetDecided {
+		return domain.Candidate{}, errors.New("candidate set already decided")
 	}
 	cand, err := s.store.GetCandidate(candidateID)
 	if err != nil {
@@ -309,7 +328,9 @@ func (s *Service) emitSuggestion(c domain.Comment, content, createdBy string) (d
 	if err != nil {
 		return domain.Suggestion{}, err
 	}
-	_ = s.store.UpdateCommentStatus(c.ID, domain.CommentAddressed, c.ClaimToken)
+	if err := s.store.UpdateCommentStatus(c.ID, domain.CommentAddressed, c.ClaimToken); err != nil {
+		return domain.Suggestion{}, err
+	}
 	return sg, nil
 }
 

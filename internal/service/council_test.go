@@ -172,6 +172,79 @@ func TestRecordSynthesisEmitsSuggestionAndSetsState(t *testing.T) {
 	}
 }
 
+func TestSubmitReviewRejectsUnknownLens(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _ string) error { return nil })
+	c, tok := claimedComment(t, s, svc)
+
+	// Unknown lens → rejected (mirrors the strict verdict check).
+	if _, err := svc.SubmitReview(c.ID, tok, "garbage", domain.VerdictReply, "r", "", "m1"); err == nil {
+		t.Fatal("unknown lens should be rejected")
+	}
+
+	// Every defined lens is accepted.
+	for _, lens := range []string{
+		domain.LensCorrectness, domain.LensCompleteness, domain.LensAmbiguity,
+		domain.LensRisk, domain.LensSimplicity, domain.LensSkeptic,
+	} {
+		if _, err := svc.SubmitReview(c.ID, tok, lens, domain.VerdictReply, "r", "", "m1"); err != nil {
+			t.Errorf("lens %q should be accepted: %v", lens, err)
+		}
+	}
+}
+
+func TestPickCandidateRejectsSecondPickAfterDecided(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _ string) error { return nil })
+	c, tok := claimedComment(t, s, svc)
+
+	first, err := svc.SubmitReview(c.ID, tok, domain.LensCorrectness, domain.VerdictEdit, "fix", "Hello there", "m1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := svc.SubmitReview(c.ID, tok, domain.LensRisk, domain.VerdictEdit, "alt", "Goodbye now", "m2")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// First pick decides the set and emits exactly one Suggestion.
+	if _, err := svc.PickCandidate(c.ID, first.ID, LocalHuman); err != nil {
+		t.Fatalf("first pick: %v", err)
+	}
+
+	// A second pick on the now-decided set is rejected — a different candidate…
+	if _, err := svc.PickCandidate(c.ID, second.ID, LocalHuman); err == nil {
+		t.Fatal("second pick (different candidate) on a decided set should be rejected")
+	}
+	// …and re-picking the same candidate is rejected too.
+	if _, err := svc.PickCandidate(c.ID, first.ID, LocalHuman); err == nil {
+		t.Fatal("re-picking the same candidate on a decided set should be rejected")
+	}
+
+	// No second Suggestion was emitted — exactly one exists for the comment.
+	var n int
+	if err := s.DB.QueryRow(`SELECT COUNT(*) FROM suggestions WHERE comment_id=?`, c.ID).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("suggestion count = %d, want 1", n)
+	}
+
+	// And exactly one candidate stayed marked chosen (no double-mark).
+	cands, _ := s.ListCandidatesByComment(c.ID)
+	chosen := 0
+	for _, cd := range cands {
+		if cd.Chosen {
+			chosen++
+		}
+	}
+	if chosen != 1 {
+		t.Fatalf("chosen candidates = %d, want 1", chosen)
+	}
+}
+
 func TestListCandidatesErrorsWhenNoSet(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()

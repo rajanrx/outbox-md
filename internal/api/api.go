@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -149,7 +150,11 @@ func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub) http.Handler {
 	mux.HandleFunc("GET /api/comments/{id}/candidates", func(w http.ResponseWriter, r *http.Request) {
 		view, err := svc.ListCandidates(r.PathValue("id"))
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			if errors.Is(err, service.ErrNoCandidateSet) {
+				http.Error(w, err.Error(), http.StatusNotFound)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		writeJSON(w, view, nil)
