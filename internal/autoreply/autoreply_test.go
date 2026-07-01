@@ -254,3 +254,107 @@ func TestDefaultsApplied(t *testing.T) {
 		t.Error("nil spawn should default to SpawnCLI")
 	}
 }
+
+// TestPerProjectResolvesRootAndAgent is the key multi-project invariant: a
+// triggering comment on project A spawns the agent with cwd == A's root and A's
+// agent command; a comment on project B spawns with B's root + agent. The two
+// runners are independent.
+func TestPerProjectResolvesRootAndAgent(t *testing.T) {
+	got := make(chan [2]string, 4)
+	e := New(Config{
+		Enabled:  true,
+		Dir:      "/default/root",
+		AgentCmd: "default -p {prompt}",
+		Debounce: testDebounce,
+		Targets: map[string]Target{
+			"alpha": {Root: "/repos/alpha", AgentCmd: "claude -p {prompt}"},
+			"beta":  {Root: "/repos/beta", AgentCmd: "codex exec {prompt}"},
+		},
+		Spawn: func(_ context.Context, dir, cmd, _ string) error {
+			got <- [2]string{dir, cmd}
+			return nil
+		},
+	})
+
+	e.Fire(webhook.EventCommentCreated, webhook.Event{Project: "alpha"})
+	if v := <-got; v[0] != "/repos/alpha" || v[1] != "claude -p {prompt}" {
+		t.Fatalf("alpha spawn = %v, want /repos/alpha + claude", v)
+	}
+	e.Fire(webhook.EventCommentReplied, webhook.Event{Project: "beta"})
+	if v := <-got; v[0] != "/repos/beta" || v[1] != "codex exec {prompt}" {
+		t.Fatalf("beta spawn = %v, want /repos/beta + codex", v)
+	}
+}
+
+// TestFallbackToDefaults verifies the fallback chain: an unknown project uses
+// the engine's default Dir/AgentCmd, and a Target with an empty AgentCmd uses
+// the default command while keeping its own root.
+func TestFallbackToDefaults(t *testing.T) {
+	got := make(chan [2]string, 4)
+	e := New(Config{
+		Enabled:  true,
+		Dir:      "/default/root",
+		AgentCmd: "default -p {prompt}",
+		Debounce: testDebounce,
+		Targets: map[string]Target{
+			// Root set, agent empty → inherit the default command.
+			"gamma": {Root: "/repos/gamma"},
+		},
+		Spawn: func(_ context.Context, dir, cmd, _ string) error {
+			got <- [2]string{dir, cmd}
+			return nil
+		},
+	})
+
+	// Unknown project → default root + default command.
+	e.Fire(webhook.EventCommentCreated, webhook.Event{Project: "unknown"})
+	if v := <-got; v[0] != "/default/root" || v[1] != "default -p {prompt}" {
+		t.Fatalf("unknown project spawn = %v, want defaults", v)
+	}
+	// Known project with empty agent → its root + default command.
+	e.Fire(webhook.EventCommentCreated, webhook.Event{Project: "gamma"})
+	if v := <-got; v[0] != "/repos/gamma" || v[1] != "default -p {prompt}" {
+		t.Fatalf("gamma spawn = %v, want /repos/gamma + default cmd", v)
+	}
+}
+
+// TestSingleFolderEmptyProject verifies single-folder mode (project "" with no
+// Targets) spawns in the default dir — bit-for-bit the old single-cwd behaviour.
+func TestSingleFolderEmptyProject(t *testing.T) {
+	got := make(chan string, 1)
+	e := New(Config{
+		Enabled:  true,
+		Dir:      "/served/dir",
+		AgentCmd: "claude -p {prompt}",
+		Debounce: testDebounce,
+		Spawn: func(_ context.Context, dir, _, _ string) error {
+			got <- dir
+			return nil
+		},
+	})
+	e.Fire(webhook.EventCommentCreated, webhook.Event{Project: ""})
+	if dir := <-got; dir != "/served/dir" {
+		t.Fatalf("single-folder spawn dir = %q, want /served/dir", dir)
+	}
+}
+
+// TestPerProjectNoSelfRetrigger confirms the no-self-retrigger invariant still
+// holds with a project-carrying payload: an agent-action event never spawns.
+func TestPerProjectNoSelfRetrigger(t *testing.T) {
+	var calls int32
+	e := New(Config{
+		Enabled:  true,
+		Debounce: testDebounce,
+		Targets:  map[string]Target{"alpha": {Root: "/repos/alpha", AgentCmd: "x {prompt}"}},
+		Spawn: func(context.Context, string, string, string) error {
+			atomic.AddInt32(&calls, 1)
+			return nil
+		},
+	})
+	e.Fire(webhook.EventSuggestionProposed, webhook.Event{Project: "alpha"})
+	e.Fire(webhook.EventCommentUpdated, webhook.Event{Project: "alpha"})
+	time.Sleep(50 * time.Millisecond)
+	if got := atomic.LoadInt32(&calls); got != 0 {
+		t.Fatalf("agent-action events spawned %d times, want 0", got)
+	}
+}

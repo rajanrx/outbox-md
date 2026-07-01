@@ -41,9 +41,13 @@ const (
 // anchored excerpt and thread so the runner can act without a follow-up read;
 // document.approved carries only the document identity.
 type Event struct {
-	Event     string                 `json:"event"`
-	DocID     string                 `json:"docId"`
-	DocPath   string                 `json:"docPath"`
+	Event   string `json:"event"`
+	DocID   string `json:"docId"`
+	DocPath string `json:"docPath"`
+	// Project is the registered project the document belongs to (empty in
+	// single-folder mode). The auto-reply engine reads it to spawn the agent in
+	// that project's root with that project's agent command.
+	Project   string                 `json:"project,omitempty"`
 	CommentID string                 `json:"commentId,omitempty"`
 	Anchor    *domain.Anchor         `json:"anchor,omitempty"`
 	Excerpt   string                 `json:"excerpt,omitempty"`

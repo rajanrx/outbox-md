@@ -83,6 +83,7 @@ func (s *Service) fireCommentEvent(event string, c domain.Comment) {
 	}
 	if doc, err := s.store.GetDocument(c.DocID); err == nil {
 		payload.DocPath = doc.Path
+		payload.Project = doc.Project
 	}
 	if ver, err := s.store.GetVersion(c.AgainstVersionID); err == nil {
 		payload.Excerpt = anchor.Excerpt(ver.Content, c.Anchor.Start, c.Anchor.End)
@@ -101,7 +102,8 @@ func (s *Service) fireDocApproved(doc domain.Document) {
 	}
 	s.notify.Fire(webhook.EventDocumentApprove, webhook.Event{
 		Event: webhook.EventDocumentApprove, DocID: doc.ID, DocPath: doc.Path,
-		TS: time.Now().UTC().Format(time.RFC3339),
+		Project: doc.Project,
+		TS:      time.Now().UTC().Format(time.RFC3339),
 	})
 }
 

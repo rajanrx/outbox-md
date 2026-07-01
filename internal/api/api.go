@@ -63,10 +63,27 @@ func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub) http.Handler {
 		writeJSON(w, svc.Config(), nil)
 	})
 
-	// The projects being served: [{name, path}]. Single-folder mode returns one
-	// entry with an empty name; the UI hides the switcher when there is ≤1 project.
+	// The projects being served: [{name, root, docs}]. Single-folder mode returns
+	// one entry with an empty name; the UI hides the switcher when there is ≤1
+	// project. The per-project agent command is deliberately NOT exposed here (the
+	// UI never needs it). name is the root basename, so labels read as the repo
+	// name (e.g. "outbox-md") rather than the served folder (e.g. "docs").
 	mux.HandleFunc("GET /api/projects", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, svc.Projects(), nil)
+		type projectDTO struct {
+			Name string `json:"name"`
+			Root string `json:"root"`
+			Docs string `json:"docs"`
+		}
+		src := svc.Projects()
+		out := make([]projectDTO, 0, len(src))
+		for _, p := range src {
+			docs := p.Docs
+			if docs == "" {
+				docs = "."
+			}
+			out = append(out, projectDTO{Name: p.Name, Root: p.Root, Docs: docs})
+		}
+		writeJSON(w, out, nil)
 	})
 
 	// Read-only folder view built from outbox-md's OWN data: every doc across the
