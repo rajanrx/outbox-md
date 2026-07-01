@@ -4,6 +4,24 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0](https://github.com/rajanrx/outbox-md/compare/outbox-md-v0.5.0...outbox-md-v0.6.0) (2026-07-01)
+
+
+### Features
+
+* multi-folder sources whitelist + folder view from pending suggestions (drop go-git) ([02817a8](https://github.com/rajanrx/outbox-md/commit/02817a8b4ff69ebf56b7bd7f8e64a030fc2e17fb))
+* multi-folder sources whitelist + folder view from pending suggestions (drop go-git) ([02a7062](https://github.com/rajanrx/outbox-md/commit/02a7062f5db2d0c97e7303511812d6866521303c))
+
+
+### Bug Fixes
+
+* **api:** enforce sources whitelist at serve time, not just import (PR [#35](https://github.com/rajanrx/outbox-md/issues/35) P1) ([9c76ded](https://github.com/rajanrx/outbox-md/commit/9c76ded1d5a01657c3cae5c1d2374812e5541195))
+* **api:** enforce sources whitelist on the dev agent endpoints (PR [#35](https://github.com/rajanrx/outbox-md/issues/35) P2) ([3da0708](https://github.com/rajanrx/outbox-md/commit/3da070832268642fde2b82947be49699cd595942))
+* **api:** guard all doc/comment-scoped routes + align glob import with Serves (PR [#35](https://github.com/rajanrx/outbox-md/issues/35)) ([bac886e](https://github.com/rajanrx/outbox-md/commit/bac886efb9db7904ac0aabdbdc6bf41dae68ccb7))
+* **mcp:** enforce sources whitelist on the MCP surface too (PR [#35](https://github.com/rajanrx/outbox-md/issues/35) P1) ([950ce0f](https://github.com/rajanrx/outbox-md/commit/950ce0f2b1f9c79e354a0e139417f64c9f415ef5))
+* **mcp:** gate MCP write handlers on the sources whitelist too ([2754027](https://github.com/rajanrx/outbox-md/commit/2754027b89a33aeb69ab9b1e5c278efa49f6a623))
+* **store:** gate folder view on comment status = addressed (PR [#35](https://github.com/rajanrx/outbox-md/issues/35) P2) ([7056d1a](https://github.com/rajanrx/outbox-md/commit/7056d1a73f69c1a9983da2c6aef89b1175b04834))
+
 ## [0.5.0](https://github.com/rajanrx/outbox-md/compare/outbox-md-v0.4.0...outbox-md-v0.5.0) (2026-07-01)
 
 
