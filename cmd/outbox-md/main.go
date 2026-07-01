@@ -1,12 +1,17 @@
 package main
 
 import (
+	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 
@@ -214,20 +219,130 @@ func importFile(st *store.Store, dir, p string) error {
 	return err
 }
 
-func main() {
-	dir := getenv("OUTBOX_DIR", "/data")
-	addr := getenv("OUTBOX_ADDR", ":8181")
+// version is the CLI version. It is "dev" for local builds and overridden at
+// release time via -ldflags "-X main.version=<v>".
+var version = "dev"
 
+// lookPath is a seam over exec.LookPath so tests can simulate an external
+// binary (e.g. `claude`) being absent without shelling out to a real one.
+var lookPath = exec.LookPath
+
+func main() {
+	if err := run(os.Args[1:], os.Stdout); err != nil {
+		fmt.Fprintln(os.Stderr, "outbox: "+err.Error())
+		os.Exit(1)
+	}
+}
+
+// resolveCmd maps raw args to a subcommand name and its remaining args. A bare
+// invocation (no args) selects "serve", so the Docker ENTRYPOINT (which calls
+// the binary with no args) keeps serving.
+func resolveCmd(args []string) (name string, rest []string) {
+	if len(args) == 0 {
+		return "serve", nil
+	}
+	return args[0], args[1:]
+}
+
+// run is the testable core of main: it dispatches a subcommand. The
+// version/help/unknown paths write to out and never open a listener, so routing
+// can be exercised without a live server.
+func run(args []string, out io.Writer) error {
+	cmd, rest := resolveCmd(args)
+	switch cmd {
+	case "serve":
+		return serve(rest, false)
+	case "up":
+		return serve(rest, true)
+	case "init":
+		return initProject(rest, out)
+	case "version", "--version", "-v":
+		fmt.Fprintln(out, version)
+		return nil
+	case "help", "-h", "--help":
+		usage(out)
+		return nil
+	default:
+		usage(out)
+		return fmt.Errorf("unknown command %q (run \"outbox help\")", cmd)
+	}
+}
+
+func usage(w io.Writer) {
+	fmt.Fprint(w, `outbox-md — local-first, agent-agnostic review for AI-generated Markdown specs.
+
+Usage:
+  outbox [command] [flags]
+
+Commands:
+  serve      Serve the review UI + MCP endpoint for a folder of .md files (default)
+  up         Serve, then open the browser at the review UI
+  init       Scaffold outbox.yaml + register the MCP with Claude in this folder
+  version    Print the version
+  help       Show this help
+
+Flags (serve, up):
+  -dir    folder of .md files to serve   (default ".",     overridden by OUTBOX_DIR)
+  -addr   listen address                 (default ":8181", overridden by OUTBOX_ADDR)
+
+Getting started:
+  outbox init && outbox up
+`)
+}
+
+// resolveFlags parses -dir/-addr for the server subcommands. Precedence is
+// flag > env > default: the env value (if set) becomes the flag's default, so an
+// explicit flag still wins over OUTBOX_DIR/OUTBOX_ADDR, which win over the
+// built-in defaults. The default served dir is the current directory (".") for a
+// local run; the Docker image sets OUTBOX_DIR=/data to keep serving /data.
+func resolveFlags(name string, args []string, out io.Writer) (dir, addr string, err error) {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(out)
+	d := fs.String("dir", getenv("OUTBOX_DIR", "."), "folder of .md files to serve")
+	a := fs.String("addr", getenv("OUTBOX_ADDR", ":8181"), "listen address")
+	if err := fs.Parse(args); err != nil {
+		return "", "", err
+	}
+	return *d, *a, nil
+}
+
+// serve builds the server for dir and listens on addr. When open is true it
+// binds the listener first, opens the browser, then serves (the `up` command),
+// so the browser only opens once the port is actually accepting connections.
+func serve(args []string, open bool) error {
+	dir, addr, err := resolveFlags("serve", args, os.Stderr)
+	if err != nil {
+		return err
+	}
+	mux, err := buildServer(dir)
+	if err != nil {
+		return err
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	log.Printf("outbox-md on %s serving %s (mcp at /mcp)", addr, dir)
+	if open {
+		openBrowser(browseURL(addr))
+	}
+	return http.Serve(ln, mux)
+}
+
+// buildServer wires the store, service, config, event fan-out and HTTP routes
+// for dir, returning the ready handler. It is shared by `serve` and `up` so the
+// bootstrap lives in exactly one place.
+func buildServer(dir string) (http.Handler, error) {
 	if err := ensureDataDir(dir); err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 	dbDir := filepath.Join(dir, ".outbox")
 	if err := os.MkdirAll(dbDir, 0o755); err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 	st, err := store.Open("file:" + filepath.Join(dbDir, "outbox.db"))
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 	svc := service.New(st, func(path, content string) error {
 		target, err := safeJoin(dir, path)
@@ -243,7 +358,7 @@ func main() {
 	hub := sse.NewHub()
 	svc.SetWebhook(webhook.Fanout(webhook.New(cfg.Webhook), hub))
 	if err := importMarkdown(st, dir, cfg.Sources); err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 
 	mux := http.NewServeMux()
@@ -261,7 +376,104 @@ func main() {
 
 	sub, _ := fs.Sub(web.Dist, "dist")
 	mux.Handle("/", http.FileServer(http.FS(sub)))
+	return mux, nil
+}
 
-	log.Printf("outbox-md on %s serving %s (mcp at /mcp)", addr, dir)
-	log.Fatal(http.ListenAndServe(addr, mux))
+// browseURL turns a listen address (e.g. ":8181" or "localhost:9090") into a
+// loopback URL for the browser and the MCP endpoint.
+func browseURL(addr string) string {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil || port == "" {
+		port = "8181"
+	}
+	return "http://localhost:" + port
+}
+
+// openBrowser best-effort opens url in the default browser. Any failure (no
+// opener on PATH, unsupported OS, headless host) is ignored so it never blocks
+// or fails serving.
+func openBrowser(url string) {
+	var bin string
+	switch runtime.GOOS {
+	case "darwin":
+		bin = "open"
+	case "linux":
+		bin = "xdg-open"
+	default:
+		return
+	}
+	path, err := lookPath(bin)
+	if err != nil {
+		return
+	}
+	_ = exec.Command(path, url).Start()
+}
+
+// starterConfig is written by `outbox init` when no outbox.yaml exists. The
+// sources block is commented out so the default (serve every .md under the dir)
+// stays in effect until the user opts into a whitelist.
+const starterConfig = `# outbox.yaml — configuration for outbox-md.
+# By default outbox-md serves every .md file under this folder. To serve only
+# part of a larger repo, uncomment "sources" and list folders and/or globs
+# (relative to this file); paths stay project-relative.
+#
+# sources:
+#   - docs/specs        # a folder → walked recursively
+#   - rfcs              # another folder
+#   - drafts/*.md       # a glob → matched files only (non-recursive)
+`
+
+// initProject scaffolds onboarding in the target folder: it writes a starter
+// outbox.yaml (never overwriting an existing one) and, when the `claude` CLI is
+// present, registers this project's MCP endpoint. When claude is absent or the
+// registration command fails, it prints the exact command instead of failing.
+func initProject(args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+	fs.SetOutput(out)
+	dir := fs.String("dir", getenv("OUTBOX_DIR", "."), "folder to scaffold")
+	addr := fs.String("addr", getenv("OUTBOX_ADDR", ":8181"), "listen address (for the MCP URL)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := ensureDataDir(*dir); err != nil {
+		return err
+	}
+
+	cfgPath := filepath.Join(*dir, "outbox.yaml")
+	if _, err := os.Stat(cfgPath); err == nil {
+		fmt.Fprintf(out, "kept existing %s\n", cfgPath)
+	} else if os.IsNotExist(err) {
+		if err := os.WriteFile(cfgPath, []byte(starterConfig), 0o644); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "wrote %s\n", cfgPath)
+	} else {
+		return err
+	}
+
+	registerMCP(out, browseURL(*addr)+"/mcp")
+
+	fmt.Fprintln(out, "\nNext: run `outbox up` to start the server and open the review UI.")
+	return nil
+}
+
+// registerMCP registers outbox-md's MCP endpoint with the Claude CLI for this
+// project. If `claude` is not on PATH, or the command fails (e.g. already
+// registered), it prints the exact command for the user to run — registration
+// is best-effort and never fatal to `init`.
+func registerMCP(out io.Writer, mcpURL string) {
+	argv := []string{"claude", "mcp", "add", "--transport", "http", "outbox-md", mcpURL}
+	printable := strings.Join(argv, " ")
+	path, err := lookPath("claude")
+	if err != nil {
+		fmt.Fprintf(out, "claude CLI not found — register the MCP yourself:\n  %s\n", printable)
+		return
+	}
+	cmd := exec.Command(path, argv[1:]...)
+	cmd.Stdout, cmd.Stderr = out, out
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(out, "could not register the MCP automatically — run:\n  %s\n", printable)
+		return
+	}
+	fmt.Fprintf(out, "registered the outbox-md MCP with Claude:\n  %s\n", printable)
 }

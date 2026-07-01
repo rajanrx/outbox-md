@@ -25,4 +25,8 @@ FROM gcr.io/distroless/static-debian12
 COPY --from=go /outbox-md /outbox-md
 EXPOSE 8181
 VOLUME ["/data"]
+# The local CLI defaults -dir to the current directory, but the distroless
+# runtime has no working dir, so pin the served folder to the mounted /data
+# volume. The arg-less ENTRYPOINT below runs `serve`, which reads OUTBOX_DIR.
+ENV OUTBOX_DIR=/data
 ENTRYPOINT ["/outbox-md"]
