@@ -238,11 +238,16 @@ func TestRunHelpPrintsUsage(t *testing.T) {
 	}
 }
 
-// TestInitWritesConfig covers init writing a fresh outbox.yaml. lookPath is
-// stubbed so `claude` reads as absent and the test never shells out to a real
-// binary; init must still succeed and degrade to printing the manual command.
+// TestInitWritesConfig covers init writing a fresh outbox.yaml with no AI client
+// installed. lookPath is stubbed so every command probe reads absent and the
+// test never shells out to a real binary; a temp HOME hides any real client
+// config dirs. init must still succeed, scaffold the yaml, write no client
+// config, and report each client as not detected — exit 0.
 func TestInitWritesConfig(t *testing.T) {
 	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	restore := stubClaudeAbsent(t)
 	defer restore()
 
@@ -262,15 +267,46 @@ func TestInitWritesConfig(t *testing.T) {
 	if !strings.Contains(out, "wrote "+cfg) {
 		t.Fatalf("expected 'wrote %s' in output, got:\n%s", cfg, out)
 	}
-	// claude absent → the exact registration command must be printed, not run.
+	// Nothing installed → every client reported as not detected, none wired.
+	if !strings.Contains(out, "not detected") {
+		t.Fatalf("expected 'not detected' summary, got:\n%s", out)
+	}
+	if strings.Contains(out, "registered (") {
+		t.Fatalf("no client should be wired when none is installed, got:\n%s", out)
+	}
+}
+
+// TestInitAllPrintsClaudeCommand verifies -all attempts every client even when
+// none is installed: file clients get configs under the temp HOME, and Claude
+// Code (no config file) degrades to printing the exact manual command.
+func TestInitAllPrintsClaudeCommand(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	restore := stubClaudeAbsent(t)
+	defer restore()
+
+	var buf bytes.Buffer
+	if err := run([]string{"init", "-dir", dir, "-all"}, &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
 	if !strings.Contains(out, "claude mcp add --transport http outbox-md http://localhost:8181/mcp") {
-		t.Fatalf("expected manual MCP command in output, got:\n%s", out)
+		t.Fatalf("expected manual Claude command under -all, got:\n%s", out)
+	}
+	// A file client (Cursor) must have been written under the temp HOME.
+	if _, err := os.Stat(filepath.Join(home, ".cursor", "mcp.json")); err != nil {
+		t.Fatalf("-all did not write cursor config: %v", err)
 	}
 }
 
 // TestInitKeepsExistingConfig verifies init never overwrites an existing file.
 func TestInitKeepsExistingConfig(t *testing.T) {
 	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	restore := stubClaudeAbsent(t)
 	defer restore()
 

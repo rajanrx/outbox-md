@@ -34,9 +34,11 @@ curl -fsSL https://raw.githubusercontent.com/rajanrx/outbox-md/main/install.sh |
 
 ```bash
 cd path/to/your/specs
-outbox init      # scaffold outbox.yaml + register the MCP with Claude Code (if installed)
+outbox init      # scaffold outbox.yaml + auto-wire the MCP with your installed AI clients
 outbox up        # serve the review UI and open it in your browser
 ```
+
+> `outbox init` auto-wires Claude Code, Gemini CLI, Cursor, Windsurf, Claude Desktop, and Codex if installed. See [Supported clients](SETUP.md#supported-clients).
 
 **3. Connect your agent** — if `init` didn't do it automatically, add this MCP endpoint to your AI client (one URL, no API key):
 
