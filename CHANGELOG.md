@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0](https://github.com/rajanrx/outbox-md/compare/v0.10.1...v0.11.0) (2026-07-01)
+
+
+### Features
+
+* **ui:** GitHub-style diff viewer — word highlights, full-screen, side-by-side/inline ([3df3452](https://github.com/rajanrx/outbox-md/commit/3df3452c79332bc2abb58c810ef9ca77e7751a6e))
+* **ui:** GitHub-style diff viewer — word-level highlights, full-screen modal, side-by-side/inline toggle ([a77f4bf](https://github.com/rajanrx/outbox-md/commit/a77f4bf10f13a18b544df840ff32fee7a1fbd826))
+
 ## [0.10.1](https://github.com/rajanrx/outbox-md/compare/v0.10.0...v0.10.1) (2026-07-01)
 
 
