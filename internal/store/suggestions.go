@@ -43,3 +43,53 @@ func (s *Store) RejectSuggestionIfProposed(id string) error {
 		domain.SuggestionRejected, id, domain.SuggestionProposed)
 	return err
 }
+
+// PendingSuggestion is the read model for the folder view: one doc that has a
+// pending (proposed) suggestion, carrying the doc's current content and the
+// proposed replacement so the UI can render the same current-vs-proposed diff
+// it shows inline.
+type PendingSuggestion struct {
+	DocID     string `json:"docId"`
+	Path      string `json:"path"`
+	CommentID string `json:"commentId"`
+	Current   string `json:"current"`
+	Proposed  string `json:"proposed"`
+}
+
+// ListPendingSuggestions returns every comment across all docs whose latest
+// suggestion is still proposed AND whose comment is still 'addressed', paired
+// with the doc's current version content. Gating on comment status mirrors the
+// inline "This change" surface (rendered only when comment.status ===
+// "addressed"), so a comment the human has since resolved, replied to, or
+// detached — which can leave a stale 'proposed' suggestion row behind — no
+// longer lingers in the folder view. The "latest suggestion per comment"
+// subquery mirrors GetSuggestionByComment.
+func (s *Store) ListPendingSuggestions() ([]PendingSuggestion, error) {
+	rows, err := s.DB.Query(`
+		SELECT c.doc_id, d.path, s.comment_id, v.content, s.proposed_content
+		FROM suggestions s
+		JOIN comments c   ON c.id = s.comment_id
+		JOIN documents d  ON d.id = c.doc_id
+		JOIN versions v   ON v.id = d.current_version_id
+		WHERE s.state = ?
+		  AND c.status = ?
+		  AND s.id = (
+			SELECT id FROM suggestions s2
+			WHERE s2.comment_id = s.comment_id
+			ORDER BY created_at DESC LIMIT 1
+		  )
+		ORDER BY d.path`, domain.SuggestionProposed, domain.CommentAddressed)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []PendingSuggestion{}
+	for rows.Next() {
+		var p PendingSuggestion
+		if err := rows.Scan(&p.DocID, &p.Path, &p.CommentID, &p.Current, &p.Proposed); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}

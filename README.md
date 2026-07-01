@@ -75,6 +75,27 @@ docker build -t outbox-md .
 docker run --rm -p 8181:8181 -v "$PWD/specs:/data" outbox-md
 ```
 
+### Choosing which folders to serve (`sources`)
+
+By default outbox-md ingests **every** `.md` file under `OUTBOX_DIR`. To serve only
+part of a larger repo, list a whitelist of folders and/or globs (relative to
+`OUTBOX_DIR`) in `outbox.yaml` — paths are kept project-relative:
+
+```yaml
+# outbox.yaml (in your OUTBOX_DIR)
+sources:
+  - docs/specs        # a folder → walked recursively
+  - rfcs              # another folder
+  - drafts/*.md       # a glob → matched files only (non-recursive)
+```
+
+Omit `sources` (or leave it empty) to serve everything — the default. Entries that
+escape `OUTBOX_DIR` are rejected. `OUTBOX_SOURCES` (comma-separated) overrides the
+file, e.g. `OUTBOX_SOURCES=docs/specs,rfcs`. `sources` is enforced when serving too,
+not just on import: narrowing it hides out-of-whitelist docs from the UI, the HTTP
+API, and MCP agents (`list_open_comments`/`read_doc`) alike, without deleting their
+comments or history — widen it again and they reappear.
+
 ---
 
 ## 2. Connect your AI agent (MCP)
@@ -134,7 +155,7 @@ Resolving comments and approving documents stay **human-only** — agents can't 
 
 1. **You** open the doc, select a sentence, leave a comment. It joins the outbox (the doc is untouched).
 2. **Your agent** calls `list_open_comments`, `claim_comment`, then `propose_suggestion` (a tracked change) or `reply_in_thread`.
-3. **You** review the suggestion as an inline diff and **Accept** — the `.md` is rewritten and a new version recorded — or reply to push back. Each addressed comment shows a compact diff excerpt with a **See diff** button that opens a modal with the full single-file change. If the served folder is a git repo (mount the **repo root** so `.git` is visible inside the container), the modal also shows a GitHub-style diff of every changed `.md` file in the folder — read-only, outbox never writes to git. Otherwise the modal is single-file only.
+3. **You** review the suggestion as an inline diff and **Accept** — the `.md` is rewritten and a new version recorded — or reply to push back. Each addressed comment shows a compact diff excerpt with a **See diff** button that opens a modal with the full single-file change. The modal's **Folder changes** tab lists every other doc across the project that currently has a pending suggestion, each rendered as its own current-vs-proposed diff — built entirely from outbox-md's own data (no git required), so it always works. Approve still applies just the one suggestion you opened.
 4. When a spec is ready, **Approve** it to pin a baseline. After that, edits become **tracked amendments** that need re-approval, so an approved doc is never silently changed.
 5. **History** shows the full decision log — who commented, proposed, edited, and approved, and why.
 

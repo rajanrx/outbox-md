@@ -78,6 +78,37 @@ func TestLoadWebhookFromYAML(t *testing.T) {
 	}
 }
 
+func TestLoadSourcesFromYAML(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "sources:\n  - specs\n  - drafts/*.md\n")
+	got := Load(dir).Sources
+	want := []string{"specs", "drafts/*.md"}
+	if len(got) != len(want) {
+		t.Fatalf("sources = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("sources = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestLoadSourcesDefaultEmpty(t *testing.T) {
+	if s := Load(t.TempDir()).Sources; len(s) != 0 {
+		t.Fatalf("sources = %v, want empty (serve everything)", s)
+	}
+}
+
+func TestLoadSourcesEnvOverride(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "sources:\n  - specs\n")
+	t.Setenv("OUTBOX_SOURCES", "a, b/*.md ,")
+	got := Load(dir).Sources
+	if len(got) != 2 || got[0] != "a" || got[1] != "b/*.md" {
+		t.Fatalf("sources = %v, want env override [a b/*.md] (trimmed, empties dropped)", got)
+	}
+}
+
 func TestLoadWebhookEnvOverrides(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "webhook:\n  url: http://file/hook\n")

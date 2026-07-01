@@ -3,6 +3,7 @@ package mcp
 import (
 	"testing"
 
+	"github.com/rajanrx/outbox-md/internal/config"
 	"github.com/rajanrx/outbox-md/internal/domain"
 	"github.com/rajanrx/outbox-md/internal/service"
 	"github.com/rajanrx/outbox-md/internal/store"
@@ -67,6 +68,54 @@ func TestListOpenCommentsExposesExcerptAndThread(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("Thread missing human feedback: %+v", oc.Thread)
+	}
+}
+
+// P1: the sources whitelist must gate the MCP surface too — an agent must not
+// see open comments on, or read by id, a doc outside the active whitelist.
+func TestMCPSurfaceRespectsSourcesWhitelist(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := service.New(s, func(_, _ string) error { return nil })
+	svc.SetConfig(config.Config{Sources: []string{"docs/specs"}})
+	h := &Handlers{Svc: svc, St: s}
+
+	inDoc, _, _ := s.CreateDocument("docs/specs/in.md", "hello world", "human")
+	outDoc, _, _ := s.CreateDocument("other/out.md", "secret world", "human")
+	if _, err := svc.PostComment(inDoc.ID, domain.Anchor{Start: 0, End: 5}, "human"); err != nil {
+		t.Fatal(err)
+	}
+	outC, err := svc.PostComment(outDoc.ID, domain.Anchor{Start: 0, End: 6}, "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// list_open_comments surfaces only the in-whitelist comment.
+	open, err := h.ListOpenComments()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(open) != 1 || open[0].DocPath != "docs/specs/in.md" {
+		t.Fatalf("ListOpenComments = %+v, want only docs/specs/in.md", open)
+	}
+
+	// read_doc refuses the out-of-whitelist doc but still serves the in one.
+	if _, err := h.ReadDoc(outDoc.ID); err == nil {
+		t.Fatal("ReadDoc on out-of-whitelist doc: want error, got nil")
+	}
+	if _, err := h.ReadDoc(inDoc.ID); err != nil {
+		t.Fatalf("ReadDoc on in-whitelist doc: unexpected error %v", err)
+	}
+
+	// Write handlers refuse the hidden-doc comment too — no discover-then-mutate.
+	if _, err := h.ClaimComment([]string{outC.ID}, "agent"); err == nil {
+		t.Fatal("ClaimComment on hidden-doc comment: want error, got nil")
+	}
+	if err := h.ReplyInThread(outC.ID, "tok", "hi", "agent"); err == nil {
+		t.Fatal("ReplyInThread on hidden-doc comment: want error, got nil")
+	}
+	if _, err := h.ProposeSuggestion(outC.ID, "tok", "x", "agent"); err == nil {
+		t.Fatal("ProposeSuggestion on hidden-doc comment: want error, got nil")
 	}
 }
 

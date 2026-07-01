@@ -1,30 +1,22 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
-	"github.com/rajanrx/outbox-md/internal/config"
 	"github.com/rajanrx/outbox-md/internal/domain"
-	gitsvc "github.com/rajanrx/outbox-md/internal/git"
 	"github.com/rajanrx/outbox-md/internal/service"
 	"github.com/rajanrx/outbox-md/internal/sse"
 	"github.com/rajanrx/outbox-md/internal/store"
 )
 
-// gitDiffTimeout bounds the read-only working-tree scan so a large or slow repo
-// can never hang the request; on timeout the endpoint returns an empty (but
-// enabled) result rather than blocking.
-const gitDiffTimeout = 5 * time.Second
-
-// NewAPI builds the JSON API. git may be nil (or a service whose HasGit() is
-// false), in which case the folder-diff feature is simply reported as disabled.
-func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub, git *gitsvc.Service) http.Handler {
+// NewAPI builds the JSON API.
+func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub) http.Handler {
 	mux := http.NewServeMux()
 
 	// SSE stream of governance events for live UI updates. The browser opens this
@@ -68,32 +60,42 @@ func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub, git *gitsvc.Ser
 	})
 
 	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, _ *http.Request) {
-		// Embed the loaded config and add the runtime-computed hasGit flag; the
-		// embedded struct's json fields (agent/approval/webhook) are promoted, so
-		// the shape is the config plus a single hasGit field.
-		writeJSON(w, struct {
-			config.Config
-			HasGit bool `json:"hasGit"`
-		}{Config: svc.Config(), HasGit: git.HasGit()}, nil)
+		writeJSON(w, svc.Config(), nil)
 	})
 
-	// Read-only folder diff: the working tree vs HEAD for every changed *.md file
-	// within the served directory, rendered with the same Row shape the frontend
-	// uses for single-file diffs. Disabled (enabled:false) when the served folder
-	// is not inside a git work tree. Best-effort and time-bounded — never panics.
-	mux.HandleFunc("GET /api/git/diff", func(w http.ResponseWriter, r *http.Request) {
-		defer func() {
-			if rec := recover(); rec != nil {
-				writeJSON(w, gitsvc.Result{Enabled: false, Files: []gitsvc.FileDiff{}}, nil)
+	// Read-only folder view built from outbox-md's OWN data: every doc across the
+	// project that currently has a pending (proposed) suggestion, each as a
+	// current-vs-proposed pair the UI renders with its single-file diff. No git —
+	// always available.
+	mux.HandleFunc("GET /api/suggestions/pending", func(w http.ResponseWriter, _ *http.Request) {
+		pending, err := st.ListPendingSuggestions()
+		if err == nil {
+			if cfg := svc.Config(); len(cfg.Sources) > 0 {
+				kept := pending[:0:0]
+				for _, p := range pending {
+					if cfg.Serves(p.Path) {
+						kept = append(kept, p)
+					}
+				}
+				pending = kept
 			}
-		}()
-		ctx, cancel := context.WithTimeout(r.Context(), gitDiffTimeout)
-		defer cancel()
-		writeJSON(w, git.Diff(ctx), nil)
+		}
+		writeJSON(w, pending, err)
 	})
 
 	mux.HandleFunc("GET /api/docs", func(w http.ResponseWriter, _ *http.Request) {
 		docs, err := st.ListDocuments()
+		if err == nil {
+			if cfg := svc.Config(); len(cfg.Sources) > 0 {
+				kept := docs[:0:0]
+				for _, d := range docs {
+					if cfg.Serves(d.Path) {
+						kept = append(kept, d)
+					}
+				}
+				docs = kept
+			}
+		}
 		writeJSON(w, docs, err)
 	})
 
@@ -219,6 +221,14 @@ func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub, git *gitsvc.Ser
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
+			// The route guard is path-based; these dev endpoints carry comment ids
+			// in the body, so enforce the whitelist here too.
+			for _, id := range in.CommentIDs {
+				if !commentDocServed(svc, st, id) {
+					http.Error(w, "not found", http.StatusNotFound)
+					return
+				}
+			}
 			tok, err := svc.Claim(in.CommentIDs, "dev-agent")
 			writeJSON(w, map[string]any{"token": tok}, err)
 		})
@@ -230,6 +240,10 @@ func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub, git *gitsvc.Ser
 			}
 			if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if !commentDocServed(svc, st, in.CommentID) {
+				http.Error(w, "not found", http.StatusNotFound)
 				return
 			}
 			sg, err := svc.Propose(in.CommentID, in.Token, in.Content, "dev-agent")
@@ -307,7 +321,76 @@ func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub, git *gitsvc.Ser
 		writeJSON(w, map[string]any{"ok": true}, nil)
 	})
 
-	return mux
+	// Enforce the sources whitelist uniformly across every doc- and
+	// comment-scoped route (GET/POST /api/docs/{id}/…, /api/comments/{id}/…),
+	// so a stale hidden-doc id can't read or mutate through any single endpoint.
+	// A single guard wrapping the mux can't miss a route the way per-handler
+	// checks could. No-op (zero extra lookups) when no whitelist is configured.
+	return guardSources(mux, svc, st)
+}
+
+// guardSources 404s any doc- or comment-scoped request whose target doc is
+// outside the active sources whitelist, before the request reaches its handler.
+func guardSources(next http.Handler, svc *service.Service, st *store.Store) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if cfg := svc.Config(); len(cfg.Sources) > 0 {
+			if docPath, scoped := targetDocPath(st, r.URL.Path); scoped && !cfg.Serves(docPath) {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// targetDocPath resolves the doc path a request targets when the path is
+// doc-scoped (/api/docs/{id}…) or comment-scoped (/api/comments/{id}…).
+// scoped is true for those paths (even when the id is unknown — then docPath is
+// "", which Serves rejects, matching the 404 the handler would return anyway);
+// false for non-scoped paths (list, config, events, suggestions/pending), which
+// do their own filtering.
+func targetDocPath(st *store.Store, path string) (docPath string, scoped bool) {
+	idAfter := func(prefix string) (string, bool) {
+		if !strings.HasPrefix(path, prefix) {
+			return "", false
+		}
+		id, _, _ := strings.Cut(strings.TrimPrefix(path, prefix), "/")
+		return id, id != ""
+	}
+	if id, ok := idAfter("/api/docs/"); ok {
+		if doc, err := st.GetDocument(id); err == nil {
+			return doc.Path, true
+		}
+		return "", true
+	}
+	if id, ok := idAfter("/api/comments/"); ok {
+		if c, err := st.GetComment(id); err == nil {
+			if doc, err := st.GetDocument(c.DocID); err == nil {
+				return doc.Path, true
+			}
+		}
+		return "", true
+	}
+	return "", false
+}
+
+// commentDocServed reports whether commentID's parent doc is inside the active
+// sources whitelist. Used by the body-carrying dev endpoints, which the
+// path-based guardSources cannot reach. No whitelist → always true.
+func commentDocServed(svc *service.Service, st *store.Store, commentID string) bool {
+	cfg := svc.Config()
+	if len(cfg.Sources) == 0 {
+		return true
+	}
+	c, err := st.GetComment(commentID)
+	if err != nil {
+		return false
+	}
+	doc, err := st.GetDocument(c.DocID)
+	if err != nil {
+		return false
+	}
+	return cfg.Serves(doc.Path)
 }
 
 func writeJSON(w http.ResponseWriter, v any, err error) {
