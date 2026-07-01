@@ -116,6 +116,133 @@ func TestDevEndpointsRespectSources(t *testing.T) {
 	}
 }
 
+// PR #42 P2 regression: in MULTI-project mode the whitelist must be enforced at
+// SERVE time per project, not only at import. A doc imported under a broad config
+// and then hidden by narrowing that project's outbox.yaml sources must vanish
+// from every surface — the exact #35 regression, multi-mode. This mirrors the
+// runtime state after a narrow-then-restart: the excluded doc is already in the
+// store, and only the per-project sources guard hides it.
+func TestMultiProjectServeRespectsPerProjectSources(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := service.New(s, func(_, _, _ string) error { return nil })
+	// Project "web" is now narrowed to docs/specs — secret.md was imported earlier
+	// under a broader config and remains in the store.
+	svc.SetProjectSources(config.ProjectSources{
+		"web": config.Config{Sources: []string{"docs/specs"}},
+	})
+
+	inDoc, _, _ := s.CreateDocumentInProject("web", "docs/specs/in.md", "hello", "import")
+	secretDoc, secretVer, _ := s.CreateDocumentInProject("web", "secret.md", "top secret", "import")
+	secretC, _ := s.CreateComment(domain.Comment{
+		DocID: secretDoc.ID, AgainstVersionID: secretVer.ID, Anchor: domain.Anchor{Start: 0, End: 3},
+		AuthorIdentity: "human", Owner: "human", Status: domain.CommentOpen,
+	})
+	h := NewAPI(svc, s, sse.NewHub())
+
+	// /api/docs omits the narrowed-out doc.
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/docs", nil))
+	var docs []domain.Document
+	_ = json.Unmarshal(rec.Body.Bytes(), &docs)
+	if len(docs) != 1 || docs[0].ID != inDoc.ID {
+		t.Fatalf("/api/docs = %+v, want only docs/specs/in.md", docs)
+	}
+	// Direct doc read is hidden.
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/docs/"+secretDoc.ID, nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET narrowed-out doc = %d, want 404", rec.Code)
+	}
+	// Its comment thread is hidden.
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/comments/"+secretC.ID+"/thread", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET narrowed-out doc's comment thread = %d, want 404", rec.Code)
+	}
+	// The still-whitelisted doc stays reachable.
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/docs/"+inDoc.ID, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET whitelisted doc = %d, want 200", rec.Code)
+	}
+}
+
+// PR #42 P2: two projects with different whitelists must not leak into each
+// other — a path served in A but not B (and vice-versa) behaves per-project.
+func TestMultiProjectSourcesAreIsolatedPerProject(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := service.New(s, func(_, _, _ string) error { return nil })
+	svc.SetProjectSources(config.ProjectSources{
+		"A": config.Config{Sources: []string{"specs"}},
+		"B": config.Config{Sources: []string{"drafts"}},
+	})
+
+	// Same relative paths in both projects: each is served by exactly one.
+	aIn, _, _ := s.CreateDocumentInProject("A", "specs/x.md", "a-in", "import")   // served in A
+	aOut, _, _ := s.CreateDocumentInProject("A", "drafts/y.md", "a-out", "import") // NOT served in A
+	bIn, _, _ := s.CreateDocumentInProject("B", "drafts/y.md", "b-in", "import")   // served in B
+	bOut, _, _ := s.CreateDocumentInProject("B", "specs/x.md", "b-out", "import")  // NOT served in B
+	h := NewAPI(svc, s, sse.NewHub())
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/docs", nil))
+	var docs []domain.Document
+	_ = json.Unmarshal(rec.Body.Bytes(), &docs)
+	served := map[string]bool{}
+	for _, d := range docs {
+		served[d.ID] = true
+	}
+	if !served[aIn.ID] || !served[bIn.ID] {
+		t.Fatalf("/api/docs must include A:specs and B:drafts, got %+v", docs)
+	}
+	if served[aOut.ID] || served[bOut.ID] {
+		t.Fatalf("/api/docs must exclude A:drafts and B:specs (cross-project leak), got %+v", docs)
+	}
+	// Direct reads confirm per-project gating: same path, opposite verdict.
+	for _, tc := range []struct {
+		id   string
+		want int
+	}{
+		{aIn.ID, http.StatusOK}, {aOut.ID, http.StatusNotFound},
+		{bIn.ID, http.StatusOK}, {bOut.ID, http.StatusNotFound},
+	} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/docs/"+tc.id, nil))
+		if rec.Code != tc.want {
+			t.Fatalf("GET /api/docs/%s = %d, want %d", tc.id, rec.Code, tc.want)
+		}
+	}
+}
+
+// PR #42 P3: an orphaned doc whose project is no longer served (e.g. a removed
+// project) is treated as not served — hidden everywhere.
+func TestMultiProjectOrphanDocIsHidden(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := service.New(s, func(_, _, _ string) error { return nil })
+	svc.SetProjectSources(config.ProjectSources{
+		"live": config.Config{}, // serves everything under the live project
+	})
+	live, _, _ := s.CreateDocumentInProject("live", "a.md", "a", "import")
+	orphan, _, _ := s.CreateDocumentInProject("removed", "b.md", "b", "import")
+	h := NewAPI(svc, s, sse.NewHub())
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/docs", nil))
+	var docs []domain.Document
+	_ = json.Unmarshal(rec.Body.Bytes(), &docs)
+	if len(docs) != 1 || docs[0].ID != live.ID {
+		t.Fatalf("/api/docs = %+v, want only the live project's doc", docs)
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/docs/"+orphan.ID, nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET orphaned (removed-project) doc = %d, want 404", rec.Code)
+	}
+}
+
 // Empty/absent sources serves everything (backward-compatible).
 func TestServeEmptySourcesServesAll(t *testing.T) {
 	s, _ := store.Open(":memory:")

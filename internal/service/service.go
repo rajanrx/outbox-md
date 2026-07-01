@@ -40,6 +40,13 @@ type Service struct {
 	cfg       config.Config
 	notify    webhook.Notifier
 	projects  []registry.Project
+	// projectSources, when non-nil, is the per-project runtime sources map built
+	// by the server at startup (single-folder mode is a single "" entry carrying
+	// the real cfg). It drives the read guards so each project's Sources whitelist
+	// is enforced against its OWN docs. When nil — e.g. tests that only call
+	// SetConfig — the guards fall back to the single global cfg, preserving the
+	// pre-multi-project single-whitelist semantics.
+	projectSources config.ProjectSources
 }
 
 func New(st *store.Store, writeFile func(project, path, content string) error) *Service {
@@ -116,6 +123,32 @@ func (s *Service) unresolvedCount(docID string) (int, error) {
 
 // Config returns the effective configuration (read-only view for the API).
 func (s *Service) Config() config.Config { return s.cfg }
+
+// SetProjectSources installs the per-project runtime sources map (built once at
+// startup). Leaving it unset keeps the guards on the single global cfg.
+func (s *Service) SetProjectSources(m config.ProjectSources) { s.projectSources = m }
+
+// ProjectServes reports whether docPath in the given project is inside that
+// project's active sources whitelist. With a per-project map it resolves the
+// project's own cfg (an unknown project → hidden, so orphaned docs stay
+// hidden). Without one (map nil) it falls back to the single global cfg, so
+// existing single-config callers and tests behave exactly as before.
+func (s *Service) ProjectServes(project, docPath string) bool {
+	if s.projectSources != nil {
+		return s.projectSources.Serves(project, docPath)
+	}
+	return s.cfg.Serves(docPath)
+}
+
+// SourcesRestricted reports whether the sources guards must run. It is false
+// only for single-folder mode with no whitelist — the zero-extra-lookup fast
+// path where every doc is served and the guard would be a pure no-op.
+func (s *Service) SourcesRestricted() bool {
+	if s.projectSources != nil {
+		return s.projectSources.Restricted()
+	}
+	return len(s.cfg.Sources) > 0
+}
 
 func (s *Service) PostComment(docID string, a domain.Anchor, author string) (domain.Comment, error) {
 	doc, err := s.store.GetDocument(docID)

@@ -436,8 +436,9 @@ func buildServer(root string, projects []registry.Project) (http.Handler, error)
 	cfg := config.Load(root)
 	if multi {
 		// Only webhook + auto_update are global (loaded from root). Sources are
-		// per-project, enforced at import time below — so the root's sources must
-		// NOT leak into the runtime whitelist that gates every project's docs.
+		// per-project (see the per-project map below) — so the root's sources must
+		// NOT leak into the global cfg surfaced at /api/config. The runtime guards
+		// read the per-project map, not cfg.Sources.
 		cfg.Sources = nil
 	}
 	svc.SetConfig(cfg)
@@ -446,16 +447,26 @@ func buildServer(root string, projects []registry.Project) (http.Handler, error)
 	// (webhook) and every open browser stream (SSE hub).
 	hub := sse.NewHub()
 	svc.SetWebhook(webhook.Fanout(webhook.New(cfg.Webhook), hub))
+	// Per-project runtime sources: each served project → its OWN loaded config, so
+	// the read guards enforce that project's Sources whitelist against its own
+	// docs. This makes the #35 runtime guard project-aware — narrowing a project's
+	// outbox.yaml sources hides its previously-imported docs on every surface
+	// (UI/HTTP/MCP), not just at import. Single-folder mode is one entry keyed ""
+	// carrying the real cfg, so single-dir behaviour is bit-for-bit unchanged.
+	sources := make(config.ProjectSources, len(projects))
 	// Import every project under its own name, honouring that project's own
 	// sources whitelist. Single-folder mode imports under the empty project.
 	for _, p := range projects {
 		if err := ensureDataDir(p.Path); err != nil {
 			return nil, err
 		}
-		if err := importMarkdown(st, p.Name, p.Path, config.Load(p.Path).Sources); err != nil {
+		pcfg := config.Load(p.Path)
+		sources[p.Name] = pcfg
+		if err := importMarkdown(st, p.Name, p.Path, pcfg.Sources); err != nil {
 			return nil, err
 		}
 	}
+	svc.SetProjectSources(sources)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
