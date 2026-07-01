@@ -64,7 +64,7 @@ docker run --rm -p 8181:8181 -v "$PWD/specs:/data" outbox-md
 | `outbox up` | Serve the review UI + MCP, then open the browser (the everyday command). |
 | `outbox serve` | Same, without opening a browser (what the Docker image runs by default). |
 | `outbox init` | Scaffold `outbox.yaml` and auto-register the MCP endpoint with every detected AI client (see [Supported clients](#supported-clients)). Flags: `-client <slug>` (repeatable) to target specific clients; `-all` to write configs for every client even if not installed. |
-| `outbox add <root> <docs...>` · `remove` · `list` | Register / unregister / list projects. `<root>` is the repo root; **at least one `docs` subpath is required** (`.` = the whole repo). See [Multiple projects](#multiple-projects). `projects` aliases `list`. |
+| `outbox add <root> <docs...>` · `remove` · `list` | Register / unregister / list projects. `<root>` is the repo root; **at least one `docs` subpath is required** (`.` = the whole repo). **`outbox remove`** with no argument is an interactive **multiselect** (tick projects/docs to drop); `outbox remove <name>` removes a whole project non-interactively. See [Multiple projects](#multiple-projects). `projects` aliases `list`. |
 | `outbox paths` | Print the resolved on-disk locations (registry, review database, `outbox.yaml`) for the current mode. |
 | `outbox settings [<key> <value>]` | View or change the structured `outbox.yaml` fields (`auto_update`, `auto_reply`). No args → interactive walkthrough (Enter keeps current, non-TTY prints current settings and exits); `<key> <value>` sets one directly. Needs an existing `outbox.yaml` — run `outbox init` first. |
 | `outbox upgrade` | Update to the latest release (self-update). Homebrew installs update with `brew update && brew upgrade outbox-md` instead; Docker via image pull. |
@@ -171,9 +171,12 @@ outbox add ~/work/api docs/specs          # serve only api/docs/specs
 outbox add ~/work/api specs api-specs     # serve TWO subpaths as one project (their union)
 outbox add ~/work/api docs/specs --agent codex   # …and let THIS project auto-reply with codex
 outbox list                               # list registered projects (alias: outbox projects)
-outbox remove app                         # unregister by name or by root path
+outbox remove                             # interactive multiselect: tick projects/docs to drop
+outbox remove app                         # non-interactive: remove the whole project "app"
 outbox up                                 # serve ALL registered projects; switch in the UI
 ```
+
+**Removing projects (or individual docs).** `outbox remove` with **no argument** opens an interactive **multiselect**: every project and each of its `docs` entries is a tickable row (e.g. `app · docs/specs`, `app · api-specs`). **Space** toggles a row, **enter** confirms, **q**/**esc** cancels. The ticked docs entries are removed, and a project whose **last** docs entry is removed is **dropped entirely** — so you can prune a single subpath without unregistering the whole project. `outbox remove <name>` (or a root path) removes a whole project non-interactively (the back-compatible shortcut) and is the form to use in scripts; with no terminal and no argument, `remove` prints a hint and exits non-zero rather than hanging.
 
 **Add positionals & flags:**
 
@@ -312,3 +315,5 @@ webhook:
 </details>
 
 **Live updates (SSE).** Independently of webhooks, the browser stays live over a **Server-Sent Events** stream (`GET /api/events`) with zero config — comments, replies, resolutions, approvals, *and* the agent's own writes (`comment.updated`, `suggestion.proposed`) all appear without a refresh. On a dropped connection the browser reconnects and a slow background poll (~15s) covers any gap.
+
+**Live file reload.** A filesystem watcher tracks each served project's spec folders, so a `.md` file you **create, edit, or delete on disk** shows up in the review UI automatically — no restart. The change fans out on the same SSE stream (`docs.changed`), updating the file list; it never triggers the auto-reply agent. Live reload is best-effort — if the watcher can't start, the server still serves, just without it.
