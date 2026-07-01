@@ -14,7 +14,24 @@ This appends a `Signed-off-by: Your Name <you@example.com>` trailer. PRs without
 
 ## Commit messages
 
-Use [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`, `ci:`, `build:`.
+Use [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`, `ci:`, `build:`. These drive automated releases (below), so the prefix matters:
+
+| Prefix | Version effect |
+|---|---|
+| `fix: …` | patch (`0.1.1` → `0.1.2`) |
+| `feat: …` | minor (`0.1.1` → `0.2.0`) |
+| `feat!: …` or a `BREAKING CHANGE:` footer | major |
+| `docs:` `chore:` `ci:` `test:` `refactor:` `build:` | no release on their own (still listed in the changelog) |
+
+## Releases
+
+Releases are automated with [release-please](https://github.com/googleapis/release-please) — no manual tagging or hand-written notes:
+
+1. Merge PRs to `main` with conventional-commit messages.
+2. release-please opens/updates a rolling **"Release PR"** that bumps the version and updates `CHANGELOG.md`.
+3. Merge the Release PR → it tags `vX.Y.Z`, creates a GitHub Release, and the same workflow builds + pushes the multi-arch image to `rajanrauniyar/outbox-md` (`:X.Y.Z`, `:X.Y`, `:latest`).
+
+A manual one-off publish is still available via the **docker-publish** workflow's *Run workflow* button, or by pushing a `v*` tag yourself.
 
 ## Running the project
 
