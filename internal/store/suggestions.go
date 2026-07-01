@@ -58,13 +58,15 @@ type PendingSuggestion struct {
 }
 
 // ListPendingSuggestions returns every comment across all docs whose latest
-// suggestion is still proposed AND whose comment is still 'addressed', paired
-// with the doc's current version content. Gating on comment status mirrors the
-// inline "This change" surface (rendered only when comment.status ===
-// "addressed"), so a comment the human has since resolved, replied to, or
-// detached — which can leave a stale 'proposed' suggestion row behind — no
-// longer lingers in the folder view. The "latest suggestion per comment"
-// subquery mirrors GetSuggestionByComment.
+// suggestion is still proposed AND whose comment is NOT terminal
+// (resolved/detached), paired with the doc's current version content. Gating on
+// a live proposed suggestion — rather than requiring comment.status ==
+// "addressed" — mirrors the inline diff surface: a comment can hold a live
+// suggestion while its status is open/claimed/addressed/replied (e.g. an agent
+// that both proposed a suggestion and replied leaves the comment 'replied'),
+// and that diff must still show. Only terminal comments (resolved/detached),
+// which can leave a stale 'proposed' suggestion row behind, are excluded. The
+// "latest suggestion per comment" subquery mirrors GetSuggestionByComment.
 func (s *Store) ListPendingSuggestions() ([]PendingSuggestion, error) {
 	rows, err := s.DB.Query(`
 		SELECT c.doc_id, d.project, d.path, s.comment_id, v.content, s.proposed_content
@@ -73,13 +75,13 @@ func (s *Store) ListPendingSuggestions() ([]PendingSuggestion, error) {
 		JOIN documents d  ON d.id = c.doc_id
 		JOIN versions v   ON v.id = d.current_version_id
 		WHERE s.state = ?
-		  AND c.status = ?
+		  AND c.status NOT IN (?, ?)
 		  AND s.id = (
 			SELECT id FROM suggestions s2
 			WHERE s2.comment_id = s.comment_id
 			ORDER BY created_at DESC LIMIT 1
 		  )
-		ORDER BY d.path`, domain.SuggestionProposed, domain.CommentAddressed)
+		ORDER BY d.path`, domain.SuggestionProposed, domain.CommentResolved, domain.CommentDetached)
 	if err != nil {
 		return nil, err
 	}
