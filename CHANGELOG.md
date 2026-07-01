@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0](https://github.com/rajanrx/outbox-md/compare/outbox-md-v0.7.0...outbox-md-v0.8.0) (2026-07-01)
+
+
+### Features
+
+* multi-project registry + switcher (MVP) ([5a503cb](https://github.com/rajanrx/outbox-md/commit/5a503cb997ba8e62dd41a27578cdd3b8c7dd9213))
+* multi-project registry + switcher (MVP) ([27c30dd](https://github.com/rajanrx/outbox-md/commit/27c30ddb69898dfff368bc992a73a32f26a3fd80))
+
+
+### Bug Fixes
+
+* **api:** per-project runtime sources guard in multi mode (post-[#42](https://github.com/rajanrx/outbox-md/issues/42) P1) ([476eee6](https://github.com/rajanrx/outbox-md/commit/476eee63f84720e55047fab764244f0b6fdaa5d4))
+* **api:** per-project runtime sources guard in multi mode (PR [#42](https://github.com/rajanrx/outbox-md/issues/42) P2) ([61b0d56](https://github.com/rajanrx/outbox-md/commit/61b0d56b69c56807f2dec03780e69d3a74d90bb0))
+
 ## [0.7.0](https://github.com/rajanrx/outbox-md/compare/outbox-md-v0.6.0...outbox-md-v0.7.0) (2026-07-01)
 
 
