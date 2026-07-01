@@ -63,7 +63,7 @@ http://localhost:8181/mcp
 | `outbox up --auto-reply` | Same, plus a **hands-off** in-process agent that replies to your comments automatically — opt-in, reuses your Claude CLI subscription (no API cost), reacts only to your comments. See [Setup](SETUP.md#hands-off-auto-reply-in-process-no-runner). |
 | `outbox serve` | Same, without opening a browser (the default with no arguments; what the Docker image runs). |
 | `outbox init` | Scaffold `outbox.yaml` and register the MCP with your installed AI client(s) in this folder. |
-| `outbox add [path]` · `remove` · `projects` | Register / unregister / list projects — review several folders from one server. |
+| `outbox add <root> [docs] [--agent <preset>]` · `remove` · `list` | Register / unregister / list projects (each a repo `root` + spec `docs` subpath + optional per-project `agent`) — review several projects from one server, switch in the UI. `projects` is an alias for `list`. |
 | `outbox upgrade` | Update to the latest release (self-update). |
 | `outbox version` · `outbox help` | Print the version / usage. |
 

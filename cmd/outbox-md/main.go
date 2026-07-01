@@ -16,6 +16,7 @@ import (
 	"syscall"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/rajanrx/outbox-md/internal/agentpreset"
 	"github.com/rajanrx/outbox-md/internal/api"
 	"github.com/rajanrx/outbox-md/internal/autoreply"
 	"github.com/rajanrx/outbox-md/internal/config"
@@ -45,6 +46,17 @@ func safeJoin(dir, path string) (string, error) {
 	rel, err := filepath.Rel(dir, target)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
 		return "", fmt.Errorf("refusing to write outside managed dir: %q", path)
+	}
+	// Defense in depth: if target resolves (an existing dir/file, not a glob),
+	// re-check containment on the symlink-resolved paths — a symlinked component
+	// can escape dir while passing the lexical check. Skip when it can't resolve
+	// (globs / not-yet-created paths); the lexical guard above still applies there.
+	if rt, e1 := filepath.EvalSymlinks(target); e1 == nil {
+		if rd, e2 := filepath.EvalSymlinks(dir); e2 == nil {
+			if r, e3 := filepath.Rel(rd, rt); e3 != nil || r == ".." || strings.HasPrefix(r, ".."+string(os.PathSeparator)) {
+				return "", fmt.Errorf("refusing to write outside managed dir: %q", path)
+			}
+		}
 	}
 	return target, nil
 }
@@ -264,7 +276,7 @@ func run(args []string, out io.Writer) error {
 		return addProject(rest, out)
 	case "remove":
 		return removeProject(rest, out)
-	case "projects":
+	case "list", "projects":
 		return listProjectsCmd(out)
 	case "upgrade":
 		return upgrade(out)
@@ -290,9 +302,9 @@ Commands:
   serve      Serve the review UI + MCP endpoint for a folder of .md files (default)
   up         Serve, then open the browser at the review UI
   init       Scaffold outbox.yaml + auto-register the MCP with detected AI clients
-  add        Register a project folder (default: current directory)
-  remove     Unregister a project by name or path
-  projects   List registered projects
+  add        Register a project: outbox add <root> [docs] [--agent|--agent-cmd]
+  remove     Unregister a project by name or root
+  list       List registered projects (alias: projects)
   upgrade    Update outbox to the latest release (self-update)
   version    Print the version
   help       Show this help
@@ -312,9 +324,19 @@ Getting started:
   outbox init && outbox up
 
 Multiple projects:
-  outbox add ~/work/specs     # register a folder located anywhere on disk
-  outbox add ~/work/rfcs      # register another
-  outbox up                   # serve ALL registered projects; switch in the UI
+  outbox add ~/work/app              # serve the whole repo (docs default ".")
+  outbox add ~/work/app docs/specs   # serve only the docs/specs subpath of the repo
+  outbox add ~/work/api --agent codex   # this project's auto-reply uses codex
+  outbox up                          # serve ALL registered projects; switch in the UI
+
+Add flags:
+  <root>        project repo root (required positional, default ".")
+  [docs]        spec subpath under root (optional positional, default ".")
+  --agent       per-project agent preset: claude, codex, copilot
+  --agent-cmd   per-project agent command with a {prompt} token (overrides --agent)
+
+Auto-reply spawns the agent with cwd = the comment's project ROOT and that
+project's agent command, so it runs inside that repo (its CLAUDE.md/.mcp.json).
 `)
 }
 
@@ -376,7 +398,7 @@ func resolveProjects(dir string) []registry.Project {
 	if projects, err := registry.Load(registryPath()); err == nil && len(projects) > 0 {
 		return projects
 	}
-	return []registry.Project{{Name: "", Path: dir}}
+	return []registry.Project{{Name: "", Root: dir, Docs: "."}}
 }
 
 // describeProjects renders a short human summary of what is being served, for the
@@ -429,10 +451,11 @@ func buildServer(root string, projects []registry.Project, autoReplyFlag bool) (
 		return nil, err
 	}
 
-	// Route a document's disk write to its project's folder, keyed by project name.
+	// Route a document's disk write to its project's spec dir (root/docs), keyed
+	// by project name.
 	dirByProject := make(map[string]string, len(projects))
 	for _, p := range projects {
-		dirByProject[p.Name] = p.Path
+		dirByProject[p.Name] = p.SpecDir()
 	}
 	svc := service.New(st, func(project, path, content string) error {
 		base, ok := dirByProject[project]
@@ -461,9 +484,9 @@ func buildServer(root string, projects []registry.Project, autoReplyFlag bool) (
 	// auto-reply engine that spawns the agent CLI on each human comment.
 	hub := sse.NewHub()
 	sinks := []webhook.Notifier{webhook.New(cfg.Webhook), hub}
-	if engine := autoReplyNotifier(root, cfg, autoReplyFlag); engine != nil {
+	if engine := autoReplyNotifier(root, projects, cfg, autoReplyFlag); engine != nil {
 		sinks = append(sinks, engine)
-		log.Printf("auto-reply: on (agent: %s)", cfg.AgentCmd)
+		log.Printf("auto-reply: on (default agent: %s; per-project roots + agents from the registry)", cfg.AgentCmd)
 	}
 	svc.SetWebhook(webhook.Fanout(sinks...))
 	// Per-project runtime sources: each served project → its OWN loaded config, so
@@ -476,12 +499,13 @@ func buildServer(root string, projects []registry.Project, autoReplyFlag bool) (
 	// Import every project under its own name, honouring that project's own
 	// sources whitelist. Single-folder mode imports under the empty project.
 	for _, p := range projects {
-		if err := ensureDataDir(p.Path); err != nil {
+		specDir := p.SpecDir()
+		if err := ensureDataDir(specDir); err != nil {
 			return nil, err
 		}
-		pcfg := config.Load(p.Path)
+		pcfg := config.Load(specDir)
 		sources[p.Name] = pcfg
-		if err := importMarkdown(st, p.Name, p.Path, pcfg.Sources); err != nil {
+		if err := importMarkdown(st, p.Name, specDir, pcfg.Sources); err != nil {
 			return nil, err
 		}
 	}
@@ -512,15 +536,26 @@ func buildServer(root string, projects []registry.Project, autoReplyFlag bool) (
 // on. Precedence is flag > config: the -auto-reply flag forces it on regardless
 // of config (it only turns ON), otherwise cfg.AutoReply (auto_reply yaml /
 // OUTBOX_AUTO_REPLY env / default false) decides. root is the served dir used as
-// the spawned agent's working directory.
-func autoReplyNotifier(root string, cfg config.Config, flagOn bool) webhook.Notifier {
+// the default (fallback) working directory; each project overrides it with its
+// own root + agent command (see the Targets map).
+func autoReplyNotifier(root string, projects []registry.Project, cfg config.Config, flagOn bool) webhook.Notifier {
 	if !(flagOn || cfg.AutoReply) {
 		return nil
+	}
+	// Build a project → {root, agentCmd} map from the registry. A triggering
+	// comment resolves to its project's ROOT (so the agent runs inside that repo,
+	// seeing its CLAUDE.md/.mcp.json/codebase) and that project's agent command
+	// (empty ⇒ the global default below). Single-folder mode is one entry keyed ""
+	// whose root is the served dir — preserving the original single-cwd behaviour.
+	targets := make(map[string]autoreply.Target, len(projects))
+	for _, p := range projects {
+		targets[p.Name] = autoreply.Target{Root: p.Root, AgentCmd: p.Agent}
 	}
 	return autoreply.New(autoreply.Config{
 		Enabled:  true,
 		Dir:      root,
 		AgentCmd: cfg.AgentCmd,
+		Targets:  targets,
 	})
 }
 
@@ -693,24 +728,61 @@ func configHomeDir() string {
 // registryPath is the global projects-registry file, under the config home.
 func registryPath() string { return filepath.Join(configHomeDir(), "projects.json") }
 
-// addProject registers a folder as a project. With no argument it registers the
-// current directory. The folder must exist; registration is idempotent by path
-// and names are kept unique (see registry.Add).
+// addProject registers a project: `outbox add <root> [docs] [--agent <preset> |
+// --agent-cmd <cmd>]`. root (required, default ".") is the project repo root;
+// docs (optional positional, default ".") is the spec subpath under root. The
+// per-project agent command is resolved from --agent-cmd (an explicit command
+// with a {prompt} token, which wins) or --agent (a preset name); when neither is
+// given the project uses the global default at auto-reply time. Registration is
+// idempotent by (root, docs) and names are kept unique (see registry.Add).
 func addProject(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("add", flag.ContinueOnError)
 	fs.SetOutput(out)
-	if err := fs.Parse(args); err != nil {
-		return err
+	agentPreset := fs.String("agent", "", "per-project agent preset: "+strings.Join(agentpreset.Names(), ", "))
+	agentCmd := fs.String("agent-cmd", "", "per-project agent command with a {prompt} token (overrides --agent)")
+	// Go's flag package stops at the first positional, so `add <root> <docs>
+	// --agent x` would ignore the trailing flag. Parse in a loop, peeling off one
+	// positional at a time and re-parsing the remainder, so flags may appear
+	// anywhere (before, between, or after the positionals).
+	var positionals []string
+	rest := args
+	for {
+		if err := fs.Parse(rest); err != nil {
+			return err
+		}
+		if fs.NArg() == 0 {
+			break
+		}
+		positionals = append(positionals, fs.Arg(0))
+		rest = fs.Args()[1:]
 	}
-	dir := "."
-	if fs.NArg() > 0 {
-		dir = fs.Arg(0)
+	root := "."
+	if len(positionals) > 0 {
+		root = positionals[0]
 	}
-	p, err := registry.Add(registryPath(), dir)
+	docs := "."
+	if len(positionals) > 1 {
+		docs = positionals[1]
+	}
+	// Resolve the agent command: --agent-cmd (explicit) wins over --agent (preset);
+	// empty when neither is set (the project inherits the global default).
+	agent := strings.TrimSpace(*agentCmd)
+	if agent == "" && strings.TrimSpace(*agentPreset) != "" {
+		resolved, err := agentpreset.ResolveOrError(strings.TrimSpace(*agentPreset))
+		if err != nil {
+			return err
+		}
+		agent = resolved
+	}
+	p, err := registry.Add(registryPath(), root, docs, agent)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "registered project %q → %s\n", p.Name, p.Path)
+	fmt.Fprintf(out, "registered project %q → %s (docs: %s)", p.Name, p.Root, p.Docs)
+	if p.Agent != "" {
+		fmt.Fprintf(out, " [agent: %s]", p.Agent)
+	}
+	fmt.Fprintln(out)
 	return nil
 }
 
@@ -748,7 +820,15 @@ func listProjectsCmd(out io.Writer) error {
 		return nil
 	}
 	for _, p := range projects {
-		fmt.Fprintf(out, "%s\t%s\n", p.Name, p.Path)
+		loc := p.Root
+		if p.Docs != "" && p.Docs != "." {
+			loc = p.Root + "/" + p.Docs
+		}
+		line := fmt.Sprintf("%s\t%s", p.Name, loc)
+		if p.Agent != "" {
+			line += "\t[" + p.Agent + "]"
+		}
+		fmt.Fprintln(out, line)
 	}
 	return nil
 }

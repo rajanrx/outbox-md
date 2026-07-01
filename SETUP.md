@@ -154,33 +154,36 @@ Resolving comments and approving documents stay **human-only** — agents can't 
 
 ## Multiple projects
 
-Each running `outbox` serves **one folder on one port** (`:8181` by default). Two ways to review more than one project today:
+Register any number of projects **anywhere on disk** in a global registry, then serve them all from one `outbox up` and switch between them with the in-UI project switcher. Each registry entry is a **`{name, root, docs, agent}`** record:
 
-**A. One folder per project, on separate ports** — simplest for a couple of projects:
-
-```bash
-cd ~/project-a && outbox up                 # → http://localhost:8181
-cd ~/project-b && outbox up --addr :8182    # → http://localhost:8182
-```
-
-Each is its own server, browser tab, and MCP registration.
-
-**B. One server over a parent folder** — best when your projects live together. Serve the parent and list each project's docs in a single `outbox.yaml`:
-
-```yaml
-# ~/reviews/outbox.yaml
-sources:
-  - project-a/docs
-  - project-b/specs
-```
+- **`root`** — the project's repo root (absolute). This is the working directory the [auto-reply](#hands-off-auto-reply-in-process-no-runner) agent is spawned in, so it sees that repo's `CLAUDE.md` / `.mcp.json` / codebase.
+- **`docs`** — the spec subpath **relative to `root`** whose `.md` files are served (`.` = the whole root). Must resolve to a directory under `root`; traversal is rejected.
+- **`agent`** — an optional per-project agent command, so different projects can use different AIs. Empty ⇒ the global default command.
+- **`name`** — the label shown in the switcher; it's `basename(root)` (e.g. `outbox-md`), disambiguated (`outbox-md`, `outbox-md-2`) on collision.
 
 ```bash
-cd ~/reviews && outbox up    # one UI, one MCP, both projects visible
+outbox add ~/work/app                    # serve the whole repo (docs defaults to ".")
+outbox add ~/work/api docs/specs         # serve only api/docs/specs
+outbox add ~/work/api docs/specs --agent codex   # …and let THIS project auto-reply with codex
+outbox list                              # list registered projects (alias: outbox projects)
+outbox remove app                        # unregister by name or by root path
+outbox up                                # serve ALL registered projects; switch in the UI
 ```
 
-> **Note:** `sources` paths must live **under** the served folder — the whitelist deliberately can't reach outside it. So option B needs your projects inside (or symlinked into) that one parent folder.
->
-> A first-class **project switcher** — register projects anywhere on disk and switch in the UI — is on the roadmap.
+**Add flags:**
+
+| Flag | Meaning |
+|---|---|
+| `<root>` | project repo root (required positional, default `.`) |
+| `[docs]` | spec subpath under `root` (optional positional, default `.`) |
+| `--agent <preset>` | per-project agent preset: `claude`, `codex`, `copilot` |
+| `--agent-cmd "<cmd>"` | per-project agent command with a `{prompt}` token (overrides `--agent`) |
+
+Flags may appear before, between, or after the positionals. Each project keeps its **own** `outbox.yaml` (loaded from `root/docs`), so the [`sources`](#serving-part-of-a-repo-sources) whitelist is per-project. Registering the first project switches the DB to a shared store under the config home; a plain single-folder `outbox up` (no registry) is unchanged.
+
+**Older registries migrate automatically:** an entry written by a previous version as `{name, path}` loads as `{name, root: path, docs: ".", agent: ""}` and is rewritten in the new shape on the next change — nothing to do by hand.
+
+> Prefer isolated servers instead? You can still run one `outbox up` per folder on separate ports (`--addr :8182`), each its own browser tab and MCP registration.
 
 ---
 
@@ -232,6 +235,16 @@ agent_cmd: claude -p {prompt} --allowedTools mcp__outbox-md__*   # or OUTBOX_AGE
 ```
 
 Precedence is **`--auto-reply` flag > `auto_reply` (yaml/env) > default (off)**; the flag only forces it *on*. `agent_cmd` is the spawned command — `{prompt}` is replaced with the outbox instruction as a single argument (no shell). Triggers are **debounced** (~1.5s, so a burst of comments is one run) and **single-flight** (only one agent runs at a time; comments arriving mid-run schedule exactly one follow-up).
+
+**Per project.** With [multiple projects registered](#multiple-projects), a comment resolves to **its own** project and the agent is spawned with **`cwd = that project's root`** and **that project's `agent` command** (falling back to the global `agent_cmd` when the project has none). So a comment on project A runs the agent inside A's repo — seeing A's `CLAUDE.md` / `.mcp.json` / codebase — while project B can drive an entirely different AI. Each project has its **own** debounce + single-flight loop, so a burst on A and a burst on B run independently and never coalesce into one run that drops the other. Set a project's agent when registering it:
+
+```bash
+outbox add ~/work/app --agent claude        # A → Claude Code
+outbox add ~/work/api --agent codex         # B → Codex CLI
+outbox add ~/work/site --agent-cmd "my-agent run {prompt}"   # C → any command
+```
+
+Presets: **`claude`** (verified — the built-in default, reads outbox-md's MCP via `--allowedTools`), **`codex`** and **`copilot`** (assumed defaults for the OpenAI Codex / GitHub Copilot CLIs — each reads its own MCP config; adjust with `--agent-cmd` if your invocation differs).
 
 Crucially, it reacts **only to your comments** (`comment.created` / `comment.replied`) — **never to its own** replies or suggestions — so the agent can't re-trigger itself into a loop. Resolving and approving stay human-only.
 

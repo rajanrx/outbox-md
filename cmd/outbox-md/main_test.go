@@ -382,7 +382,7 @@ func TestBuildServerMultiWiresPerProjectSourcesGuard(t *testing.T) {
 	_ = seed.Close()
 
 	// A single named project forces multi mode (DB at configHomeDir).
-	h, err := buildServer(projDir, []registry.Project{{Name: "proj", Path: projDir}}, false)
+	h, err := buildServer(projDir, []registry.Project{{Name: "proj", Root: projDir, Docs: "."}}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -445,13 +445,13 @@ func TestResolveFlagsAutoReply(t *testing.T) {
 
 func TestAutoReplyNotifierOffByDefault(t *testing.T) {
 	// Neither flag nor config → no engine wired.
-	if n := autoReplyNotifier(t.TempDir(), config.Config{}, false); n != nil {
+	if n := autoReplyNotifier(t.TempDir(), nil, config.Config{}, false); n != nil {
 		t.Fatal("autoReplyNotifier should be nil when off (no flag, no config)")
 	}
 }
 
 func TestAutoReplyNotifierFlagForcesOn(t *testing.T) {
-	n := autoReplyNotifier(t.TempDir(), config.Config{AutoReply: false}, true)
+	n := autoReplyNotifier(t.TempDir(), nil, config.Config{AutoReply: false}, true)
 	if n == nil {
 		t.Fatal("the -auto-reply flag should force an engine even when config is false")
 	}
@@ -461,11 +461,94 @@ func TestAutoReplyNotifierFlagForcesOn(t *testing.T) {
 }
 
 func TestAutoReplyNotifierConfigEnables(t *testing.T) {
-	n := autoReplyNotifier(t.TempDir(), config.Config{AutoReply: true}, false)
+	n := autoReplyNotifier(t.TempDir(), nil, config.Config{AutoReply: true}, false)
 	if n == nil {
 		t.Fatal("auto_reply: true in config should wire an engine without the flag")
 	}
 	if !n.Enabled() {
 		t.Fatal("wired engine should report Enabled() true")
+	}
+}
+
+// TestAddAndListProjects covers `outbox add <root> [docs] --agent <preset>`
+// registering a project, and both `outbox list` and its `outbox projects` alias
+// printing the entry (name → root/docs [agent]).
+func TestAddAndListProjects(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "docs", "specs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// add with a docs subpath and a codex preset.
+	var addOut bytes.Buffer
+	if err := run([]string{"add", root, "docs/specs", "--agent", "codex"}, &addOut); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if !strings.Contains(addOut.String(), "docs/specs") || !strings.Contains(addOut.String(), "codex exec {prompt}") {
+		t.Fatalf("add output missing docs/agent:\n%s", addOut.String())
+	}
+
+	wantName := filepath.Base(root)
+	// `list` prints the entry.
+	var listOut bytes.Buffer
+	if err := run([]string{"list"}, &listOut); err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if !strings.Contains(listOut.String(), wantName) ||
+		!strings.Contains(listOut.String(), "docs/specs") ||
+		!strings.Contains(listOut.String(), "codex exec {prompt}") {
+		t.Fatalf("list output missing entry fields:\n%s", listOut.String())
+	}
+
+	// `projects` is an alias: identical output.
+	var projOut bytes.Buffer
+	if err := run([]string{"projects"}, &projOut); err != nil {
+		t.Fatalf("projects: %v", err)
+	}
+	if projOut.String() != listOut.String() {
+		t.Fatalf("projects alias output %q != list output %q", projOut.String(), listOut.String())
+	}
+}
+
+// TestAddRejectsDocsTraversal ensures the add command surfaces a docs-escapes-root
+// rejection from the registry rather than registering it.
+func TestAddRejectsDocsTraversal(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	root := t.TempDir()
+	var out bytes.Buffer
+	if err := run([]string{"add", root, "../escape"}, &out); err == nil {
+		t.Fatal("add with a traversing docs subpath should error")
+	}
+}
+
+// TestAddAgentCmdOverridesPreset verifies --agent-cmd wins over --agent: the
+// stored per-project agent command is the explicit --agent-cmd string, not the
+// preset it would otherwise resolve.
+func TestAddAgentCmdOverridesPreset(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	root := t.TempDir()
+
+	var out bytes.Buffer
+	if err := run([]string{"add", root, "--agent", "claude", "--agent-cmd", "custom {prompt}"}, &out); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if !strings.Contains(out.String(), "custom {prompt}") {
+		t.Fatalf("add output should use the --agent-cmd override:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "--allowedTools") {
+		t.Fatalf("add output must NOT use the claude preset when --agent-cmd is set:\n%s", out.String())
+	}
+	// Confirm the stored registry entry carries the explicit command.
+	list, err := registry.List(filepath.Join(home, ".config", "outbox", "projects.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].Agent != "custom {prompt}" {
+		t.Fatalf("stored agent = %+v, want custom {prompt}", list)
 	}
 }

@@ -3,10 +3,18 @@
 // a parameter (the CLI resolves that path from the user config dir), so the core
 // is trivially unit-testable against a temp file and never touches global state.
 //
-// A registry entry is a {name, path} pair. name is a short label (the folder's
-// basename, disambiguated on collision); path is the absolute folder on disk. The
-// pair (name → path) is what the server uses to route a project's docs and disk
-// writes, so names MUST be unique — Add enforces that.
+// A registry entry is a {name, root, docs, agent} record. name is a short label
+// (the project root's basename, disambiguated on collision); root is the absolute
+// project repo root on disk; docs is the spec subpath relative to root (default
+// "." = serve the whole root); agent is an optional per-project agent command
+// (empty ⇒ use the global default). The pair (name → root/docs) is what the
+// server uses to route a project's docs and disk writes, so names MUST be
+// unique — Add enforces that. agent is the command the auto-reply engine spawns
+// for THIS project (in root), letting different projects use different AIs.
+//
+// Back-compat: an older entry was {name, path}. Load migrates it in-place to
+// {name: name (== basename(path)), root: path, docs: ".", agent: ""} so existing
+// registries keep working; the new shape is written on the next Save.
 package registry
 
 import (
@@ -14,17 +22,72 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
-// Project is one registered folder outbox-md can serve.
+// Project is one registered project outbox-md can serve.
 type Project struct {
 	Name string `json:"name"`
-	Path string `json:"path"`
+	// Root is the absolute project repo root on disk. It is the cwd the auto-reply
+	// engine spawns the agent in (so the agent sees the repo's CLAUDE.md/.mcp.json/
+	// codebase).
+	Root string `json:"root"`
+	// Docs is the spec subpath relative to Root ("." = the whole root). The server
+	// serves, imports, and write-routes filepath.Join(Root, Docs).
+	Docs string `json:"docs"`
+	// Agent is the optional per-project agent command template ({prompt} token).
+	// Empty ⇒ the auto-reply engine falls back to the global default command.
+	Agent string `json:"agent,omitempty"`
+}
+
+// SpecDir is the directory whose .md files are served: Root joined with Docs.
+// Docs defaults to "." so a project with no subpath serves its whole root.
+func (p Project) SpecDir() string {
+	docs := p.Docs
+	if docs == "" {
+		docs = "."
+	}
+	return filepath.Join(p.Root, docs)
+}
+
+// UnmarshalJSON reads either the current {name,root,docs,agent} shape or the
+// legacy {name,path} shape, migrating the latter: root ← path, docs ← "." when
+// absent. It is tolerant so a registry written by an older outbox keeps working.
+func (p *Project) UnmarshalJSON(b []byte) error {
+	var raw struct {
+		Name  string `json:"name"`
+		Root  string `json:"root"`
+		Path  string `json:"path"` // legacy field
+		Docs  string `json:"docs"`
+		Agent string `json:"agent"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	p.Name = raw.Name
+	p.Root = raw.Root
+	p.Docs = raw.Docs
+	p.Agent = raw.Agent
+	// Legacy {name,path}: adopt path as the root when no root was recorded.
+	if p.Root == "" && raw.Path != "" {
+		p.Root = raw.Path
+	}
+	if p.Docs == "" {
+		p.Docs = "."
+	}
+	// Preserve a stored name (already unique in an older registry); only derive a
+	// basename when the record carried none. Recomputing basename blindly would
+	// collapse two disambiguated entries (docs, docs-2) back to one name.
+	if p.Name == "" && p.Root != "" {
+		p.Name = filepath.Base(p.Root)
+	}
+	return nil
 }
 
 // Load reads the registry from file. A missing file is not an error — it yields
 // an empty list (the common first-run case). A present-but-malformed file is a
-// real error the caller should surface rather than silently discard.
+// real error the caller should surface rather than silently discard. Legacy
+// {name,path} entries are migrated on read (see Project.UnmarshalJSON).
 func Load(file string) ([]Project, error) {
 	data, err := os.ReadFile(file)
 	if err != nil {
@@ -44,7 +107,8 @@ func Load(file string) ([]Project, error) {
 }
 
 // Save writes projects to file (pretty-printed, trailing newline), creating the
-// parent directory if needed. It replaces the file wholesale.
+// parent directory if needed. It replaces the file wholesale, always in the new
+// {name,root,docs,agent} shape.
 func Save(file string, projects []Project) error {
 	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
 		return err
@@ -59,43 +123,81 @@ func Save(file string, projects []Project) error {
 	return os.WriteFile(file, append(b, '\n'), 0o644)
 }
 
-// Add registers dir as a project. It resolves dir to an absolute path and
-// requires it to be an existing directory (a missing path or a file is an
-// error — the most common mistake). Registration is idempotent by PATH: adding
-// an already-registered folder returns the existing entry and does not duplicate
-// it. The entry's name is the folder basename, disambiguated ("docs", "docs-2",
-// …) when a DIFFERENT path already holds that name, because the server routes
-// disk writes by name — a name collision across two folders would misroute a
-// write, so names are kept unique.
-func Add(file, dir string) (Project, error) {
-	abs, err := filepath.Abs(dir)
+// Add registers a project rooted at root, serving the docs subpath (relative to
+// root; "." serves the whole root). root is resolved to an absolute path and
+// must be an existing directory; docs must resolve to an existing directory
+// UNDER root (traversal is rejected). agentCmd, when non-empty, is stored as this
+// project's per-project agent command. Registration is idempotent by (root,docs):
+// re-adding the same pair returns the existing entry unchanged. The entry's name
+// is basename(root), disambiguated ("outbox-md", "outbox-md-2", …) when a
+// DIFFERENT entry already holds that name, because the server routes disk writes
+// by name.
+func Add(file, root, docs, agentCmd string) (Project, error) {
+	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return Project{}, err
 	}
-	fi, err := os.Stat(abs)
+	fi, err := os.Stat(absRoot)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return Project{}, fmt.Errorf("cannot add %q: no such directory", dir)
+			return Project{}, fmt.Errorf("cannot add %q: no such directory", root)
 		}
 		return Project{}, err
 	}
 	if !fi.IsDir() {
-		return Project{}, fmt.Errorf("cannot add %q: not a directory", dir)
+		return Project{}, fmt.Errorf("cannot add %q: not a directory", root)
+	}
+
+	docs = strings.TrimSpace(docs)
+	if docs == "" {
+		docs = "."
+	}
+	docs = filepath.Clean(docs)
+	if filepath.IsAbs(docs) {
+		return Project{}, fmt.Errorf("cannot add: docs %q must be relative to the project root", docs)
+	}
+	specDir := filepath.Join(absRoot, docs)
+	sfi, err := os.Stat(specDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return Project{}, fmt.Errorf("cannot add: docs %q is not a directory under %s", docs, absRoot)
+		}
+		return Project{}, err
+	}
+	if !sfi.IsDir() {
+		return Project{}, fmt.Errorf("cannot add: docs %q is not a directory", docs)
+	}
+	// Containment on the RESOLVED paths, not just lexically: a symlinked component
+	// in docs (or in root) can escape root while passing a ../ check. EvalSymlinks
+	// BOTH sides — resolving only one false-positives on macOS /tmp→/private/tmp.
+	resolvedRoot, err := filepath.EvalSymlinks(absRoot)
+	if err != nil {
+		return Project{}, err
+	}
+	resolvedSpec, err := filepath.EvalSymlinks(specDir)
+	if err != nil {
+		return Project{}, err
+	}
+	rel, err := filepath.Rel(resolvedRoot, resolvedSpec)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return Project{}, fmt.Errorf("cannot add: docs %q escapes the project root", docs)
 	}
 
 	projects, err := Load(file)
 	if err != nil {
 		return Project{}, err
 	}
-	// Dedupe by path: already registered → return the existing entry unchanged.
+	// Dedupe by (root, docs): the same project already registered → return it
+	// unchanged (idempotent), even if agentCmd differs, so a re-add never
+	// duplicates.
 	for _, p := range projects {
-		if p.Path == abs {
+		if p.Root == absRoot && p.Docs == docs {
 			return p, nil
 		}
 	}
 
-	name := uniqueName(filepath.Base(abs), projects)
-	p := Project{Name: name, Path: abs}
+	name := uniqueName(filepath.Base(absRoot), projects)
+	p := Project{Name: name, Root: absRoot, Docs: docs, Agent: agentCmd}
 	projects = append(projects, p)
 	if err := Save(file, projects); err != nil {
 		return Project{}, err
@@ -124,10 +226,11 @@ func uniqueName(base string, existing []Project) string {
 	}
 }
 
-// Remove unregisters every project whose name OR path matches ref (ref is
-// resolved to an absolute path before the path comparison, so a relative path
-// works too). It returns whether anything was removed. Removing an unknown ref
-// is not an error — it simply removes nothing.
+// Remove unregisters every project whose name OR root matches ref (ref is
+// resolved to an absolute path before the root comparison, so a relative path
+// works too; the raw ref is also compared so a name still matches). It returns
+// whether anything was removed. Removing an unknown ref is not an error — it
+// simply removes nothing.
 func Remove(file, ref string) (bool, error) {
 	projects, err := Load(file)
 	if err != nil {
@@ -140,7 +243,7 @@ func Remove(file, ref string) (bool, error) {
 	kept := make([]Project, 0, len(projects))
 	removed := false
 	for _, p := range projects {
-		if p.Name == ref || p.Path == ref || p.Path == absRef {
+		if p.Name == ref || p.Root == ref || p.Root == absRef {
 			removed = true
 			continue
 		}
