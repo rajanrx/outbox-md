@@ -61,11 +61,13 @@ http://localhost:8181/mcp
 |---|---|
 | `outbox up` | Serve the review UI + MCP, then open it in your browser (the everyday command). |
 | `outbox up --auto-reply` | Same, plus a **hands-off** in-process agent that replies to your comments automatically — opt-in, reuses your Claude CLI subscription (no API cost), reacts only to your comments. See [Setup](SETUP.md#hands-off-auto-reply-in-process-no-runner). |
-| `outbox serve` | Same, without opening a browser (the default with no arguments; what the Docker image runs). |
+| `outbox serve` | Same, without opening a browser (what the Docker image runs by default). |
 | `outbox init` | Scaffold `outbox.yaml` and register the MCP with your installed AI client(s) in this folder. |
-| `outbox add <root> [docs] [--agent <preset>]` · `remove` · `list` | Register / unregister / list projects (each a repo `root` + spec `docs` subpath + optional per-project `agent`) — review several projects from one server, switch in the UI. `projects` is an alias for `list`. |
-| `outbox upgrade` | Update to the latest release (self-update). |
-| `outbox version` · `outbox help` | Print the version / usage. |
+| `outbox add <root> <docs...> [--agent <preset>]` · `remove` · `list` | Register / unregister / list projects — review several projects from one server, switch in the UI. `<root>` is the repo root and **at least one `docs` subpath is required** (use `.` to serve the whole repo, e.g. `outbox add ~/my-specs-repo .`); pass several to serve their union (`outbox add ~/work/app specs api-specs`). Each project also takes an optional per-project `agent`. `projects` is an alias for `list`. |
+| `outbox paths` | Print the resolved on-disk locations (registry, review database, `outbox.yaml`) for the current mode. |
+| `outbox settings [<key> <value>]` | View or change the structured `outbox.yaml` fields (`auto_update`, `auto_reply`). No args → interactive walkthrough (Enter keeps current); `<key> <value>` sets one directly. |
+| `outbox upgrade` | Update to the latest release (self-update). Homebrew installs update with `brew update && brew upgrade outbox-md`; Docker via image pull. |
+| `outbox version` · `outbox help [<command>]` | Print the version / usage. Bare `outbox` (no arguments) also prints help; `outbox help <command>` shows one command's flags and examples. |
 
 `serve` and `up` take `-dir` (folder to serve, default `.`), `-addr` (listen address, default `:8181`), and `-auto-reply` (opt-in hands-off agent, default off). Precedence is **flag > `OUTBOX_DIR` / `OUTBOX_ADDR` / `OUTBOX_AUTO_REPLY` env > default**.
 
