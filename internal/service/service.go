@@ -23,6 +23,13 @@ var ErrNoCandidateSet = errors.New("no candidate set for comment")
 // re-marks (heartbeats) to extend it.
 const DefaultProcessingTTL = 180 * time.Second
 
+// ReceivedTTL is the lifetime of the instant "received" ack a runner records the
+// moment a webhook lands — before any agent claims the comment. It is shorter
+// than DefaultProcessingTTL: it only has to bridge the gap until the claiming
+// agent calls mark_processing (which extends the hint to the full run window),
+// so if the agent never shows up the badge self-clears quickly.
+const ReceivedTTL = 30 * time.Second
+
 type Service struct {
 	store     *store.Store
 	writeFile func(path, content string) error
@@ -148,6 +155,29 @@ func (s *Service) MarkProcessing(commentID, token string, ttl time.Duration) (ti
 		ttl = DefaultProcessingTTL
 	}
 	until := time.Now().UTC().Add(ttl)
+	if err := s.store.SetProcessingUntil(commentID, &until); err != nil {
+		return time.Time{}, err
+	}
+	s.fireCommentEvent(webhook.EventCommentProcessing, c)
+	return until, nil
+}
+
+// MarkReceived records the runner's instant "received" ack: it sets the
+// ephemeral processing hint on commentID for ReceivedTTL so the human sees the
+// "AI processing…" badge within ~1s of a webhook — and even if the agent dies
+// before it ever claims. Unlike MarkProcessing it is deliberately UNTOKENED: at
+// this point no agent has claimed the comment yet, so there is no claim token to
+// present. It loads the comment (to build the event payload and to reject an
+// unknown id), sets ProcessingUntil = now+ReceivedTTL, fires the browser-only
+// comment.processing SSE event (absent from the webhook default set, so this ack
+// never re-triggers the runner), and returns the deadline. The tokened
+// MarkProcessing then extends this once the agent is actually working.
+func (s *Service) MarkReceived(commentID string) (time.Time, error) {
+	c, err := s.store.GetComment(commentID)
+	if err != nil {
+		return time.Time{}, err
+	}
+	until := time.Now().UTC().Add(ReceivedTTL)
 	if err := s.store.SetProcessingUntil(commentID, &until); err != nil {
 		return time.Time{}, err
 	}

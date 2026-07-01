@@ -38,6 +38,10 @@ type Config struct {
 
 	// MCPURL is the outbox-md Streamable-HTTP MCP endpoint (api mode).
 	MCPURL string
+	// ServerURL is the outbox-md HTTP API base (RUNNER_SERVER_URL), used for the
+	// best-effort "received" ack so the human sees the processing badge instantly.
+	// Defaults to OUTBOX_MCP_URL with a trailing "/mcp" stripped (→ http://localhost:8181).
+	ServerURL string
 	// APIKey is the Anthropic API key (api mode). Empty ⇒ api mode errors.
 	APIKey string
 	// Model is the Anthropic model id (api mode), overridable so the reference
@@ -114,6 +118,7 @@ func LoadConfig() Config {
 		AgentCmd:      env("RUNNER_AGENT_CMD", DefaultAgentCmd),
 		Prompt:        env("RUNNER_PROMPT", DefaultPrompt),
 		MCPURL:        env("OUTBOX_MCP_URL", "http://localhost:8181/mcp"),
+		ServerURL:     env("RUNNER_SERVER_URL", strings.TrimSuffix(env("OUTBOX_MCP_URL", "http://localhost:8181/mcp"), "/mcp")),
 		APIKey:        os.Getenv("ANTHROPIC_API_KEY"),
 		Model:         env("ANTHROPIC_MODEL", "claude-sonnet-4-5"),
 		AgentID:       env("RUNNER_AGENT_ID", "outbox-runner"),

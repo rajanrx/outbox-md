@@ -52,6 +52,8 @@ class Config:
     agent_cmd: str = DEFAULT_AGENT_CMD
     prompt: str = DEFAULT_PROMPT
     mcp_url: str = "http://localhost:8181/mcp"
+    # outbox-md HTTP API base for the best-effort "received" ack.
+    server_url: str = "http://localhost:8181"
     api_key: str = ""
     model: str = "claude-sonnet-4-5"
     agent_id: str = "outbox-runner"
@@ -81,6 +83,11 @@ def load_config() -> Config:
         agent_cmd=_env("RUNNER_AGENT_CMD", DEFAULT_AGENT_CMD),
         prompt=_env("RUNNER_PROMPT", DEFAULT_PROMPT),
         mcp_url=_env("OUTBOX_MCP_URL", "http://localhost:8181/mcp"),
+        # Defaults to the MCP URL with a trailing "/mcp" stripped (→ http://localhost:8181).
+        server_url=_env(
+            "RUNNER_SERVER_URL",
+            _env("OUTBOX_MCP_URL", "http://localhost:8181/mcp").removesuffix("/mcp"),
+        ),
         api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
         model=_env("ANTHROPIC_MODEL", "claude-sonnet-4-5"),
         agent_id=_env("RUNNER_AGENT_ID", "outbox-runner"),

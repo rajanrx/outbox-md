@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -163,9 +164,60 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, "ignored\n")
 		return
 	}
+	// Acknowledge receipt to the server BEFORE the debounced spawn so the human's
+	// "AI processing…" badge appears within ~1s — even if the agent later dies
+	// before it claims. Best-effort and non-fatal: it runs off this goroutine and
+	// its failure never blocks or fails webhook handling or the run below.
+	s.ackReceived(event, body)
 	s.runner.Trigger()
 	w.WriteHeader(http.StatusAccepted)
 	_, _ = io.WriteString(w, "accepted\n")
+}
+
+// commentID pulls the comment id from a webhook payload body. Missing/invalid →
+// empty string (the caller then skips the ack).
+func commentID(body []byte) string {
+	var p struct {
+		CommentID string `json:"commentId"`
+	}
+	_ = json.Unmarshal(body, &p)
+	return p.CommentID
+}
+
+// ackReceived fires a best-effort, fire-and-forget POST to the server's untokened
+// /received endpoint for the comment carried by an event that can create/refresh
+// a comment (comment.created / comment.replied). It runs in its own goroutine
+// with a short timeout; any failure is logged at most and never propagates. It is
+// a no-op when the event carries no comment, no server URL is configured, or the
+// payload has no comment id.
+func (s *Server) ackReceived(event string, body []byte) {
+	if event != "comment.created" && event != "comment.replied" {
+		return
+	}
+	if s.cfg.ServerURL == "" {
+		return
+	}
+	id := commentID(body)
+	if id == "" {
+		return
+	}
+	url := strings.TrimRight(s.cfg.ServerURL, "/") + "/api/comments/" + id + "/received"
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+		if err != nil {
+			log.Printf("runner: received-ack build failed: %v", err)
+			return
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			log.Printf("runner: received-ack POST failed: %v", err)
+			return
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
 }
 
 // Handler returns the runner's HTTP handler (webhook at "/", health at

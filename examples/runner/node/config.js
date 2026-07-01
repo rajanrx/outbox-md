@@ -54,6 +54,9 @@ export function loadConfig() {
     agentCmd: env("RUNNER_AGENT_CMD", DEFAULT_AGENT_CMD),
     prompt: env("RUNNER_PROMPT", DEFAULT_PROMPT),
     mcpUrl: env("OUTBOX_MCP_URL", "http://localhost:8181/mcp"),
+    // outbox-md HTTP API base for the best-effort "received" ack. Defaults to the
+    // MCP URL with a trailing "/mcp" stripped (→ http://localhost:8181).
+    serverUrl: env("RUNNER_SERVER_URL", env("OUTBOX_MCP_URL", "http://localhost:8181/mcp").replace(/\/mcp$/, "")),
     apiKey: process.env.ANTHROPIC_API_KEY || "",
     model: env("ANTHROPIC_MODEL", "claude-sonnet-4-5"),
     agentId: env("RUNNER_AGENT_ID", "outbox-runner"),
