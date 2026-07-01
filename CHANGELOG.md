@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0](https://github.com/rajanrx/outbox-md/compare/outbox-md-v0.3.0...outbox-md-v0.4.0) (2026-07-01)
+
+
+### Features
+
+* **ops:** turnkey deploy layer — Makefile, service units, deploy docs ([70ea8b8](https://github.com/rajanrx/outbox-md/commit/70ea8b8685b164d14b55890d89f10c6895948e62))
+* **ops:** turnkey deploy layer — Makefile, service units, deploy docs ([0a4aff4](https://github.com/rajanrx/outbox-md/commit/0a4aff42bf1cb8ad6c139d9e0530d0ecbfa2e760))
+
 ## [0.3.0](https://github.com/rajanrx/outbox-md/compare/outbox-md-v0.2.0...outbox-md-v0.3.0) (2026-07-01)
 
 
