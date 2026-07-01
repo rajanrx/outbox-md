@@ -694,6 +694,40 @@ func TestSettingsRequiresInit(t *testing.T) {
 	}
 }
 
+// TestSettingsOnCommentsOnlyInitFile is the documented happy path: `outbox init`
+// scaffolds a comments-only outbox.yaml (no real keys), and `outbox settings
+// <key> <value>` on it must succeed (not error on "not a mapping"), add the key,
+// and preserve the starter comments.
+func TestSettingsOnCommentsOnlyInitFile(t *testing.T) {
+	dir := t.TempDir()
+	restore := chdir(t, dir)
+	defer restore()
+	// starterConfig is exactly what `outbox init` writes — all comments, no keys.
+	if err := os.WriteFile("outbox.yaml", []byte(starterConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"settings", "auto_reply", "true"}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("settings on a comments-only init file should succeed, got: %v", err)
+	}
+	b, _ := os.ReadFile("outbox.yaml")
+	s := string(b)
+	if !strings.Contains(s, "auto_reply: true") {
+		t.Fatalf("auto_reply not written:\n%s", s)
+	}
+	// Starter guidance comments must survive the write.
+	if !strings.Contains(s, "# outbox.yaml") {
+		t.Fatalf("starter comments were clobbered:\n%s", s)
+	}
+	// A second set now sees a real mapping and appends the other key cleanly.
+	if err := run([]string{"settings", "auto_update", "false"}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("second settings set should succeed, got: %v", err)
+	}
+	b, _ = os.ReadFile("outbox.yaml")
+	if s := string(b); !strings.Contains(s, "auto_reply: true") || !strings.Contains(s, "auto_update: false") {
+		t.Fatalf("both keys should be present after two sets:\n%s", s)
+	}
+}
+
 // chdir changes to dir for the duration of a test, returning a restore func.
 func chdir(t *testing.T, dir string) func() {
 	t.Helper()

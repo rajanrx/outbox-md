@@ -278,13 +278,22 @@ func writeYAMLKey(path, key, value string) error {
 		return fmt.Errorf("outbox.yaml: %w", err)
 	}
 	root := documentRoot(&doc)
-	if root == nil {
-		// Empty or comments-only file: build a fresh mapping root.
-		root = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-		doc = yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{root}}
-	}
-	if root.Kind != yaml.MappingNode {
-		return fmt.Errorf("outbox.yaml: top-level YAML is not a mapping")
+	// A brand-new `outbox init` file is ALL comments — it unmarshals to an empty
+	// document or a null scalar, not a mapping (yaml.v3 doesn't surface the
+	// standalone comments on a re-marshallable node, so rebuilding the tree would
+	// wipe the starter guidance). For that nullish case, APPEND the key to the raw
+	// bytes: every original comment is preserved verbatim and the key is added.
+	// Only a genuinely non-mapping top level (e.g. a top-level list) is an error.
+	if !isMapping(root) {
+		if root != nil && !isNullish(root) {
+			return fmt.Errorf("outbox.yaml: top-level YAML is not a mapping")
+		}
+		out := data
+		if len(out) > 0 && out[len(out)-1] != '\n' {
+			out = append(out, '\n')
+		}
+		out = append(out, []byte(fmt.Sprintf("%s: %s\n", key, value))...)
+		return os.WriteFile(path, out, 0o644)
 	}
 	setScalarBool(root, key, value)
 
@@ -295,8 +304,8 @@ func writeYAMLKey(path, key, value string) error {
 	return os.WriteFile(path, b, 0o644)
 }
 
-// documentRoot returns the root mapping node of a parsed YAML document (the first
-// content node of a DocumentNode), or nil when the document is empty.
+// documentRoot returns the root node of a parsed YAML document (the first content
+// node of a DocumentNode), or nil when the document has no content.
 func documentRoot(doc *yaml.Node) *yaml.Node {
 	if doc.Kind == yaml.DocumentNode {
 		if len(doc.Content) == 0 {
@@ -305,6 +314,23 @@ func documentRoot(doc *yaml.Node) *yaml.Node {
 		return doc.Content[0]
 	}
 	return doc
+}
+
+// isMapping reports whether n is a usable mapping node.
+func isMapping(n *yaml.Node) bool { return n != nil && n.Kind == yaml.MappingNode }
+
+// isNullish reports whether n represents "no content" — a zero node or a null /
+// empty scalar (what a comment-only outbox.yaml unmarshals to). Such a root is
+// safe to replace/append to rather than erroring.
+func isNullish(n *yaml.Node) bool {
+	if n == nil || n.Kind == 0 {
+		return true
+	}
+	if n.Kind == yaml.ScalarNode {
+		v := strings.TrimSpace(n.Value)
+		return n.Tag == "!!null" || v == "" || v == "null" || v == "~"
+	}
+	return false
 }
 
 // setScalarBool sets key to a bool scalar (value must be "true"/"false") in the
