@@ -362,8 +362,10 @@ func TestRegisterDetectedWiresCorrectShapes(t *testing.T) {
 	assertJSONServer(t, m.files[geminiPath(m.env())], "httpUrl", testURL)
 	// Claude Desktop: mcp-remote bridge
 	assertJSONServer(t, m.files[claudeDesktopPath(m.env())], "command", "npx")
-	// Codex: TOML mcp-remote bridge — round-trip parse and assert the shape.
-	assertBridge(t, outboxServer(t, parseTOML(t, m.files[codexPath(m.env())])), testURL)
+	// Codex: native Streamable-HTTP url in TOML — round-trip parse and assert it.
+	if ob := outboxServer(t, parseTOML(t, m.files[codexPath(m.env())])); ob["url"] != testURL {
+		t.Errorf("codex url = %v, want %v", ob["url"], testURL)
+	}
 }
 
 // TestCodexRegisterFailsSafeOnUnparseableConfig proves the fail-safe path: an

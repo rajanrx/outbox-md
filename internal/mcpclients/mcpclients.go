@@ -180,7 +180,7 @@ func Clients() []Client {
 			Name:       "OpenAI Codex CLI",
 			detect:     func(env Env) bool { return env.CommandExists("codex") },
 			configPath: codexPath,
-			// Codex speaks stdio MCP over TOML config, so bridge with mcp-remote.
+			// Codex speaks native Streamable-HTTP MCP — write the url directly.
 			register: codexRegister,
 		},
 	}
@@ -327,7 +327,8 @@ func jsonRegister(pathFn func(Env) string, entryFn func(url string) map[string]a
 }
 
 // codexRegister merges the Codex TOML config, adding or replacing only the
-// [mcp_servers.outbox-md] table with the mcp-remote bridge. It parses the
+// [mcp_servers.outbox-md] table with the native HTTP url (Codex speaks
+// Streamable-HTTP MCP natively, so no mcp-remote/Node bridge is needed). It parses the
 // existing config with a real TOML library, so any spec-legal file (multi-line
 // strings, trailing header comments, inline/dotted-key table forms) is handled
 // correctly. If the existing file is present but is NOT valid TOML, it fails
@@ -339,7 +340,7 @@ func codexRegister(env Env, url string) (regOutcome, error) {
 	if err != nil {
 		return regOutcome{}, err
 	}
-	merged, err := MergeTOML(existing, serverName, mcpRemoteBridge(url))
+	merged, err := MergeTOML(existing, serverName, map[string]any{"url": url})
 	if err != nil {
 		return regOutcome{Detail: path}, fmt.Errorf(
 			"existing %s is not valid TOML — left untouched to avoid corrupting it; "+
@@ -354,7 +355,7 @@ func codexRegister(env Env, url string) (regOutcome, error) {
 // codexManualSnippet is the [mcp_servers.outbox-md] table a user can paste into
 // ~/.codex/config.toml by hand; printed on the fail-safe (unparseable) path.
 func codexManualSnippet(url string) string {
-	return fmt.Sprintf("[mcp_servers.%s]\ncommand = \"npx\"\nargs = [\"-y\", \"mcp-remote\", %q]\n", serverName, url)
+	return fmt.Sprintf("[mcp_servers.%s]\nurl = %q\n", serverName, url)
 }
 
 // readConfig reads path, treating a missing file as empty (nil) content. Any
