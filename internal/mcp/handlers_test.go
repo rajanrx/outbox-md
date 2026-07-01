@@ -85,7 +85,8 @@ func TestMCPSurfaceRespectsSourcesWhitelist(t *testing.T) {
 	if _, err := svc.PostComment(inDoc.ID, domain.Anchor{Start: 0, End: 5}, "human"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.PostComment(outDoc.ID, domain.Anchor{Start: 0, End: 6}, "human"); err != nil {
+	outC, err := svc.PostComment(outDoc.ID, domain.Anchor{Start: 0, End: 6}, "human")
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -104,6 +105,17 @@ func TestMCPSurfaceRespectsSourcesWhitelist(t *testing.T) {
 	}
 	if _, err := h.ReadDoc(inDoc.ID); err != nil {
 		t.Fatalf("ReadDoc on in-whitelist doc: unexpected error %v", err)
+	}
+
+	// Write handlers refuse the hidden-doc comment too — no discover-then-mutate.
+	if _, err := h.ClaimComment([]string{outC.ID}, "agent"); err == nil {
+		t.Fatal("ClaimComment on hidden-doc comment: want error, got nil")
+	}
+	if err := h.ReplyInThread(outC.ID, "tok", "hi", "agent"); err == nil {
+		t.Fatal("ReplyInThread on hidden-doc comment: want error, got nil")
+	}
+	if _, err := h.ProposeSuggestion(outC.ID, "tok", "x", "agent"); err == nil {
+		t.Fatal("ProposeSuggestion on hidden-doc comment: want error, got nil")
 	}
 }
 

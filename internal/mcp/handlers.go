@@ -72,15 +72,42 @@ func (h *Handlers) ListOpenComments() ([]OpenComment, error) {
 	return out, nil
 }
 
+// served reports whether commentID belongs to a doc inside the active sources
+// whitelist. An unknown comment or doc → false (deny), matching read_doc. Every
+// comment-scoped MCP write gates on this so an agent can neither discover
+// (list_open_comments/read_doc) nor mutate a hidden doc via a stale id.
+func (h *Handlers) served(commentID string) bool {
+	c, err := h.St.GetComment(commentID)
+	if err != nil {
+		return false
+	}
+	doc, err := h.St.GetDocument(c.DocID)
+	if err != nil {
+		return false
+	}
+	return h.Svc.Config().Serves(doc.Path)
+}
+
 func (h *Handlers) ClaimComment(ids []string, agent string) (string, error) {
+	for _, id := range ids {
+		if !h.served(id) {
+			return "", fmt.Errorf("comment %s not found", id)
+		}
+	}
 	return h.Svc.Claim(ids, agent)
 }
 
 func (h *Handlers) ProposeSuggestion(commentID, token, content, agent string) (domain.Suggestion, error) {
+	if !h.served(commentID) {
+		return domain.Suggestion{}, fmt.Errorf("comment %s not found", commentID)
+	}
 	return h.Svc.Propose(commentID, token, content, agent)
 }
 
 func (h *Handlers) ReplyInThread(commentID, token, body, agent string) error {
+	if !h.served(commentID) {
+		return fmt.Errorf("comment %s not found", commentID)
+	}
 	return h.Svc.Reply(commentID, token, body, agent)
 }
 
@@ -88,6 +115,9 @@ func (h *Handlers) ReplyInThread(commentID, token, body, agent string) error {
 // human sees it live. ttlSeconds <= 0 uses the service default; re-calling
 // heartbeats (extends) the deadline. Returns the deadline as RFC3339.
 func (h *Handlers) MarkProcessing(commentID, token string, ttlSeconds int) (string, error) {
+	if !h.served(commentID) {
+		return "", fmt.Errorf("comment %s not found", commentID)
+	}
 	until, err := h.Svc.MarkProcessing(commentID, token, time.Duration(ttlSeconds)*time.Second)
 	if err != nil {
 		return "", err
@@ -99,5 +129,8 @@ func (h *Handlers) MarkProcessing(commentID, token string, ttlSeconds int) (stri
 // member's review as a Candidate instead of a single baseline suggestion. It
 // never resolves or writes disk — picking/accepting stay human-only.
 func (h *Handlers) SubmitReview(commentID, token, lens, verdict, rationale, content, agentIdentity string) (domain.Candidate, error) {
+	if !h.served(commentID) {
+		return domain.Candidate{}, fmt.Errorf("comment %s not found", commentID)
+	}
 	return h.Svc.SubmitReview(commentID, token, lens, verdict, rationale, content, agentIdentity)
 }
