@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd user agent — keeps the outbox-md webhook runner alive on macOS
+  (RunAtLoad + KeepAlive) across logouts and reboots.
+
+  This is a TEMPLATE. Replace every __PLACEHOLDER__ below, then install it under
+  your own login session (NOT sudo) so the runner inherits your CLI auth
+  (~/.claude, keychain, etc.):
+
+      cp deploy/launchd/com.outbox-md.runner.plist \
+         ~/Library/LaunchAgents/com.outbox-md.runner.plist
+      # edit the copy: set __USER__, __REPO_DIR__, __SECRET__
+      launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.outbox-md.runner.plist
+      launchctl enable  gui/$(id -u)/com.outbox-md.runner
+      launchctl kickstart -k gui/$(id -u)/com.outbox-md.runner   # (re)start now
+
+  Stop / remove:
+      launchctl bootout gui/$(id -u)/com.outbox-md.runner
+
+  Placeholders:
+    __USER__     — your macOS short username (output of `whoami`)
+    __REPO_DIR__ — absolute path to your outbox-md checkout (e.g. /Users/you/outbox-md)
+    __SECRET__   — the shared HMAC secret (must match OUTBOX_WEBHOOK_SECRET on the server)
+
+  Swap the ProgramArguments for the go/node runner if you prefer:
+    go   → <string>/bin/sh</string><string>-c</string>
+           <string>cd examples/runner/go && exec go run .</string>
+    node → <string>/usr/bin/env</string><string>node</string>
+           <string>examples/runner/node/index.js</string>
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.outbox-md.runner</string>
+
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/bin/env</string>
+		<string>python3</string>
+		<string>examples/runner/python/main.py</string>
+	</array>
+
+	<key>WorkingDirectory</key>
+	<string>__REPO_DIR__</string>
+
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>OUTBOX_WEBHOOK_SECRET</key>
+		<string>__SECRET__</string>
+		<key>RUNNER_ADDR</key>
+		<string>:8787</string>
+		<!-- Optional: wrap the agent invocation for a corporate proxy / custom
+		     auth. Leave empty to use the runner's built-in default command. -->
+		<key>RUNNER_AGENT_CMD</key>
+		<string></string>
+		<!-- launchd starts login agents with a minimal PATH; add the dirs that
+		     hold your `claude`/`python3`/`go`/`node` binaries. -->
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+	</dict>
+
+	<key>UserName</key>
+	<string>__USER__</string>
+
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+
+	<key>StandardOutPath</key>
+	<string>__REPO_DIR__/runner.log</string>
+	<key>StandardErrorPath</key>
+	<string>__REPO_DIR__/runner.log</string>
+</dict>
+</plist>

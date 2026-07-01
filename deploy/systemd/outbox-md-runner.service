@@ -1,0 +1,45 @@
+# systemd --user unit — keeps the outbox-md webhook runner alive on Linux
+# (Restart=always) across logouts and reboots.
+#
+# This is a TEMPLATE. Replace every __PLACEHOLDER__ below, then install it as a
+# USER service (NOT system-wide, NOT sudo) so the runner inherits your CLI auth
+# (~/.claude, etc.):
+#
+#     mkdir -p ~/.config/systemd/user ~/.config/outbox-md
+#     cp deploy/systemd/outbox-md-runner.service ~/.config/systemd/user/
+#     # edit the copy: set __REPO_DIR__
+#     # create the env file (keeps the secret out of the unit):
+#     cat > ~/.config/outbox-md/runner.env <<'EOF'
+#     OUTBOX_WEBHOOK_SECRET=change-me
+#     RUNNER_ADDR=:8787
+#     # RUNNER_AGENT_CMD=   # optional: wrap the agent for a proxy — see deploy/README.md
+#     EOF
+#     systemctl --user daemon-reload
+#     systemctl --user enable --now outbox-md-runner
+#     journalctl --user -u outbox-md-runner -f      # logs
+#
+# Survive reboot without an active login session (optional):
+#     sudo loginctl enable-linger $(whoami)
+#
+# Placeholders:
+#   __REPO_DIR__ — absolute path to your outbox-md checkout (e.g. /home/you/outbox-md)
+#
+# Swap ExecStart for the go/node runner if you prefer:
+#   go   → ExecStart=/bin/sh -c 'cd examples/runner/go && exec go run .'
+#   node → ExecStart=/usr/bin/env node examples/runner/node/index.js
+
+[Unit]
+Description=outbox-md webhook runner
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__REPO_DIR__
+EnvironmentFile=%h/.config/outbox-md/runner.env
+ExecStart=/usr/bin/env python3 examples/runner/python/main.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
