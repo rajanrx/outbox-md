@@ -84,14 +84,14 @@ func NewServer(h *Handlers) *mcp.Server {
 	type markProcessingIn struct {
 		CommentID  string `json:"commentId"`
 		Token      string `json:"token" jsonschema:"the claim token from claim_comment"`
-		TTLSeconds int    `json:"ttlSeconds,omitempty" jsonschema:"how long the hint lives, in seconds; omit or <=0 for the 60s default"`
+		TTLSeconds int    `json:"ttlSeconds,omitempty" jsonschema:"how long the hint lives, in seconds; omit or <=0 for the 180s default"`
 	}
 	type markProcessingOut struct {
 		ProcessingUntil string `json:"processingUntil"`
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "mark_processing",
-		Description: "Mark a claimed comment as being worked on so the human sees an 'AI processing…' indicator. Call it right after claim_comment, and again to heartbeat on long runs. Ephemeral and self-expiring (default 60s): it writes no file and changes no status.",
+		Description: "Mark a claimed comment as being worked on so the human sees an 'AI processing…' indicator. Call it right after claim_comment, and again to heartbeat on long runs. Ephemeral and self-expiring (default 180s): it writes no file and changes no status.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in markProcessingIn) (*mcp.CallToolResult, markProcessingOut, error) {
 		until, err := h.MarkProcessing(in.CommentID, in.Token, in.TTLSeconds)
 		return nil, markProcessingOut{ProcessingUntil: until}, err
@@ -135,7 +135,7 @@ func NewServer(h *Handlers) *mcp.Server {
 const processOutboxGuidance = `You are processing the outbox for a Markdown spec in outbox-md. Work the queue IN ORDER and do not exceed the configured batch size.
 1. Call ` + "`list_open_comments`" + ` — each item includes the anchored ` + "`excerpt`" + ` (the text the human flagged) and the ` + "`thread`" + ` (their feedback).
 2. For a comment you'll act on, call ` + "`read_doc`" + ` for full context, then ` + "`claim_comment`" + ` to get a token.
-2b. Right after claiming, call ` + "`mark_processing`" + ` (with the comment id + token) so the human sees the comment is being worked on. On a long run, call it again periodically to heartbeat (it self-expires after ~60s). It writes nothing and resolves nothing — it's just a live "AI processing…" hint that clears when you reply/propose.
+2b. Right after claiming, call ` + "`mark_processing`" + ` (with the comment id + token) so the human sees the comment is being worked on. On a long run, call it again periodically to heartbeat (it self-expires after ~180s). It writes nothing and resolves nothing — it's just a live "AI processing…" hint that clears when you reply/propose.
 3. Respond with EITHER ` + "`propose_suggestion`" + ` (a tracked-change edit — provide the FULL replacement document content) OR ` + "`reply_in_thread`" + ` (to counter, clarify, or discuss) — using the claim token and your agent identity. In council mode, submit a lensed review with ` + "`submit_review`" + ` instead (its verdict/rationale and edit content become one candidate among N); the human picks.
 4. You CANNOT resolve comments, pick a candidate, or approve documents — those are human-only. Never attempt them.
 Keep edits minimal and faithful to the feedback; the human reviews every suggestion before it touches the file.`

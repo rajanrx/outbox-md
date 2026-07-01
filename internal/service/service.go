@@ -18,9 +18,10 @@ import (
 var ErrNoCandidateSet = errors.New("no candidate set for comment")
 
 // DefaultProcessingTTL is how long a processing hint lives when the caller does
-// not specify one. It is short by design: a dead agent's hint self-expires, and
-// a live one re-marks (heartbeats) to extend it.
-const DefaultProcessingTTL = 60 * time.Second
+// not specify one. It is bounded by design — long enough to cover a typical
+// agent run, short enough that a dead agent's hint self-expires; a live agent
+// re-marks (heartbeats) to extend it.
+const DefaultProcessingTTL = 180 * time.Second
 
 type Service struct {
 	store     *store.Store

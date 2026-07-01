@@ -286,7 +286,7 @@ func TestMarkProcessingRequiresToken(t *testing.T) {
 }
 
 // TestMarkProcessingSetsFutureDeadline: a valid mark sets ProcessingUntil in the
-// future, IsProcessing reads true, and a ttl <= 0 falls back to the 60s default.
+// future, IsProcessing reads true, and a ttl <= 0 falls back to the 180s default.
 func TestMarkProcessingSetsFutureDeadline(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
@@ -300,11 +300,11 @@ func TestMarkProcessingSetsFutureDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Default TTL is ~60s: the deadline must land close to now+60s (allow slack).
+	// Default TTL is ~180s: the deadline must land close to now+180s (allow slack).
 	wantMin := before.Add(DefaultProcessingTTL - time.Second)
 	wantMax := time.Now().Add(DefaultProcessingTTL + time.Second)
 	if until.Before(wantMin) || until.After(wantMax) {
-		t.Fatalf("deadline %v not within [%v, %v] for the 60s default", until, wantMin, wantMax)
+		t.Fatalf("deadline %v not within [%v, %v] for the 180s default", until, wantMin, wantMax)
 	}
 	got, _ := s.GetComment(c.ID)
 	if !got.IsProcessing(time.Now()) {
