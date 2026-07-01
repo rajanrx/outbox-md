@@ -15,7 +15,14 @@ Everything beyond the [README](README.md) quickstart: installing, connecting age
 
 ## Install
 
-**Binary (recommended — macOS + Linux, amd64 + arm64):**
+**Homebrew (macOS + Linux):**
+
+```bash
+brew install rajanrx/tap/outbox-md
+# then `brew upgrade outbox-md` to update
+```
+
+**Install script (macOS + Linux, amd64 + arm64):**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/rajanrx/outbox-md/main/install.sh | sh

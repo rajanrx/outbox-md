@@ -22,9 +22,11 @@ Read and inline-annotate AI-generated Markdown in your browser. Your comments **
 
 ## Quickstart
 
-**1. Install** (macOS + Linux):
+**1. Install** (macOS + Linux) — Homebrew or the install script:
 
 ```bash
+brew install rajanrx/tap/outbox-md
+# or, without Homebrew:
 curl -fsSL https://raw.githubusercontent.com/rajanrx/outbox-md/main/install.sh | sh
 ```
 
