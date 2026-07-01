@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0](https://github.com/rajanrx/outbox-md/compare/outbox-md-v0.6.0...outbox-md-v0.7.0) (2026-07-01)
+
+
+### Features
+
+* one-command CLI onboarding (init/up/serve + install.sh + release binaries) ([f93b26b](https://github.com/rajanrx/outbox-md/commit/f93b26b0bb6263676c6d53a50e88ffef55ee6293))
+* one-command CLI onboarding (init/up/serve + install.sh + release binaries) ([41e0529](https://github.com/rajanrx/outbox-md/commit/41e05298cc6f7a046c97774ae0c82bfb8a56379c))
+* self-update — auto_update (default true) + outbox upgrade + Watchtower ([21d301b](https://github.com/rajanrx/outbox-md/commit/21d301bfed712c93e425a817a425570eecef8c88))
+* self-update — auto_update (default true) + outbox upgrade + Watchtower ([a5fcb5a](https://github.com/rajanrx/outbox-md/commit/a5fcb5af25f614c889fdc07b5dd83473ad1eb52b))
+
+
+### Bug Fixes
+
+* **ci:** build web UI before cross-compiling release binaries (PR [#37](https://github.com/rajanrx/outbox-md/issues/37) P1) ([1b97367](https://github.com/rajanrx/outbox-md/commit/1b97367b44284f9e4a8d7ee10807df69a4beed05))
+* **update:** opt-out before network I/O + test selfReplace/latestRelease + Watchtower name ([8e212a9](https://github.com/rajanrx/outbox-md/commit/8e212a99dbfa0a27c1fb6914d439198ecdf72914))
+
 ## [0.6.0](https://github.com/rajanrx/outbox-md/compare/outbox-md-v0.5.0...outbox-md-v0.6.0) (2026-07-01)
 
 
