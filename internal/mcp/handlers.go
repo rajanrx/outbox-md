@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/rajanrx/outbox-md/internal/anchor"
@@ -18,6 +19,11 @@ func (h *Handlers) ReadDoc(docID string) (map[string]any, error) {
 	doc, err := h.St.GetDocument(docID)
 	if err != nil {
 		return nil, err
+	}
+	// Enforce the sources whitelist on the MCP surface too: a doc outside the
+	// active whitelist is hidden from agents, mirroring the HTTP API's 404.
+	if !h.Svc.Config().Serves(doc.Path) {
+		return nil, fmt.Errorf("document %s not found", docID)
 	}
 	ver, err := h.St.GetVersion(doc.CurrentVersionID)
 	if err != nil {
@@ -41,11 +47,18 @@ func (h *Handlers) ListOpenComments() ([]OpenComment, error) {
 	if err != nil {
 		return nil, err
 	}
+	cfg := h.Svc.Config()
 	out := make([]OpenComment, 0, len(comments))
 	for _, c := range comments {
 		oc := OpenComment{Comment: c, Thread: []domain.ThreadMessage{}}
 		// Don't fail the whole list if one lookup errors — just skip that field.
 		if doc, err := h.St.GetDocument(c.DocID); err == nil {
+			// Hide comments on docs outside the sources whitelist from agents,
+			// mirroring the HTTP list filter (a resolvable doc that isn't served
+			// is skipped; an unresolvable lookup falls through, as before).
+			if !cfg.Serves(doc.Path) {
+				continue
+			}
 			oc.DocPath = doc.Path
 		}
 		if ver, err := h.St.GetVersion(c.AgainstVersionID); err == nil {

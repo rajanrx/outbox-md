@@ -90,3 +90,31 @@ func Load(dir string) Config {
 	}
 	return cfg
 }
+
+// Serves reports whether a doc path (relative to OUTBOX_DIR) is covered by the
+// Sources whitelist, mirroring importMarkdown's semantics so the served set
+// matches the imported set: a plain entry is a folder served recursively (exact
+// match or prefix) or an exact file; an entry with glob metacharacters is
+// matched single-level via filepath.Match. An empty whitelist serves everything.
+// Every read surface (HTTP API and MCP) gates on this, so narrowing Sources
+// hides docs consistently everywhere, not just in the browser.
+func (c Config) Serves(docPath string) bool {
+	if len(c.Sources) == 0 {
+		return true
+	}
+	docPath = filepath.ToSlash(docPath)
+	for _, src := range c.Sources {
+		src = strings.TrimSuffix(filepath.ToSlash(strings.TrimSpace(src)), "/")
+		if src == "" {
+			continue
+		}
+		if strings.ContainsAny(src, "*?[") {
+			if ok, _ := filepath.Match(src, docPath); ok {
+				return true
+			}
+		} else if docPath == src || strings.HasPrefix(docPath, src+"/") {
+			return true
+		}
+	}
+	return false
+}
