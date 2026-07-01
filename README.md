@@ -34,11 +34,13 @@ curl -fsSL https://raw.githubusercontent.com/rajanrx/outbox-md/main/install.sh |
 
 ```bash
 cd path/to/your/specs
-outbox init      # scaffold outbox.yaml + auto-wire the MCP with your installed AI clients
-outbox up        # serve the review UI and open it in your browser
+outbox init             # scaffold outbox.yaml + auto-wire the MCP with your installed AI clients
+outbox up --auto-reply  # serve the review UI, open it, and auto-reply to your comments
 ```
 
 > `outbox init` auto-wires Claude Code, Gemini CLI, Cursor, Windsurf, Claude Desktop, and Codex if installed. See [Supported clients](SETUP.md#supported-clients).
+>
+> **`--auto-reply`** runs a hands-off in-process agent: on each comment you leave, it spawns your Claude CLI (your subscription — no API cost) to reply, reacting only to *your* comments, never its own. Drop the flag for **interactive-only** (a plain `outbox up`, where you drive an agent yourself in a chat). Details: [hands-off auto-reply](SETUP.md#hands-off-auto-reply-in-process-no-runner).
 
 **3. Connect your agent** — if `init` didn't do it automatically, add this MCP endpoint to your AI client (one URL, no API key):
 
