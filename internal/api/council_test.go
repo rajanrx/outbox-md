@@ -36,7 +36,7 @@ func TestGetCandidatesEndpoint(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
 	svc := service.New(s, func(_, _ string) error { return nil })
-	h := NewAPI(svc, s, sse.NewHub())
+	h := NewAPI(svc, s, sse.NewHub(), nil)
 	commentID, candID := seedCandidate(t, s, svc)
 
 	rec := httptest.NewRecorder()
@@ -67,7 +67,7 @@ func TestPickCandidateEndpoint(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
 	svc := service.New(s, func(_, _ string) error { return nil })
-	h := NewAPI(svc, s, sse.NewHub())
+	h := NewAPI(svc, s, sse.NewHub(), nil)
 	commentID, candID := seedCandidate(t, s, svc)
 
 	// Happy path: the (server-set) human picks the edit candidate.

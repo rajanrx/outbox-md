@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { getSuggestion, accept, rejectSuggestion, type Suggestion } from "../api";
 import { unifiedDiff } from "./diff";
+import { DiffRows } from "./DiffRows";
 import "./diff.css";
 
 // An inline, GitHub-style suggested change shown within a comment thread.
@@ -20,27 +21,19 @@ export function DiffPanel({ commentId, currentContent, onDone }: {
   if (!sg) return null;
 
   const changed = rows.some((r) => r.op === "ins" || r.op === "del");
-  const sign = { eq: " ", ins: "+", del: "−", gap: "" } as const;
   const act = async (fn: () => Promise<unknown>) => { setBusy(true); try { await fn(); onDone(); } finally { setBusy(false); } };
 
   return (
     <div className="suggestion" onClick={(e) => e.stopPropagation()}>
       <div className="suggestion-head">Suggested change</div>
       {changed ? (
-        <div className="diff">
-          {rows.map((r, i) => (
-            <div key={i} className={`drow ${r.op}`}>
-              <span className="sign">{sign[r.op]}</span>
-              <span className="text">{r.text || " "}</span>
-            </div>
-          ))}
-        </div>
+        <DiffRows rows={rows} />
       ) : (
         <div className="diff-empty">No textual changes from the current version.</div>
       )}
       {sg.state === "proposed" ? (
         <div className="diff-actions">
-          <button className="primary" disabled={busy} onClick={() => act(() => accept(commentId))}>Accept</button>
+          <button className="primary" disabled={busy} onClick={() => act(() => accept(commentId))}>Approve</button>
           <button disabled={busy} onClick={() => act(() => rejectSuggestion(commentId))}>Reject</button>
         </div>
       ) : (

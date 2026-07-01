@@ -13,6 +13,7 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/rajanrx/outbox-md/internal/api"
 	"github.com/rajanrx/outbox-md/internal/config"
+	gitpkg "github.com/rajanrx/outbox-md/internal/git"
 	"github.com/rajanrx/outbox-md/internal/mcp"
 	"github.com/rajanrx/outbox-md/internal/service"
 	"github.com/rajanrx/outbox-md/internal/sse"
@@ -176,7 +177,11 @@ func main() {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 	})
-	mux.Handle("/api/", api.NewAPI(svc, st, hub))
+	// Detect once whether the served folder is inside a git work tree; when it
+	// is, the review UI can show a folder-wide diff of changed .md files. Purely
+	// read-only — outbox never writes to git.
+	gitSvc := gitpkg.Open(dir)
+	mux.Handle("/api/", api.NewAPI(svc, st, hub, gitSvc))
 
 	// MCP over Streamable HTTP at /mcp — any agent connects here.
 	mcpServer := mcp.NewServer(&mcp.Handlers{Svc: svc, St: st})

@@ -42,3 +42,56 @@
   padding: 7px 10px; font-size: 12px; color: var(--chrome-soft); text-transform: capitalize;
   border-top: 1px solid var(--chrome-line);
 }
+
+/* ── inline suggestion excerpt (compact preview in the comment card) ── */
+.suggestion-head { display: flex; align-items: center; justify-content: space-between; }
+.diff-count { font-weight: 600; letter-spacing: .2px; }
+.diff-count .ins, .folder-file-counts .ins { color: #1a7f37; }
+.diff-count .del, .folder-file-counts .del { color: #b3261e; }
+.diff-more {
+  padding: 4px 10px; font-size: 11px; font-style: italic; color: var(--chrome-soft);
+  border-top: 1px solid var(--chrome-line); background: var(--chrome);
+}
+
+/* ── review modal: wide, scrollable, two sections (This change / Folder changes) ── */
+.diff-modal {
+  width: min(860px, 94vw); max-height: 88vh;
+  display: flex; flex-direction: column; padding: 0; overflow: hidden;
+}
+.diff-modal-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 16px 20px; border-bottom: 1px solid var(--chrome-line); background: var(--chrome);
+}
+.diff-modal-head .modal-title {
+  margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--font-mono); font-size: 14px;
+}
+.diff-modal-body { overflow: auto; padding: 16px 20px 20px; }
+.diff-section { margin-bottom: 18px; }
+.diff-section:last-child { margin-bottom: 0; }
+.diff-section-title {
+  font-size: 11px; font-weight: 650; letter-spacing: .4px; text-transform: uppercase;
+  color: var(--chrome-soft); margin-bottom: 8px;
+}
+/* the reused DiffPanel inside the modal should not add its own outer margin */
+.diff-section .suggestion { margin: 0; }
+/* let the modal's single-file diff breathe rather than clip at 280px */
+.diff-section .suggestion .diff { max-height: 44vh; }
+
+/* ── folder changes: GitHub-PR-style per-file collapsible sections ── */
+.folder-file {
+  border: 1px solid var(--chrome-line); border-radius: 8px;
+  overflow: hidden; background: var(--chrome-2); margin-bottom: 10px;
+}
+.folder-file:last-child { margin-bottom: 0; }
+.folder-file-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 8px 12px; cursor: pointer; user-select: none;
+  background: var(--chrome); border-bottom: 1px solid transparent;
+  font-size: 12.5px; list-style: none;
+}
+.folder-file[open] .folder-file-head { border-bottom-color: var(--chrome-line); }
+.folder-file-head::-webkit-details-marker { display: none; }
+.folder-file-path { font-family: var(--font-mono); color: var(--ink); overflow: hidden; text-overflow: ellipsis; }
+.folder-file-counts { flex: none; font-family: var(--font-mono); font-size: 11.5px; }
+.folder-file .diff { max-height: 340px; }
