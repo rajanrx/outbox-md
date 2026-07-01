@@ -86,7 +86,7 @@ export function Card({ comment, currentContent, docPath = "", active = false, pi
   // replied (e.g. an agent that both proposed a suggestion and replied leaves
   // the comment 'replied'). Fetch it for any non-terminal comment and render the
   // diff when the fetched suggestion is still proposed; the full diff +
-  // Approve/Reject live in the modal (which re-fetches via DiffPanel). Terminal
+  // Approve/Reject live in the modal (which re-fetches the suggestion). Terminal
   // comments (resolved/detached) can leave a stale proposed row behind, so we
   // skip them.
   const [sg, setSg] = useState<Suggestion | null>(null);

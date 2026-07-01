@@ -1,3 +1,14 @@
+/* GitHub-style diff colours (light theme). Line backgrounds are LIGHT; the
+   specific changed words within a replaced line get a DARKER highlight span. */
+:root {
+  --diff-add-line: #e6ffec;
+  --diff-add-word: #abf2bc;
+  --diff-add-ink: #1a7f37;
+  --diff-del-line: #ffebe9;
+  --diff-del-word: #ffc0c0;
+  --diff-del-ink: #b3261e;
+}
+
 /* inline, GitHub-style "suggested change" block within a comment thread */
 .suggestion {
   margin: 10px 0 2px; border: 1px solid var(--chrome-line); border-radius: 8px;
@@ -9,22 +20,58 @@
   background: var(--chrome); border-bottom: 1px solid var(--chrome-line);
 }
 
+/* ── inline (unified) view ── */
 .diff {
-  max-height: 280px; overflow: auto;
-  font-family: var(--font-mono); font-size: 12px; line-height: 1.5; padding: 4px 0;
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.5;
 }
-.drow { display: flex; padding: 0 8px; white-space: pre-wrap; word-break: break-word; }
+.diff-inline { max-height: 280px; overflow: auto; padding: 4px 0; }
+.drow { display: flex; padding: 0 8px; white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; }
 .drow .sign { flex: none; width: 13px; color: var(--chrome-soft); user-select: none; }
-.drow .text { flex: 1; }
+.drow .text { flex: 1; min-width: 0; }
 .drow.eq { color: var(--ink-soft); }
-.drow.ins { background: #e3f7e8; }
-.drow.ins .sign, .drow.ins .text { color: #1a7f37; }
-.drow.del { background: #ffe9e7; }
-.drow.del .sign, .drow.del .text { color: #b3261e; }
+.drow.ins { background: var(--diff-add-line); color: var(--ink); }
+.drow.ins .sign { color: var(--diff-add-ink); }
+.drow.del { background: var(--diff-del-line); color: var(--ink); }
+.drow.del .sign { color: var(--diff-del-ink); }
 .drow.gap {
   justify-content: center; color: var(--chrome-soft); font-style: italic; font-size: 11px;
   background: var(--chrome); padding: 2px 8px; user-select: none;
 }
+
+/* word-level (intra-line) highlight spans */
+.seg.ins { background: var(--diff-add-word); border-radius: 2px; }
+.seg.del { background: var(--diff-del-word); border-radius: 2px; }
+
+/* ── side-by-side (split) view ── one shared grid so left/right cells in a row
+      auto-equalise height; every row is display:contents so its cells land in
+      the shared grid → long lines wrap without breaking column alignment. ── */
+.diff-split {
+  display: grid;
+  grid-template-columns: min-content minmax(0, 1fr) min-content minmax(0, 1fr);
+  overflow: auto;
+}
+.drow-split { display: contents; }
+.dnum {
+  padding: 0 8px; text-align: right; min-width: 34px;
+  color: var(--chrome-soft); background: var(--chrome); user-select: none;
+  font-size: 11px; line-height: 1.5;
+}
+.dnum-r { border-left: 1px solid var(--chrome-line); }
+.dcell {
+  padding: 0 10px; min-width: 0;
+  white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere;
+}
+.dcell.eq { color: var(--ink-soft); }
+.dcell.del { background: var(--diff-del-line); color: var(--ink); }
+.dcell.ins { background: var(--diff-add-line); color: var(--ink); }
+.dcell.empty { background: repeating-linear-gradient(-45deg, transparent, transparent 6px, var(--chrome-3) 6px, var(--chrome-3) 7px); }
+.drow-split.gap .gap-cell {
+  grid-column: 1 / -1;
+  justify-self: stretch; text-align: center;
+  color: var(--chrome-soft); font-style: italic; font-size: 11px;
+  background: var(--chrome); padding: 2px 8px; user-select: none;
+}
+
 .diff-empty { padding: 14px; text-align: center; color: var(--chrome-soft); font-size: 12.5px; }
 
 .diff-actions { display: flex; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--chrome-line); }
@@ -39,44 +86,78 @@
 .diff-actions .primary:hover:not(:disabled) { filter: brightness(1.06); }
 
 .suggestion-state {
-  padding: 7px 10px; font-size: 12px; color: var(--chrome-soft); text-transform: capitalize;
-  border-top: 1px solid var(--chrome-line);
+  font-size: 12px; color: var(--chrome-soft); text-transform: capitalize;
 }
 
 /* ── inline suggestion excerpt (compact preview in the comment card) ── */
 .suggestion-head { display: flex; align-items: center; justify-content: space-between; }
 .diff-count { font-weight: 600; letter-spacing: .2px; }
-.diff-count .ins, .folder-file-counts .ins { color: #1a7f37; }
-.diff-count .del, .folder-file-counts .del { color: #b3261e; }
+.diff-count .ins, .folder-file-counts .ins { color: var(--diff-add-ink); }
+.diff-count .del, .folder-file-counts .del { color: var(--diff-del-ink); }
 .diff-more {
   padding: 4px 10px; font-size: 11px; font-style: italic; color: var(--chrome-soft);
   border-top: 1px solid var(--chrome-line); background: var(--chrome);
 }
 
-/* ── review modal: wide, scrollable, two sections (This change / Folder changes) ── */
+/* ── review modal: near-full-screen, pinned header + footer, scrolling body ── */
 .diff-modal {
-  width: min(860px, 94vw); max-height: 88vh;
+  width: 92vw; height: 90vh; max-width: 1400px; max-height: 960px;
   display: flex; flex-direction: column; padding: 0; overflow: hidden;
 }
 .diff-modal-head {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 16px 20px; border-bottom: 1px solid var(--chrome-line); background: var(--chrome);
+  flex: none;
+  padding: 12px 16px 12px 20px; border-bottom: 1px solid var(--chrome-line); background: var(--chrome);
 }
 .diff-modal-head .modal-title {
   margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-family: var(--font-mono); font-size: 14px;
+  font-family: var(--font-mono); font-size: 14px; min-width: 0;
 }
-.diff-modal-body { overflow: auto; padding: 16px 20px 20px; }
+.diff-modal-head-tools { display: flex; align-items: center; gap: 12px; flex: none; }
+
+/* segmented Side-by-side | Inline toggle */
+.diff-toggle {
+  display: inline-flex; border: 1px solid var(--chrome-line); border-radius: 8px;
+  overflow: hidden; background: var(--chrome-2);
+}
+.diff-toggle button {
+  padding: 5px 12px; font-size: 12px; font-weight: 600; border: 0;
+  background: transparent; color: var(--chrome-soft); cursor: pointer;
+  transition: background .12s, color .12s;
+}
+.diff-toggle button + button { border-left: 1px solid var(--chrome-line); }
+.diff-toggle button:hover:not(.on) { background: var(--chrome-3); color: var(--ink); }
+.diff-toggle button.on { background: var(--agent); color: #fff; }
+
+.diff-modal-body { flex: 1 1 auto; overflow: auto; padding: 16px 20px 20px; }
 .diff-section { margin-bottom: 18px; }
 .diff-section:last-child { margin-bottom: 0; }
 .diff-section-title {
   font-size: 11px; font-weight: 650; letter-spacing: .4px; text-transform: uppercase;
   color: var(--chrome-soft); margin-bottom: 8px;
 }
-/* the reused DiffPanel inside the modal should not add its own outer margin */
-.diff-section .suggestion { margin: 0; }
-/* let the modal's single-file diff breathe rather than clip at 280px */
-.diff-section .suggestion .diff { max-height: 44vh; }
+/* the diff surface inside the modal gets its own bordered frame that can grow */
+.diff-frame {
+  border: 1px solid var(--chrome-line); border-radius: 8px; overflow: hidden; background: var(--chrome-2);
+}
+.diff-frame .diff-inline, .diff-frame .diff-split { max-height: none; }
+
+/* pinned footer with Approve/Reject */
+.diff-modal-foot {
+  flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 20px; border-top: 1px solid var(--chrome-line); background: var(--chrome);
+}
+.diff-foot-spacer { flex: 1; }
+.diff-foot-actions { display: flex; gap: 8px; margin-left: auto; }
+.diff-modal-foot button {
+  padding: 6px 16px; border-radius: 8px; font-size: 13px; font-weight: 600;
+  border: 1px solid var(--chrome-line); background: var(--chrome-2); color: var(--ink);
+  transition: background .12s, filter .12s;
+}
+.diff-modal-foot button:hover:not(:disabled) { background: var(--chrome-3); }
+.diff-modal-foot button:disabled { opacity: .5; cursor: default; }
+.diff-modal-foot .primary { background: var(--agent); color: #fff; border-color: transparent; }
+.diff-modal-foot .primary:hover:not(:disabled) { filter: brightness(1.06); }
 
 /* ── folder changes: GitHub-PR-style per-file collapsible sections ── */
 .folder-file {
@@ -94,4 +175,4 @@
 .folder-file-head::-webkit-details-marker { display: none; }
 .folder-file-path { font-family: var(--font-mono); color: var(--ink); overflow: hidden; text-overflow: ellipsis; }
 .folder-file-counts { flex: none; font-family: var(--font-mono); font-size: 11.5px; }
-.folder-file .diff { max-height: 340px; }
+.folder-file .diff-inline, .folder-file .diff-split { max-height: 340px; }

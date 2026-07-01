@@ -1,17 +1,25 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { getPendingSuggestions, type PendingSuggestion } from "../api";
-import { DiffPanel } from "./DiffPanel";
-import { DiffRows, counts } from "./DiffRows";
+import {
+  accept,
+  getPendingSuggestions,
+  getSuggestion,
+  rejectSuggestion,
+  type PendingSuggestion,
+  type Suggestion,
+} from "../api";
+import { counts } from "./DiffRows";
 import { unifiedDiff } from "./diff";
+import { DiffToggle, DiffView, useDiffView } from "./view";
 import "./diff.css";
 
-// DiffModal is the full-screen review surface for a single suggestion. It shows
-// "This change" (the suggestion's own single-file diff, with Approve/Reject via
-// the reused DiffPanel) and a "Folder changes" view of every OTHER doc across
-// the project that currently has a pending suggestion — built from outbox-md's
-// own data (no git), so it is always available. The folder view is context only:
-// Approve applies just this one suggestion.
+// DiffModal is the near-full-screen review surface for a single suggestion. The
+// header (file path + Side-by-side/Inline toggle + close) and footer
+// (Approve/Reject) stay pinned while the diff area scrolls. It shows:
+//  • "This change" — the suggestion's own diff, in the chosen view.
+//  • "Folder changes" — every OTHER doc across the project that currently has a
+//    pending suggestion (built from outbox-md's own data, no git), shown in the
+//    same view. Context only: Approve applies just this one suggestion.
 export function DiffModal({ open, commentId, currentContent, title, onClose, onChange }: {
   open: boolean;
   commentId: string;
@@ -20,7 +28,10 @@ export function DiffModal({ open, commentId, currentContent, title, onClose, onC
   onClose: () => void;
   onChange: () => void;
 }) {
+  const [sg, setSg] = useState<Suggestion | null>(null);
   const [pending, setPending] = useState<PendingSuggestion[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [mode, setMode] = useDiffView();
 
   useEffect(() => {
     if (!open) return;
@@ -29,27 +40,32 @@ export function DiffModal({ open, commentId, currentContent, title, onClose, onC
     return () => document.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
-  // Fetch pending suggestions lazily, only when the modal opens.
+  // Fetch the target suggestion + folder-wide pending suggestions lazily, only
+  // when the modal opens.
   useEffect(() => {
-    if (!open) { setPending(null); return; }
+    if (!open) { setSg(null); setPending(null); return; }
     let live = true;
+    getSuggestion(commentId).then((s) => { if (live) setSg(s); });
     getPendingSuggestions().then((p) => { if (live) setPending(p); });
     return () => { live = false; };
-  }, [open]);
+  }, [open, commentId]);
 
   if (!open) return null;
 
   // Approving/rejecting closes the modal and bubbles the change up so the thread
   // and folder view refresh from the parent.
-  const done = () => { onChange(); onClose(); };
+  const act = async (fn: () => Promise<unknown>) => {
+    setBusy(true);
+    try { await fn(); onChange(); onClose(); } finally { setBusy(false); }
+  };
 
-  // Exclude this comment's own suggestion — it is already shown in "This change"
-  // above. Sibling comments on the same doc stay visible.
+  // Exclude this comment's own suggestion — already shown in "This change".
   const others = (pending ?? []).filter((p) => p.commentId !== commentId);
+  const proposable = !!sg && sg.state === "proposed";
+  const changed = !!sg && sg.proposedContent !== currentContent;
 
   // Portal to <body> so the fixed-position backdrop is measured against the
-  // viewport, not a clipping ancestor (Card sits deep in the tree). This mirrors
-  // why the app's other Modal renders from the top level.
+  // viewport, not a clipping ancestor.
   return createPortal(
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <div
@@ -60,16 +76,25 @@ export function DiffModal({ open, commentId, currentContent, title, onClose, onC
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="diff-modal-head">
-          <h2 className="modal-title">{title}</h2>
-          <button className="ic-btn" aria-label="Close" title="Close" onClick={onClose}>✕</button>
+          <h2 className="modal-title" title={title}>{title}</h2>
+          <div className="diff-modal-head-tools">
+            <DiffToggle mode={mode} onChange={setMode} />
+            <button className="ic-btn" aria-label="Close" title="Close" onClick={onClose}>✕</button>
+          </div>
         </div>
 
         <div className="diff-modal-body">
           <section className="diff-section">
             <div className="diff-section-title">This change</div>
-            {/* DiffPanel fetches the suggestion and carries the Approve/Reject
-                actions; onDone closes the modal and refreshes the parent. */}
-            <DiffPanel commentId={commentId} currentContent={currentContent} onDone={done} />
+            {sg === null ? (
+              <div className="diff-empty">Loading change…</div>
+            ) : changed ? (
+              <div className="diff-frame">
+                <DiffView before={currentContent} after={sg.proposedContent} mode={mode} />
+              </div>
+            ) : (
+              <div className="diff-empty">No textual changes from the current version.</div>
+            )}
           </section>
 
           <section className="diff-section">
@@ -80,8 +105,7 @@ export function DiffModal({ open, commentId, currentContent, title, onClose, onC
               <div className="diff-empty">No other pending suggestions across the project.</div>
             ) : (
               others.map((p, idx) => {
-                const rows = unifiedDiff(p.current, p.proposed);
-                const c = counts(rows);
+                const c = counts(unifiedDiff(p.current, p.proposed));
                 return (
                   <details key={p.commentId} className="folder-file" open={idx === 0}>
                     <summary className="folder-file-head">
@@ -90,12 +114,30 @@ export function DiffModal({ open, commentId, currentContent, title, onClose, onC
                         <span className="ins">+{c.ins}</span> <span className="del">−{c.del}</span>
                       </span>
                     </summary>
-                    <DiffRows rows={rows} />
+                    <div className="diff-frame">
+                      <DiffView before={p.current} after={p.proposed} mode={mode} />
+                    </div>
                   </details>
                 );
               })
             )}
           </section>
+        </div>
+
+        <div className="diff-modal-foot">
+          {sg && !proposable ? (
+            <span className="suggestion-state">{sg.state}</span>
+          ) : (
+            <span className="diff-foot-spacer" />
+          )}
+          <div className="diff-foot-actions">
+            <button disabled={busy || !proposable} onClick={() => act(() => rejectSuggestion(commentId))}>
+              Reject
+            </button>
+            <button className="primary" disabled={busy || !proposable} onClick={() => act(() => accept(commentId))}>
+              Approve
+            </button>
+          </div>
         </div>
       </div>
     </div>,
