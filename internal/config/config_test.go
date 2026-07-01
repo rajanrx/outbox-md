@@ -160,3 +160,68 @@ func TestLoadWebhookEnvOverridesWithoutYAML(t *testing.T) {
 		t.Errorf("secret = %q, want env override applied without a yaml file", w.Secret)
 	}
 }
+
+// --- auto-reply config ---
+
+func TestLoadAutoReplyDefaultsFalse(t *testing.T) {
+	if Load(t.TempDir()).AutoReply {
+		t.Fatal("auto_reply should default to false (opt-in)")
+	}
+}
+
+func TestLoadAutoReplyEnabledFromYAML(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "auto_reply: true\n")
+	if !Load(dir).AutoReply {
+		t.Fatal("auto_reply: true should enable auto-reply")
+	}
+}
+
+func TestLoadAutoReplyEnvOverride(t *testing.T) {
+	// env true with no yaml.
+	t.Setenv("OUTBOX_AUTO_REPLY", "true")
+	if !Load(t.TempDir()).AutoReply {
+		t.Fatal("OUTBOX_AUTO_REPLY=true should enable auto-reply")
+	}
+}
+
+func TestLoadAutoReplyEnvOverridesYAMLFalse(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "auto_reply: true\n")
+	t.Setenv("OUTBOX_AUTO_REPLY", "false")
+	if Load(dir).AutoReply {
+		t.Fatal("OUTBOX_AUTO_REPLY=false should override yaml auto_reply: true")
+	}
+}
+
+func TestLoadAgentCmdDefault(t *testing.T) {
+	got := Load(t.TempDir()).AgentCmd
+	want := "claude -p {prompt} --allowedTools mcp__outbox-md__*"
+	if got != want {
+		t.Fatalf("agent_cmd default = %q, want %q", got, want)
+	}
+}
+
+func TestLoadAgentCmdFromYAML(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "agent_cmd: my-agent {prompt}\n")
+	if got := Load(dir).AgentCmd; got != "my-agent {prompt}" {
+		t.Fatalf("agent_cmd = %q, want yaml override", got)
+	}
+}
+
+func TestLoadAgentCmdEnvOverride(t *testing.T) {
+	t.Setenv("OUTBOX_AGENT_CMD", "echo ran {prompt}")
+	if got := Load(t.TempDir()).AgentCmd; got != "echo ran {prompt}" {
+		t.Fatalf("agent_cmd = %q, want env override", got)
+	}
+}
+
+func TestLoadAgentCmdEmptyFallsBackToDefault(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "agent_cmd: \"\"\n")
+	want := "claude -p {prompt} --allowedTools mcp__outbox-md__*"
+	if got := Load(dir).AgentCmd; got != want {
+		t.Fatalf("empty agent_cmd = %q, want fallback to default", got)
+	}
+}

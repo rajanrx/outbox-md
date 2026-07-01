@@ -211,7 +211,33 @@ Omit `sources` (or leave it empty) to serve everything. Entries that escape the 
 
 ## Automation: webhooks & a hands-off runner
 
-The interactive MCP loop is human-driven (you ask an agent to process the outbox in a chat session). For a **hands-off** loop, outbox can **push** a webhook the moment a comment needs work, and a **runner** drives claim → propose/reply automatically.
+The interactive MCP loop is human-driven (you ask an agent to process the outbox in a chat session). For a **hands-off** loop, outbox can drive the agent for you.
+
+### Hands-off auto-reply (in-process, no runner)
+
+The simplest hands-off option is built into the server. Start it with:
+
+```bash
+outbox up --auto-reply
+```
+
+Now, whenever **you** post a comment, the server spawns your agent CLI **in-process** — no separate runner, no webhook, no shared secret — to claim it and propose a tracked-change edit or reply. It uses your existing **Claude subscription via the CLI**, so there is **no per-token API cost** and no API key to manage.
+
+It is **opt-in and OFF by default**. Turn it on per-run with the flag above, or persist it in `outbox.yaml` (or the env):
+
+```yaml
+# outbox.yaml
+auto_reply: true                                        # or OUTBOX_AUTO_REPLY=true
+agent_cmd: claude -p {prompt} --allowedTools mcp__outbox-md__*   # or OUTBOX_AGENT_CMD
+```
+
+Precedence is **`--auto-reply` flag > `auto_reply` (yaml/env) > default (off)**; the flag only forces it *on*. `agent_cmd` is the spawned command — `{prompt}` is replaced with the outbox instruction as a single argument (no shell). Triggers are **debounced** (~1.5s, so a burst of comments is one run) and **single-flight** (only one agent runs at a time; comments arriving mid-run schedule exactly one follow-up).
+
+Crucially, it reacts **only to your comments** (`comment.created` / `comment.replied`) — **never to its own** replies or suggestions — so the agent can't re-trigger itself into a loop. Resolving and approving stay human-only.
+
+> Prefer a **separate** runner process — for a remote host, an API key instead of the CLI, or to scale it independently? That's the reference runner below (it's still the right tool for remote/api-key setups); auto-reply just folds the same loop into the server for the common local case.
+
+### Reference runner (separate process, remote / api-key setups)
 
 A reference **autonomous runner** ships in [`examples/runner/`](examples/runner/README.md) — Go, Node, and Python, each verifying the signature and driving the loop for you. Its default CLI mode reuses your existing coding-agent subscription, so there's **no per-token API cost**. A turnkey ops layer wraps the image + runner:
 

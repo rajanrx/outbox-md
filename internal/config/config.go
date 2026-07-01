@@ -23,6 +23,15 @@ type Config struct {
 	// OUTBOX_AUTO_UPDATE=false) opts out. Homebrew/Docker installs never
 	// self-replace regardless of this flag (they update via their own channel).
 	AutoUpdate bool `json:"autoUpdate" yaml:"auto_update"`
+	// AutoReply enables the in-process auto-reply engine: when on, a human comment
+	// spawns the agent CLI in-process (no separate runner). It is OPT-IN — it
+	// defaults to false, so only an explicit `auto_reply: true` (or
+	// OUTBOX_AUTO_REPLY=true, or the `-auto-reply` flag) turns it on.
+	AutoReply bool `json:"autoReply" yaml:"auto_reply"`
+	// AgentCmd is the command template the auto-reply engine spawns; the literal
+	// token {prompt} is replaced by the instruction prompt as a single argv element
+	// (no shell). Defaults to the Claude Code headless invocation.
+	AgentCmd string `json:"agentCmd" yaml:"agent_cmd"`
 }
 
 type AgentConfig struct {
@@ -50,7 +59,12 @@ func Defaults() Config {
 		// AutoUpdate defaults to true so an outbox.yaml that omits the key (or has
 		// no yaml at all) keeps self-update on; only an explicit false disables it.
 		AutoUpdate: true,
-		Approval:   ApprovalConfig{PostApprovalComments: true},
+		// AutoReply defaults to false — the in-process agent loop is strictly
+		// opt-in. AgentCmd carries the default command template so it is populated
+		// even when the engine is off (used the moment auto-reply is turned on).
+		AutoReply: false,
+		AgentCmd:  "claude -p {prompt} --allowedTools mcp__outbox-md__*",
+		Approval:  ApprovalConfig{PostApprovalComments: true},
 		// All four governance events are enabled by default. These string
 		// literals mirror the event names emitted by internal/webhook; they are
 		// duplicated here (rather than imported) to keep config free of a webhook
@@ -107,6 +121,26 @@ func Load(dir string) Config {
 		case "true", "1", "yes", "on":
 			cfg.AutoUpdate = true
 		}
+	}
+	// OUTBOX_AUTO_REPLY overrides the file flag both ways (mirroring AutoUpdate):
+	// true/1/yes/on turns the in-process agent loop on, false/0/no/off off. Any
+	// other value leaves the current (file or default-false) value untouched.
+	if v := os.Getenv("OUTBOX_AUTO_REPLY"); v != "" {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "false", "0", "no", "off":
+			cfg.AutoReply = false
+		case "true", "1", "yes", "on":
+			cfg.AutoReply = true
+		}
+	}
+	// OUTBOX_AGENT_CMD overrides the spawn command template.
+	if v := os.Getenv("OUTBOX_AGENT_CMD"); v != "" {
+		cfg.AgentCmd = v
+	}
+	// A yaml that explicitly sets `agent_cmd:` to empty would blank the template;
+	// fall back to the default so the engine always has a runnable command.
+	if strings.TrimSpace(cfg.AgentCmd) == "" {
+		cfg.AgentCmd = Defaults().AgentCmd
 	}
 	return cfg
 }

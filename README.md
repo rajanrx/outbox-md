@@ -58,13 +58,14 @@ http://localhost:8181/mcp
 | Command | What it does |
 |---|---|
 | `outbox up` | Serve the review UI + MCP, then open it in your browser (the everyday command). |
+| `outbox up --auto-reply` | Same, plus a **hands-off** in-process agent that replies to your comments automatically — opt-in, reuses your Claude CLI subscription (no API cost), reacts only to your comments. See [Setup](SETUP.md#hands-off-auto-reply-in-process-no-runner). |
 | `outbox serve` | Same, without opening a browser (the default with no arguments; what the Docker image runs). |
 | `outbox init` | Scaffold `outbox.yaml` and register the MCP with your installed AI client(s) in this folder. |
 | `outbox add [path]` · `remove` · `projects` | Register / unregister / list projects — review several folders from one server. |
 | `outbox upgrade` | Update to the latest release (self-update). |
 | `outbox version` · `outbox help` | Print the version / usage. |
 
-`serve` and `up` take `-dir` (folder to serve, default `.`) and `-addr` (listen address, default `:8181`). Precedence is **flag > `OUTBOX_DIR` / `OUTBOX_ADDR` env > default**.
+`serve` and `up` take `-dir` (folder to serve, default `.`), `-addr` (listen address, default `:8181`), and `-auto-reply` (opt-in hands-off agent, default off). Precedence is **flag > `OUTBOX_DIR` / `OUTBOX_ADDR` / `OUTBOX_AUTO_REPLY` env > default**.
 
 Full detail — install options, connecting each client, multiple projects, `sources` scoping, automation — is in the **[Setup & Usage Guide](SETUP.md)**.
 
