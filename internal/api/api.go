@@ -70,16 +70,16 @@ func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub) http.Handler {
 	// name (e.g. "outbox-md") rather than the served folder (e.g. "docs").
 	mux.HandleFunc("GET /api/projects", func(w http.ResponseWriter, _ *http.Request) {
 		type projectDTO struct {
-			Name string `json:"name"`
-			Root string `json:"root"`
-			Docs string `json:"docs"`
+			Name string   `json:"name"`
+			Root string   `json:"root"`
+			Docs []string `json:"docs"`
 		}
 		src := svc.Projects()
 		out := make([]projectDTO, 0, len(src))
 		for _, p := range src {
 			docs := p.Docs
-			if docs == "" {
-				docs = "."
+			if len(docs) == 0 {
+				docs = []string{"."}
 			}
 			out = append(out, projectDTO{Name: p.Name, Root: p.Root, Docs: docs})
 		}

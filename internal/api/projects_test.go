@@ -19,8 +19,8 @@ func TestProjectsEndpointShape(t *testing.T) {
 	defer s.Close()
 	svc := service.New(s, func(_, _, _ string) error { return nil })
 	svc.SetProjects([]registry.Project{
-		{Name: "alpha", Root: "/tmp/alpha", Docs: ".", Agent: "codex exec {prompt}"},
-		{Name: "beta", Root: "/tmp/beta", Docs: "docs/specs"},
+		{Name: "alpha", Root: "/tmp/alpha", Docs: []string{"."}, Agent: "codex exec {prompt}"},
+		{Name: "beta", Root: "/tmp/beta", Docs: []string{"docs/specs", "rfcs"}},
 	})
 	h := NewAPI(svc, s, sse.NewHub())
 
@@ -30,19 +30,21 @@ func TestProjectsEndpointShape(t *testing.T) {
 		t.Fatalf("GET /api/projects: %d %s", rec.Code, rec.Body.String())
 	}
 	var got []struct {
-		Name  string `json:"name"`
-		Root  string `json:"root"`
-		Docs  string `json:"docs"`
-		Agent string `json:"agent"`
+		Name  string   `json:"name"`
+		Root  string   `json:"root"`
+		Docs  []string `json:"docs"`
+		Agent string   `json:"agent"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v (%s)", err, rec.Body.String())
 	}
-	if len(got) != 2 || got[0].Name != "alpha" || got[0].Root != "/tmp/alpha" || got[0].Docs != "." {
+	if len(got) != 2 || got[0].Name != "alpha" || got[0].Root != "/tmp/alpha" ||
+		len(got[0].Docs) != 1 || got[0].Docs[0] != "." {
 		t.Fatalf("projects = %+v, want alpha+beta with root/docs", got)
 	}
-	if got[1].Name != "beta" || got[1].Root != "/tmp/beta" || got[1].Docs != "docs/specs" {
-		t.Fatalf("projects[1] = %+v, want beta docs/specs", got[1])
+	if got[1].Name != "beta" || got[1].Root != "/tmp/beta" ||
+		len(got[1].Docs) != 2 || got[1].Docs[0] != "docs/specs" || got[1].Docs[1] != "rfcs" {
+		t.Fatalf("projects[1] = %+v, want beta docs [docs/specs rfcs]", got[1])
 	}
 	// The per-project agent command must not leak to the UI endpoint.
 	if got[0].Agent != "" {
@@ -90,7 +92,7 @@ func TestProjectsEndpointSingleFolder(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
 	svc := service.New(s, func(_, _, _ string) error { return nil })
-	svc.SetProjects([]registry.Project{{Name: "", Root: "/data", Docs: "."}})
+	svc.SetProjects([]registry.Project{{Name: "", Root: "/data", Docs: []string{"."}}})
 	h := NewAPI(svc, s, sse.NewHub())
 
 	rec := httptest.NewRecorder()

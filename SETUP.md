@@ -20,7 +20,8 @@ Everything beyond the [README](README.md) quickstart: installing, connecting age
 
 ```bash
 brew install rajanrx/tap/outbox-md
-# then `brew upgrade outbox-md` to update
+# then `brew update && brew upgrade outbox-md` to update (a third-party tap
+# is not refreshed by `brew upgrade` alone)
 ```
 
 **Install script (macOS + Linux, amd64 + arm64):**
@@ -61,11 +62,14 @@ docker run --rm -p 8181:8181 -v "$PWD/specs:/data" outbox-md
 | Command | What it does |
 |---|---|
 | `outbox up` | Serve the review UI + MCP, then open the browser (the everyday command). |
-| `outbox serve` | Same, without opening a browser (also the default with no arguments — this is what the Docker image runs). |
+| `outbox serve` | Same, without opening a browser (what the Docker image runs by default). |
 | `outbox init` | Scaffold `outbox.yaml` and auto-register the MCP endpoint with every detected AI client (see [Supported clients](#supported-clients)). Flags: `-client <slug>` (repeatable) to target specific clients; `-all` to write configs for every client even if not installed. |
-| `outbox upgrade` | Update to the latest release (self-update). |
+| `outbox add <root> <docs...>` · `remove` · `list` | Register / unregister / list projects. `<root>` is the repo root; **at least one `docs` subpath is required** (`.` = the whole repo). **`outbox remove`** with no argument is an interactive **multiselect** (tick projects/docs to drop); `outbox remove <name>` removes a whole project non-interactively. See [Multiple projects](#multiple-projects). `projects` aliases `list`. |
+| `outbox paths` | Print the resolved on-disk locations (registry, review database, `outbox.yaml`) for the current mode. |
+| `outbox settings [<key> <value>]` | View or change the structured `outbox.yaml` fields (`auto_update`, `auto_reply`). No args → interactive walkthrough (Enter keeps current, non-TTY prints current settings and exits); `<key> <value>` sets one directly. Needs an existing `outbox.yaml` — run `outbox init` first. |
+| `outbox upgrade` | Update to the latest release (self-update). Homebrew installs update with `brew update && brew upgrade outbox-md` instead; Docker via image pull. |
 | `outbox version` | Print the CLI version. |
-| `outbox help` | Show usage. |
+| `outbox help [<command>]` | Show usage. Bare `outbox` (no arguments) also prints help; `outbox help <command>` shows one command's flags and examples. |
 
 `serve` and `up` take:
 
@@ -157,31 +161,35 @@ Resolving comments and approving documents stay **human-only** — agents can't 
 Register any number of projects **anywhere on disk** in a global registry, then serve them all from one `outbox up` and switch between them with the in-UI project switcher. Each registry entry is a **`{name, root, docs, agent}`** record:
 
 - **`root`** — the project's repo root (absolute). This is the working directory the [auto-reply](#hands-off-auto-reply-in-process-no-runner) agent is spawned in, so it sees that repo's `CLAUDE.md` / `.mcp.json` / codebase.
-- **`docs`** — the spec subpath **relative to `root`** whose `.md` files are served (`.` = the whole root). Must resolve to a directory under `root`; traversal is rejected.
+- **`docs`** — a **list** of spec subpaths **relative to `root`** whose `.md` files are served (`.` = the whole root). **At least one is required** — pass `.` to serve the whole repo. A project serves the **union** of its docs subtrees; each served doc is keyed relative to `root`, so the same filename under two subpaths never collides. Each entry must resolve to a directory under `root`; traversal is rejected.
 - **`agent`** — an optional per-project agent command, so different projects can use different AIs. Empty ⇒ the global default command.
 - **`name`** — the label shown in the switcher; it's `basename(root)` (e.g. `outbox-md`), disambiguated (`outbox-md`, `outbox-md-2`) on collision.
 
 ```bash
-outbox add ~/work/app                    # serve the whole repo (docs defaults to ".")
-outbox add ~/work/api docs/specs         # serve only api/docs/specs
+outbox add ~/work/app .                   # serve the whole repo (the dot is required)
+outbox add ~/work/api docs/specs          # serve only api/docs/specs
+outbox add ~/work/api specs api-specs     # serve TWO subpaths as one project (their union)
 outbox add ~/work/api docs/specs --agent codex   # …and let THIS project auto-reply with codex
-outbox list                              # list registered projects (alias: outbox projects)
-outbox remove app                        # unregister by name or by root path
-outbox up                                # serve ALL registered projects; switch in the UI
+outbox list                               # list registered projects (alias: outbox projects)
+outbox remove                             # interactive multiselect: tick projects/docs to drop
+outbox remove app                         # non-interactive: remove the whole project "app"
+outbox up                                 # serve ALL registered projects; switch in the UI
 ```
 
-**Add flags:**
+**Removing projects (or individual docs).** `outbox remove` with **no argument** opens an interactive **multiselect**: every project and each of its `docs` entries is a tickable row (e.g. `app · docs/specs`, `app · api-specs`). **Space** toggles a row, **enter** confirms, **q**/**esc** cancels. The ticked docs entries are removed, and a project whose **last** docs entry is removed is **dropped entirely** — so you can prune a single subpath without unregistering the whole project. `outbox remove <name>` (or a root path) removes a whole project non-interactively (the back-compatible shortcut) and is the form to use in scripts; with no terminal and no argument, `remove` prints a hint and exits non-zero rather than hanging.
 
-| Flag | Meaning |
+**Add positionals & flags:**
+
+| Positional / flag | Meaning |
 |---|---|
-| `<root>` | project repo root (required positional, default `.`) |
-| `[docs]` | spec subpath under `root` (optional positional, default `.`) |
+| `<root>` | project repo root (required positional) |
+| `<docs...>` | **one or more** spec subpaths under `root` (required; use `.` for the whole repo). Running `outbox add <root>` with no docs fails and prints the command's help. |
 | `--agent <preset>` | per-project agent preset: `claude`, `codex`, `copilot` |
 | `--agent-cmd "<cmd>"` | per-project agent command with a `{prompt}` token (overrides `--agent`) |
 
-Flags may appear before, between, or after the positionals. Each project keeps its **own** `outbox.yaml` (loaded from `root/docs`), so the [`sources`](#serving-part-of-a-repo-sources) whitelist is per-project. Registering the first project switches the DB to a shared store under the config home; a plain single-folder `outbox up` (no registry) is unchanged.
+Flags may appear before, between, or after the positionals. Each project keeps its **own** `outbox.yaml` (loaded from `root/outbox.yaml`), so the [`sources`](#serving-part-of-a-repo-sources) whitelist is per-project. Registering the first project switches the DB to a shared store under the config home (see `outbox paths`); a plain single-folder `outbox up` (no registry) is unchanged.
 
-**Older registries migrate automatically:** an entry written by a previous version as `{name, path}` loads as `{name, root: path, docs: ".", agent: ""}` and is rewritten in the new shape on the next change — nothing to do by hand.
+**Older registries migrate automatically:** an entry written by a previous version as `{name, path}` loads as `{name, root: path, docs: ["."], agent: ""}`, and a single-string `{docs: "x"}` loads as `{docs: ["x"]}`; both are rewritten in the new list shape on the next change — nothing to do by hand.
 
 > Prefer isolated servers instead? You can still run one `outbox up` per folder on separate ports (`--addr :8182`), each its own browser tab and MCP registration.
 
@@ -207,7 +215,7 @@ Omit `sources` (or leave it empty) to serve everything. Entries that escape the 
 ## Staying up to date
 
 - **Binary (curl/direct install):** `outbox up` **auto-updates by default** — it checks for a newer release (at most once a day) and, if found, self-updates and restarts. Turn it off with `auto_update: false` in `outbox.yaml` (or `OUTBOX_AUTO_UPDATE=false`); you can still update on demand with **`outbox upgrade`**.
-- **Homebrew:** `brew upgrade outbox-md` (a brew-managed binary won't self-update — it points you here).
+- **Homebrew:** `brew update && brew upgrade outbox-md` (a brew-managed binary won't self-update — it points you here; the `brew update` is needed because a third-party tap isn't refreshed by `brew upgrade` alone).
 - **Docker:** the container binary can't self-update — pull a new image (`docker compose pull && docker compose up -d`), or enable the commented **Watchtower** service in `docker-compose.yml`. Pin the image to a major tag (`:0`) so it applies `0.x` minors/patches but not a breaking major.
 
 ---
@@ -239,9 +247,9 @@ Precedence is **`--auto-reply` flag > `auto_reply` (yaml/env) > default (off)**;
 **Per project.** With [multiple projects registered](#multiple-projects), a comment resolves to **its own** project and the agent is spawned with **`cwd = that project's root`** and **that project's `agent` command** (falling back to the global `agent_cmd` when the project has none). So a comment on project A runs the agent inside A's repo — seeing A's `CLAUDE.md` / `.mcp.json` / codebase — while project B can drive an entirely different AI. Each project has its **own** debounce + single-flight loop, so a burst on A and a burst on B run independently and never coalesce into one run that drops the other. Set a project's agent when registering it:
 
 ```bash
-outbox add ~/work/app --agent claude        # A → Claude Code
-outbox add ~/work/api --agent codex         # B → Codex CLI
-outbox add ~/work/site --agent-cmd "my-agent run {prompt}"   # C → any command
+outbox add ~/work/app . --agent claude       # A → Claude Code (whole repo)
+outbox add ~/work/api docs/specs --agent codex   # B → Codex CLI
+outbox add ~/work/site . --agent-cmd "my-agent run {prompt}"   # C → any command
 ```
 
 Presets: **`claude`** (verified — the built-in default, reads outbox-md's MCP via `--allowedTools`), **`codex`** and **`copilot`** (assumed defaults for the OpenAI Codex / GitHub Copilot CLIs — each reads its own MCP config; adjust with `--agent-cmd` if your invocation differs).
@@ -307,3 +315,5 @@ webhook:
 </details>
 
 **Live updates (SSE).** Independently of webhooks, the browser stays live over a **Server-Sent Events** stream (`GET /api/events`) with zero config — comments, replies, resolutions, approvals, *and* the agent's own writes (`comment.updated`, `suggestion.proposed`) all appear without a refresh. On a dropped connection the browser reconnects and a slow background poll (~15s) covers any gap.
+
+**Live file reload.** A filesystem watcher tracks each served project's spec folders, so a `.md` file you **create, edit, or delete on disk** shows up in the review UI automatically — no restart. The change fans out on the same SSE stream (`docs.changed`), updating the file list; it never triggers the auto-reply agent. Live reload is best-effort — if the watcher can't start, the server still serves, just without it.

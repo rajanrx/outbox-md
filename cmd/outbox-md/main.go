@@ -26,6 +26,7 @@ import (
 	"github.com/rajanrx/outbox-md/internal/service"
 	"github.com/rajanrx/outbox-md/internal/sse"
 	"github.com/rajanrx/outbox-md/internal/store"
+	"github.com/rajanrx/outbox-md/internal/watcher"
 	"github.com/rajanrx/outbox-md/internal/webhook"
 	"github.com/rajanrx/outbox-md/web"
 )
@@ -133,82 +134,26 @@ func getenv(k, def string) string {
 	return def
 }
 
-// importMarkdown ingests .md files under dir. When sources is empty it walks the
-// whole dir (the default, backward-compatible behaviour). When non-empty, each
-// entry is a folder path OR a glob relative to dir: a folder is walked
-// recursively, a glob is expanded, and every matched .md is imported keyed by its
-// path relative to dir (so paths stay project-relative and disambiguate across
-// folders). Entries that escape dir are rejected; overlapping matches are
-// de-duped so a file is never imported twice.
-func importMarkdown(st *store.Store, project, dir string, sources []string) error {
-	if len(sources) == 0 {
-		return importTree(st, project, dir, dir)
-	}
-	seen := map[string]bool{}
-	for _, src := range sources {
-		src = strings.TrimSpace(src)
-		if src == "" {
-			continue
-		}
-		// A plain entry names a folder served recursively (or an exact file); a
-		// glob entry matches files single-level. This mirrors config.Config.Serves
-		// exactly, so a glob like "docs/*" never imports a nested file it would
-		// then hide at serve time — use a plain folder entry to recurse.
-		isGlob := strings.ContainsAny(src, "*?[")
-		// Resolve within dir and refuse anything that escapes it. safeJoin cleans
-		// the path and rejects traversal; the glob metacharacters survive Join.
-		target, err := safeJoin(dir, src)
-		if err != nil {
-			return err
-		}
-		matches, err := filepath.Glob(target)
-		if err != nil {
-			return err
-		}
-		if len(matches) == 0 {
-			// A mistyped folder or a glob that matches nothing would otherwise
-			// import silently — surface it so the operator knows why a source is empty.
-			log.Printf("outbox: sources entry %q matched no files under %s", src, dir)
-			continue
-		}
-		for _, m := range matches {
-			if seen[m] {
-				continue
-			}
-			seen[m] = true
-			fi, err := os.Stat(m)
-			if err != nil {
-				return err
-			}
-			if fi.IsDir() {
-				if isGlob {
-					// A glob matched a directory: don't recurse (single-level
-					// semantics, matching Serves). A plain folder entry recurses.
-					continue
-				}
-				if err := importTree(st, project, dir, m); err != nil {
-					return err
-				}
-			} else if strings.HasSuffix(m, ".md") {
-				if err := importFile(st, project, dir, m); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	return nil
-}
-
-// importTree walks root recursively, importing every .md file keyed by its path
-// relative to dir under the given project. root may be dir itself or a
-// whitelisted sub-folder.
-func importTree(st *store.Store, project, dir, root string) error {
-	return filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+// importMarkdown ingests the .md files of one docs subtree. It walks dir (a
+// project's root/docsN spec dir) recursively and keys each file by its path
+// relative to keyBase — keyBase is the project ROOT, so a doc under a docs
+// subtree is keyed root-relative and the same filename under two different
+// subtrees never collides. In single-subtree mode keyBase == dir, so keys stay
+// project-relative exactly as before.
+//
+// A file is imported iff its ROOT-RELATIVE key passes config.SourcesMatch — the
+// SAME predicate the served set gates on. Because the walk already stays within
+// a docs subtree, "under docsN" is guaranteed by construction; the sources
+// filter is evaluated against the root-relative key (never joined onto dir), so
+// the imported set is exactly the served set (no import/serve drift). An empty
+// sources list applies no filter (import every .md in the subtree).
+func importMarkdown(st *store.Store, project, keyBase, dir string, sources []string) error {
+	return filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.IsDir() {
-			if d.Name() == ".outbox" || (strings.HasPrefix(d.Name(), ".") && p != root) {
+			if d.Name() == ".outbox" || (strings.HasPrefix(d.Name(), ".") && p != dir) {
 				return fs.SkipDir
 			}
 			return nil
@@ -216,14 +161,22 @@ func importTree(st *store.Store, project, dir, root string) error {
 		if !strings.HasSuffix(d.Name(), ".md") {
 			return nil
 		}
-		return importFile(st, project, dir, p)
+		rel, err := filepath.Rel(keyBase, p)
+		if err != nil {
+			return err
+		}
+		if !config.SourcesMatch(sources, filepath.ToSlash(rel)) {
+			return nil
+		}
+		return importFile(st, project, keyBase, p)
 	})
 }
 
 // importFile imports a single .md file at absolute path p, keyed by (project, its
-// path relative to dir). Already-imported files (same project+path) are skipped.
-func importFile(st *store.Store, project, dir, p string) error {
-	rel, _ := filepath.Rel(dir, p)
+// path relative to keyBase). Already-imported files (same project+path) are
+// skipped.
+func importFile(st *store.Store, project, keyBase, p string) error {
+	rel, _ := filepath.Rel(keyBase, p)
 	if _, ok, _ := st.GetDocumentByPath(project, rel); ok {
 		return nil
 	}
@@ -250,21 +203,17 @@ func main() {
 	}
 }
 
-// resolveCmd maps raw args to a subcommand name and its remaining args. A bare
-// invocation (no args) selects "serve", so the Docker ENTRYPOINT (which calls
-// the binary with no args) keeps serving.
-func resolveCmd(args []string) (name string, rest []string) {
-	if len(args) == 0 {
-		return "serve", nil
-	}
-	return args[0], args[1:]
-}
-
-// run is the testable core of main: it dispatches a subcommand. The
-// version/help/unknown paths write to out and never open a listener, so routing
-// can be exercised without a live server.
+// run is the testable core of main: it dispatches a subcommand. Bare `outbox`
+// (no args) prints HELP rather than starting a server, so the binary is
+// discoverable; the Docker image pins an explicit "serve" in its CMD. The
+// version/help/unknown/usage-error paths write to out and never open a listener,
+// so routing can be exercised without a live server.
 func run(args []string, out io.Writer) error {
-	cmd, rest := resolveCmd(args)
+	if len(args) == 0 {
+		usage(out)
+		return nil
+	}
+	cmd, rest := args[0], args[1:]
 	switch cmd {
 	case "serve":
 		return serve(rest, false)
@@ -275,69 +224,24 @@ func run(args []string, out io.Writer) error {
 	case "add":
 		return addProject(rest, out)
 	case "remove":
-		return removeProject(rest, out)
+		return removeProject(rest, out, os.Stdin)
 	case "list", "projects":
 		return listProjectsCmd(out)
+	case "paths":
+		return pathsCmd(out)
+	case "settings":
+		return settingsCmd(rest, out, os.Stdin)
 	case "upgrade":
 		return upgrade(out)
 	case "version", "--version", "-v":
 		fmt.Fprintln(out, version)
 		return nil
 	case "help", "-h", "--help":
-		usage(out)
-		return nil
+		return helpCommand(rest, out)
 	default:
 		usage(out)
 		return fmt.Errorf("unknown command %q (run \"outbox help\")", cmd)
 	}
-}
-
-func usage(w io.Writer) {
-	fmt.Fprint(w, `outbox-md — local-first, agent-agnostic review for AI-generated Markdown specs.
-
-Usage:
-  outbox [command] [flags]
-
-Commands:
-  serve      Serve the review UI + MCP endpoint for a folder of .md files (default)
-  up         Serve, then open the browser at the review UI
-  init       Scaffold outbox.yaml + auto-register the MCP with detected AI clients
-  add        Register a project: outbox add <root> [docs] [--agent|--agent-cmd]
-  remove     Unregister a project by name or root
-  list       List registered projects (alias: projects)
-  upgrade    Update outbox to the latest release (self-update)
-  version    Print the version
-  help       Show this help
-
-Flags (serve, up):
-  -dir    folder of .md files to serve   (default ".",     overridden by OUTBOX_DIR)
-  -addr   listen address                 (default ":8181", overridden by OUTBOX_ADDR)
-
-Flags (init):
-  -dir     folder to scaffold             (default ".",     overridden by OUTBOX_DIR)
-  -addr    listen address for the MCP URL (default ":8181", overridden by OUTBOX_ADDR)
-  -client  register only this client (repeatable): claude-code, gemini, cursor,
-           windsurf, claude-desktop, codex
-  -all     register with every supported client, even if not detected
-
-Getting started:
-  outbox init && outbox up
-
-Multiple projects:
-  outbox add ~/work/app              # serve the whole repo (docs default ".")
-  outbox add ~/work/app docs/specs   # serve only the docs/specs subpath of the repo
-  outbox add ~/work/api --agent codex   # this project's auto-reply uses codex
-  outbox up                          # serve ALL registered projects; switch in the UI
-
-Add flags:
-  <root>        project repo root (required positional, default ".")
-  [docs]        spec subpath under root (optional positional, default ".")
-  --agent       per-project agent preset: claude, codex, copilot
-  --agent-cmd   per-project agent command with a {prompt} token (overrides --agent)
-
-Auto-reply spawns the agent with cwd = the comment's project ROOT and that
-project's agent command, so it runs inside that repo (its CLAUDE.md/.mcp.json).
-`)
 }
 
 // resolveFlags parses -dir/-addr for the server subcommands. Precedence is
@@ -348,6 +252,7 @@ project's agent command, so it runs inside that repo (its CLAUDE.md/.mcp.json).
 func resolveFlags(name string, args []string, out io.Writer) (dir, addr string, autoReply bool, err error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(out)
+	fs.Usage = func() { usageFor(out, name) }
 	d := fs.String("dir", getenv("OUTBOX_DIR", "."), "folder of .md files to serve")
 	a := fs.String("addr", getenv("OUTBOX_ADDR", ":8181"), "listen address")
 	// -auto-reply forces the in-process agent loop ON regardless of config. The
@@ -364,7 +269,11 @@ func resolveFlags(name string, args []string, out io.Writer) (dir, addr string, 
 // binds the listener first, opens the browser, then serves (the `up` command),
 // so the browser only opens once the port is actually accepting connections.
 func serve(args []string, open bool) error {
-	dir, addr, autoReply, err := resolveFlags("serve", args, os.Stderr)
+	name := "serve"
+	if open {
+		name = "up"
+	}
+	dir, addr, autoReply, err := resolveFlags(name, args, os.Stderr)
 	if err != nil {
 		return err
 	}
@@ -375,10 +284,13 @@ func serve(args []string, open bool) error {
 		maybeAutoUpdate(config.Load(dir), os.Stdout)
 	}
 	projects := resolveProjects(dir)
-	mux, err := buildServer(dir, projects, autoReply)
+	mux, stop, err := buildServer(dir, projects, autoReply)
 	if err != nil {
 		return err
 	}
+	// http.Serve blocks until the listener errors; on return, stop the watcher so
+	// its goroutine and fsnotify handle are released (no leak in tests / re-exec).
+	defer stop()
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
@@ -398,7 +310,7 @@ func resolveProjects(dir string) []registry.Project {
 	if projects, err := registry.Load(registryPath()); err == nil && len(projects) > 0 {
 		return projects
 	}
-	return []registry.Project{{Name: "", Root: dir, Docs: "."}}
+	return []registry.Project{{Name: "", Root: dir, Docs: []string{"."}}}
 }
 
 // describeProjects renders a short human summary of what is being served, for the
@@ -425,7 +337,7 @@ func describeProjects(projects []registry.Project, dir string) string {
 // mode; two-or-more entries come from the registry. Each project keeps its OWN
 // outbox.yaml sources (loaded per project); the per-project whitelist is enforced
 // at import time (a hidden doc never enters the store).
-func buildServer(root string, projects []registry.Project, autoReplyFlag bool) (http.Handler, error) {
+func buildServer(root string, projects []registry.Project, autoReplyFlag bool) (http.Handler, func(), error) {
 	multi := !(len(projects) == 1 && projects[0].Name == "")
 
 	// Database location. Single-folder mode keeps its database inside the served
@@ -439,23 +351,24 @@ func buildServer(root string, projects []registry.Project, autoReplyFlag bool) (
 		dbDir = configHomeDir()
 	} else {
 		if err := ensureDataDir(root); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		dbDir = filepath.Join(root, ".outbox")
 	}
 	if err := os.MkdirAll(dbDir, 0o755); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	st, err := store.Open("file:" + filepath.Join(dbDir, "outbox.db"))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	// Route a document's disk write to its project's spec dir (root/docs), keyed
-	// by project name.
+	// Route a document's disk write to its project ROOT, keyed by project name.
+	// Docs are keyed relative to Root (so "docs1/a.md" vs "docs2/a.md" stay
+	// distinct), so the write target is safeJoin(root, key).
 	dirByProject := make(map[string]string, len(projects))
 	for _, p := range projects {
-		dirByProject[p.Name] = p.SpecDir()
+		dirByProject[p.Name] = p.Root
 	}
 	svc := service.New(st, func(project, path, content string) error {
 		base, ok := dirByProject[project]
@@ -496,17 +409,30 @@ func buildServer(root string, projects []registry.Project, autoReplyFlag bool) (
 	// (UI/HTTP/MCP), not just at import. Single-folder mode is one entry keyed ""
 	// carrying the real cfg, so single-dir behaviour is bit-for-bit unchanged.
 	sources := make(config.ProjectSources, len(projects))
-	// Import every project under its own name, honouring that project's own
-	// sources whitelist. Single-folder mode imports under the empty project.
+	// Import every project under its own name. A project serves the UNION of its
+	// docs subtrees; each subtree is walked but keyed relative to the project ROOT,
+	// so the same filename under two subpaths (docs1/a.md vs docs2/a.md) never
+	// collides. The per-project config (incl. its sources whitelist) loads from
+	// root/outbox.yaml and is also installed as the runtime read guard. sources is
+	// honoured within a single-root docs="." project (the classic "serve part of a
+	// repo" case, e.g. the guard test); with an explicit multi-entry docs list the
+	// docs entries themselves define the served set. Single-folder mode is one
+	// entry keyed "" whose root is the served dir.
 	for _, p := range projects {
-		specDir := p.SpecDir()
-		if err := ensureDataDir(specDir); err != nil {
-			return nil, err
-		}
-		pcfg := config.Load(specDir)
-		sources[p.Name] = pcfg
-		if err := importMarkdown(st, p.Name, specDir, pcfg.Sources); err != nil {
-			return nil, err
+		pcfg := config.Load(p.Root)
+		// The runtime coverage gates on the SAME root-relative predicate import
+		// uses: the docs union (from the registry) narrowed by the project's
+		// root-relative sources (from its outbox.yaml). Threading docs here is what
+		// hides docs OUTSIDE the current docs list (stale rows, previously-imported
+		// dirs) on every read surface — not just the sources filter.
+		sources[p.Name] = config.Coverage{Docs: p.DocRoots(), Sources: pcfg.Sources}
+		for _, specDir := range p.SpecDirs() {
+			if err := ensureDataDir(specDir); err != nil {
+				return nil, nil, err
+			}
+			if err := importMarkdown(st, p.Name, p.Root, specDir, pcfg.Sources); err != nil {
+				return nil, nil, err
+			}
 		}
 	}
 	svc.SetProjectSources(sources)
@@ -526,7 +452,24 @@ func buildServer(root string, projects []registry.Project, autoReplyFlag bool) (
 
 	sub, _ := fs.Sub(web.Dist, "dist")
 	mux.Handle("/", http.FileServer(http.FS(sub)))
-	return mux, nil
+
+	// Live reload: watch each project's spec dirs so a .md created/edited/deleted
+	// while the server runs shows up in the UI without a restart. The watcher fires
+	// docs.changed on the SSE hub DIRECTLY (never the webhook fan-out), so it can
+	// never trigger the auto-reply engine. It is best-effort: if fsnotify is
+	// unavailable the server still serves, just without live reload.
+	stop := func() {}
+	wp := make([]watcher.Project, 0, len(projects))
+	for _, p := range projects {
+		wp = append(wp, watcher.Project{Name: p.Name, Root: p.Root, SpecDirs: p.SpecDirs()})
+	}
+	if w, err := watcher.New(wp, svc, hub, 0); err != nil {
+		log.Printf("watcher: disabled (%v)", err)
+	} else {
+		w.Start()
+		stop = func() { _ = w.Close() }
+	}
+	return mux, stop, nil
 }
 
 // autoReplyNotifier decides whether the in-process auto-reply engine should be
@@ -624,6 +567,7 @@ const starterConfig = `# outbox.yaml — configuration for outbox-md.
 func initProject(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	fs.SetOutput(out)
+	fs.Usage = func() { usageFor(out, "init") }
 	dir := fs.String("dir", getenv("OUTBOX_DIR", "."), "folder to scaffold")
 	addr := fs.String("addr", getenv("OUTBOX_ADDR", ":8181"), "listen address (for the MCP URL)")
 	all := fs.Bool("all", false, "register with every supported AI client, even if not detected")
@@ -728,16 +672,20 @@ func configHomeDir() string {
 // registryPath is the global projects-registry file, under the config home.
 func registryPath() string { return filepath.Join(configHomeDir(), "projects.json") }
 
-// addProject registers a project: `outbox add <root> [docs] [--agent <preset> |
-// --agent-cmd <cmd>]`. root (required, default ".") is the project repo root;
-// docs (optional positional, default ".") is the spec subpath under root. The
+// addProject registers a project: `outbox add <root> <docs...> [--agent <preset>
+// | --agent-cmd <cmd>]`. root (required) is the project repo root and must be an
+// existing directory; docs is ONE OR MORE spec subpaths under root ("." is a
+// valid, explicit entry meaning the whole repo) — zero docs is an error. The
 // per-project agent command is resolved from --agent-cmd (an explicit command
 // with a {prompt} token, which wins) or --agent (a preset name); when neither is
 // given the project uses the global default at auto-reply time. Registration is
-// idempotent by (root, docs) and names are kept unique (see registry.Add).
+// idempotent by (root, docs-set) and names are kept unique (see registry.Add). A
+// missing/invalid argument prints the add usage + examples and returns an error.
 func addProject(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("add", flag.ContinueOnError)
 	fs.SetOutput(out)
+	// On a bad flag, print the add usage + examples (not just Go's terse error).
+	fs.Usage = func() { usageFor(out, "add") }
 	agentPreset := fs.String("agent", "", "per-project agent preset: "+strings.Join(agentpreset.Names(), ", "))
 	agentCmd := fs.String("agent-cmd", "", "per-project agent command with a {prompt} token (overrides --agent)")
 	// Go's flag package stops at the first positional, so `add <root> <docs>
@@ -756,14 +704,17 @@ func addProject(args []string, out io.Writer) error {
 		positionals = append(positionals, fs.Arg(0))
 		rest = fs.Args()[1:]
 	}
-	root := "."
-	if len(positionals) > 0 {
-		root = positionals[0]
+	// root + at least one docs are required. Zero positionals (no root) or a single
+	// positional (root but no docs) both fail with the add help + examples.
+	if len(positionals) < 2 {
+		usageFor(out, "add")
+		if len(positionals) == 0 {
+			return fmt.Errorf("add requires a project root and at least one docs path")
+		}
+		return fmt.Errorf("add requires at least one docs path (use \".\" for the whole repo)")
 	}
-	docs := "."
-	if len(positionals) > 1 {
-		docs = positionals[1]
-	}
+	root := positionals[0]
+	docs := positionals[1:]
 	// Resolve the agent command: --agent-cmd (explicit) wins over --agent (preset);
 	// empty when neither is set (the project inherits the global default).
 	agent := strings.TrimSpace(*agentCmd)
@@ -778,7 +729,7 @@ func addProject(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "registered project %q → %s (docs: %s)", p.Name, p.Root, p.Docs)
+	fmt.Fprintf(out, "registered project %q → %s (docs: %s)", p.Name, p.Root, strings.Join(p.Docs, ", "))
 	if p.Agent != "" {
 		fmt.Fprintf(out, " [agent: %s]", p.Agent)
 	}
@@ -786,49 +737,78 @@ func addProject(args []string, out io.Writer) error {
 	return nil
 }
 
-// removeProject unregisters a project by name or path.
-func removeProject(args []string, out io.Writer) error {
+// removeProject unregisters registered projects (or individual docs subpaths).
+// With a name/root argument it removes the WHOLE matching project (the
+// non-interactive, back-compatible shortcut); an unknown ref is an error. With no
+// argument it runs the interactive multiselect (rows = every project × each of its
+// docs), removing the ticked docs entries and dropping any project whose last
+// docs entry goes. When stdin is not a terminal and no argument is given it prints
+// a hint and returns an error rather than hanging — mirroring the settings guard.
+func removeProject(args []string, out io.Writer, stdin io.Reader) error {
 	fs := flag.NewFlagSet("remove", flag.ContinueOnError)
 	fs.SetOutput(out)
+	fs.Usage = func() { usageFor(out, "remove") }
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+
+	// No argument: interactive multiselect, guarded against a non-TTY stdin.
 	if fs.NArg() == 0 {
-		return fmt.Errorf("usage: outbox remove <name|path>")
+		if !isTerminal(stdin) {
+			return fmt.Errorf("remove needs a project name (non-interactive), or run in a terminal for multiselect")
+		}
+		return removeInteractive(out, stdin)
 	}
+
+	// `remove <name|root>`: remove the whole matching project (back-compat).
 	ref := fs.Arg(0)
 	removed, err := registry.Remove(registryPath(), ref)
 	if err != nil {
 		return err
 	}
 	if !removed {
-		fmt.Fprintf(out, "no project matching %q\n", ref)
-		return nil
+		return fmt.Errorf("no project matching %q", ref)
 	}
 	fmt.Fprintf(out, "removed project %q\n", ref)
 	return nil
 }
 
-// listProjectsCmd prints the registered projects.
+// listProjectsCmd prints the registered projects: name, its root + docs
+// location(s), and [agent] when set.
 func listProjectsCmd(out io.Writer) error {
 	projects, err := registry.List(registryPath())
 	if err != nil {
 		return err
 	}
 	if len(projects) == 0 {
-		fmt.Fprintln(out, "no projects registered — run `outbox add [path]` to register one")
+		fmt.Fprintln(out, "no projects registered — run `outbox add <root> <docs...>` to register one")
 		return nil
 	}
 	for _, p := range projects {
-		loc := p.Root
-		if p.Docs != "" && p.Docs != "." {
-			loc = p.Root + "/" + p.Docs
-		}
-		line := fmt.Sprintf("%s\t%s", p.Name, loc)
+		line := fmt.Sprintf("%s\t%s", p.Name, projectLocations(p))
 		if p.Agent != "" {
 			line += "\t[" + p.Agent + "]"
 		}
 		fmt.Fprintln(out, line)
 	}
 	return nil
+}
+
+// projectLocations renders a project's served location(s) for `list`: the bare
+// root when it serves the whole repo (docs ["."]/empty), else the root joined
+// with each docs subpath, comma-separated.
+func projectLocations(p registry.Project) string {
+	docs := p.Docs
+	if len(docs) == 0 {
+		docs = []string{"."}
+	}
+	locs := make([]string, 0, len(docs))
+	for _, d := range docs {
+		if d == "" || d == "." {
+			locs = append(locs, p.Root)
+		} else {
+			locs = append(locs, p.Root+"/"+d)
+		}
+	}
+	return strings.Join(locs, ", ")
 }

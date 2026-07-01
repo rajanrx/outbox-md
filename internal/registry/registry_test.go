@@ -34,7 +34,7 @@ func TestAddRootDocsAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	p, err := Add(file, root, "docs/specs", "codex exec {prompt}")
+	p, err := Add(file, root, []string{"docs/specs"}, "codex exec {prompt}")
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}
@@ -44,53 +44,112 @@ func TestAddRootDocsAgent(t *testing.T) {
 	if !filepath.IsAbs(p.Root) {
 		t.Fatalf("root %q is not absolute", p.Root)
 	}
-	if p.Docs != "docs/specs" {
-		t.Fatalf("docs = %q, want docs/specs", p.Docs)
+	if len(p.Docs) != 1 || p.Docs[0] != "docs/specs" {
+		t.Fatalf("docs = %v, want [docs/specs]", p.Docs)
 	}
 	if p.Agent != "codex exec {prompt}" {
 		t.Fatalf("agent = %q, want the codex command", p.Agent)
 	}
-	if got, want := p.SpecDir(), spec; got != want {
-		t.Fatalf("SpecDir = %q, want %q", got, want)
+	if dirs := p.SpecDirs(); len(dirs) != 1 || dirs[0] != spec {
+		t.Fatalf("SpecDirs = %v, want [%q]", dirs, spec)
 	}
 
 	list, err := List(file)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list) != 1 || list[0].Root != p.Root || list[0].Docs != "docs/specs" {
+	if len(list) != 1 || list[0].Root != p.Root || len(list[0].Docs) != 1 || list[0].Docs[0] != "docs/specs" {
 		t.Fatalf("list = %v, want single entry %v", list, p)
 	}
 }
 
-// TestAddDefaultDocsIsRoot verifies an omitted docs defaults to "." (serve the
-// whole root) and an omitted agent stays empty (inherit the global default).
-func TestAddDefaultDocsIsRoot(t *testing.T) {
+// TestAddExplicitDotServesRoot verifies an explicit "." docs entry (opt into a
+// docs-only whole-repo project) serves the whole root, and an omitted agent stays
+// empty (inherit the global default).
+func TestAddExplicitDotServesRoot(t *testing.T) {
 	file := regFile(t)
 	root := t.TempDir()
-	p, err := Add(file, root, "", "")
+	p, err := Add(file, root, []string{"."}, "")
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-	if p.Docs != "." {
-		t.Fatalf("docs = %q, want .", p.Docs)
+	if len(p.Docs) != 1 || p.Docs[0] != "." {
+		t.Fatalf("docs = %v, want [.]", p.Docs)
 	}
 	if p.Agent != "" {
 		t.Fatalf("agent = %q, want empty", p.Agent)
 	}
-	if p.SpecDir() != p.Root {
-		t.Fatalf("SpecDir = %q, want root %q", p.SpecDir(), p.Root)
+	if dirs := p.SpecDirs(); len(dirs) != 1 || dirs[0] != p.Root {
+		t.Fatalf("SpecDirs = %v, want [root %q]", dirs, p.Root)
+	}
+}
+
+// TestAddZeroDocsRejected verifies that Add requires at least one docs entry —
+// an empty (or nil) docs list is an error, not a default to ".".
+func TestAddZeroDocsRejected(t *testing.T) {
+	file := regFile(t)
+	root := t.TempDir()
+	if _, err := Add(file, root, nil, ""); err == nil {
+		t.Fatal("expected error adding with a nil docs list")
+	}
+	if _, err := Add(file, root, []string{}, ""); err == nil {
+		t.Fatal("expected error adding with an empty docs list")
+	}
+	if list, _ := List(file); len(list) != 0 {
+		t.Fatalf("a rejected add must not register anything, got %v", list)
+	}
+}
+
+// TestAddMultipleDocsStoresAll verifies `add <root> d1 d2` stores both subpaths
+// (deduped), and the project serves the union.
+func TestAddMultipleDocsStoresAll(t *testing.T) {
+	file := regFile(t)
+	root := t.TempDir()
+	for _, d := range []string{"specs", "api-specs"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A duplicate entry is deduped, not stored twice.
+	p, err := Add(file, root, []string{"specs", "api-specs", "specs"}, "")
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if len(p.Docs) != 2 || p.Docs[0] != "specs" || p.Docs[1] != "api-specs" {
+		t.Fatalf("docs = %v, want [specs api-specs] (deduped)", p.Docs)
+	}
+	dirs := p.SpecDirs()
+	if len(dirs) != 2 ||
+		dirs[0] != filepath.Join(root, "specs") ||
+		dirs[1] != filepath.Join(root, "api-specs") {
+		t.Fatalf("SpecDirs = %v, want the two subpaths joined to root", dirs)
+	}
+}
+
+// TestAddBadDocsAmongGoodRejected verifies a single non-existent docs entry fails
+// the whole add (all-or-nothing), leaving nothing registered.
+func TestAddBadDocsAmongGoodRejected(t *testing.T) {
+	file := regFile(t)
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "specs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Add(file, root, []string{"specs", "nope"}, ""); err == nil {
+		t.Fatal("expected error: a missing docs entry among good ones must fail the add")
+	}
+	if list, _ := List(file); len(list) != 0 {
+		t.Fatalf("a partially-invalid add must register nothing, got %v", list)
 	}
 }
 
 func TestAddIsIdempotentByRootAndDocs(t *testing.T) {
 	file := regFile(t)
 	root := t.TempDir()
-	if _, err := Add(file, root, ".", ""); err != nil {
+	if _, err := Add(file, root, []string{"."}, ""); err != nil {
 		t.Fatal(err)
 	}
 	// Adding the same (root, docs) again must not duplicate it.
-	if _, err := Add(file, root, ".", ""); err != nil {
+	if _, err := Add(file, root, []string{"."}, ""); err != nil {
 		t.Fatal(err)
 	}
 	list, _ := List(file)
@@ -101,7 +160,7 @@ func TestAddIsIdempotentByRootAndDocs(t *testing.T) {
 
 func TestAddMissingRootErrors(t *testing.T) {
 	file := regFile(t)
-	if _, err := Add(file, filepath.Join(t.TempDir(), "does-not-exist"), ".", ""); err == nil {
+	if _, err := Add(file, filepath.Join(t.TempDir(), "does-not-exist"), []string{"."}, ""); err == nil {
 		t.Fatal("expected error adding a missing directory")
 	}
 }
@@ -112,7 +171,7 @@ func TestAddFileNotDirErrors(t *testing.T) {
 	if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Add(file, f, ".", ""); err == nil {
+	if _, err := Add(file, f, []string{"."}, ""); err == nil {
 		t.Fatal("expected error adding a file (not a directory)")
 	}
 }
@@ -124,12 +183,12 @@ func TestAddDocsTraversalRejected(t *testing.T) {
 	file := regFile(t)
 	root := t.TempDir()
 	for _, docs := range []string{"../evil", "../../etc", "/etc"} {
-		if _, err := Add(file, root, docs, ""); err == nil {
+		if _, err := Add(file, root, []string{docs}, ""); err == nil {
 			t.Fatalf("docs %q should be rejected as traversal", docs)
 		}
 	}
 	// A docs pointing at a non-existent (but non-escaping) dir is also rejected.
-	if _, err := Add(file, root, "nope", ""); err == nil {
+	if _, err := Add(file, root, []string{"nope"}, ""); err == nil {
 		t.Fatal("docs pointing at a missing dir should be rejected")
 	}
 }
@@ -144,14 +203,14 @@ func TestAddRejectsSymlinkedDocsEscapingRoot(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(root, "link")); err != nil {
 		t.Skip("symlinks unsupported here: " + err.Error())
 	}
-	if _, err := Add(file, root, "link", ""); err == nil {
+	if _, err := Add(file, root, []string{"link"}, ""); err == nil {
 		t.Fatal("docs symlink escaping root should be rejected")
 	}
 	// A real subdir under root is still accepted (fix doesn't over-reject).
 	if err := os.Mkdir(filepath.Join(root, "docs"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Add(file, root, "docs", ""); err != nil {
+	if _, err := Add(file, root, []string{"docs"}, ""); err != nil {
 		t.Fatalf("legit docs subdir wrongly rejected: %v", err)
 	}
 }
@@ -168,11 +227,11 @@ func TestAddDisambiguatesNameCollision(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	pa, err := Add(file, a, ".", "")
+	pa, err := Add(file, a, []string{"."}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	pb, err := Add(file, b, ".", "")
+	pb, err := Add(file, b, []string{"."}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,8 +246,8 @@ func TestAddDisambiguatesNameCollision(t *testing.T) {
 func TestRemoveByNameAndRoot(t *testing.T) {
 	file := regFile(t)
 	d1, d2 := t.TempDir(), t.TempDir()
-	p1, _ := Add(file, d1, ".", "")
-	p2, _ := Add(file, d2, ".", "")
+	p1, _ := Add(file, d1, []string{"."}, "")
+	p2, _ := Add(file, d2, []string{"."}, "")
 
 	// Remove by name.
 	removed, err := Remove(file, p1.Name)
@@ -217,6 +276,91 @@ func TestRemoveUnknownIsNoError(t *testing.T) {
 	}
 }
 
+// TestApplyRemovalsTrimsProject verifies removing ONE of a project's docs entries
+// leaves the project registered with the remaining entries — not dropped.
+func TestApplyRemovalsTrimsProject(t *testing.T) {
+	projects := []Project{{Name: "app", Root: "/work/app", Docs: []string{"specs", "api-specs"}}}
+	kept, applied := ApplyRemovals(projects, []DocRemoval{{Project: "app", Docs: "specs"}})
+	if len(kept) != 1 {
+		t.Fatalf("kept = %d projects, want 1", len(kept))
+	}
+	if len(kept[0].Docs) != 1 || kept[0].Docs[0] != "api-specs" {
+		t.Fatalf("docs = %v, want [api-specs]", kept[0].Docs)
+	}
+	if len(applied) != 1 || applied[0].Project != "app" || applied[0].Docs != "specs" {
+		t.Fatalf("applied = %v, want [{app specs}]", applied)
+	}
+}
+
+// TestApplyRemovalsDropsProjectOnLastDocs verifies removing a project's LAST docs
+// entry drops the whole project.
+func TestApplyRemovalsDropsProjectOnLastDocs(t *testing.T) {
+	projects := []Project{{Name: "app", Root: "/work/app", Docs: []string{"specs"}}}
+	kept, applied := ApplyRemovals(projects, []DocRemoval{{Project: "app", Docs: "specs"}})
+	if len(kept) != 0 {
+		t.Fatalf("kept = %v, want the project dropped", kept)
+	}
+	if len(applied) != 1 {
+		t.Fatalf("applied = %v, want one removal", applied)
+	}
+}
+
+// TestApplyRemovalsBatchSpanningProjects is the discriminating case: a batch that
+// removes ALL docs of one project (dropping it) AND some docs of another (trimming
+// it) in a single pass. A naive per-removal "delete then check empty" mis-handles
+// this; verify both outcomes.
+func TestApplyRemovalsBatchSpanningProjects(t *testing.T) {
+	projects := []Project{
+		{Name: "gone", Root: "/g", Docs: []string{"a", "b"}},
+		{Name: "trim", Root: "/t", Docs: []string{"x", "y", "z"}},
+		{Name: "keep", Root: "/k", Docs: []string{"."}},
+	}
+	removals := []DocRemoval{
+		{Project: "gone", Docs: "a"},
+		{Project: "gone", Docs: "b"},
+		{Project: "trim", Docs: "y"},
+	}
+	kept, applied := ApplyRemovals(projects, removals)
+	if len(kept) != 2 {
+		t.Fatalf("kept = %v, want 2 (gone dropped)", kept)
+	}
+	if kept[0].Name != "trim" || len(kept[0].Docs) != 2 || kept[0].Docs[0] != "x" || kept[0].Docs[1] != "z" {
+		t.Fatalf("trim project = %+v, want docs [x z]", kept[0])
+	}
+	if kept[1].Name != "keep" || len(kept[1].Docs) != 1 || kept[1].Docs[0] != "." {
+		t.Fatalf("keep project = %+v, want docs [.] untouched", kept[1])
+	}
+	if len(applied) != 3 {
+		t.Fatalf("applied = %v, want all 3 removals", applied)
+	}
+}
+
+// TestApplyRemovalsPureNoInputMutation verifies ApplyRemovals does not mutate the
+// caller's input slice/entries — it operates on copies.
+func TestApplyRemovalsPureNoInputMutation(t *testing.T) {
+	orig := []Project{{Name: "app", Root: "/work/app", Docs: []string{"specs", "api-specs"}}}
+	_, _ = ApplyRemovals(orig, []DocRemoval{{Project: "app", Docs: "specs"}})
+	if len(orig) != 1 || len(orig[0].Docs) != 2 {
+		t.Fatalf("input mutated: %+v", orig)
+	}
+}
+
+// TestApplyRemovalsIgnoresUnknown verifies removals naming an unknown project or
+// docs entry are simply ignored (no drop, no panic, nothing applied).
+func TestApplyRemovalsIgnoresUnknown(t *testing.T) {
+	projects := []Project{{Name: "app", Root: "/work/app", Docs: []string{"specs"}}}
+	kept, applied := ApplyRemovals(projects, []DocRemoval{
+		{Project: "ghost", Docs: "specs"},
+		{Project: "app", Docs: "nope"},
+	})
+	if len(kept) != 1 || len(kept[0].Docs) != 1 || kept[0].Docs[0] != "specs" {
+		t.Fatalf("kept = %+v, want the project untouched", kept)
+	}
+	if len(applied) != 0 {
+		t.Fatalf("applied = %v, want none", applied)
+	}
+}
+
 // TestMigrateLegacyPathEntry verifies an older {name,path} registry loads as the
 // new shape: root ← path, docs ← ".", agent ← "", name preserved.
 func TestMigrateLegacyPathEntry(t *testing.T) {
@@ -239,14 +383,14 @@ func TestMigrateLegacyPathEntry(t *testing.T) {
 	if p.Root != "/work/app/docs" {
 		t.Fatalf("root = %q, want the legacy path", p.Root)
 	}
-	if p.Docs != "." {
-		t.Fatalf("docs = %q, want .", p.Docs)
+	if len(p.Docs) != 1 || p.Docs[0] != "." {
+		t.Fatalf("docs = %v, want [.]", p.Docs)
 	}
 	if p.Agent != "" {
 		t.Fatalf("agent = %q, want empty", p.Agent)
 	}
-	if p.SpecDir() != "/work/app/docs" {
-		t.Fatalf("SpecDir = %q, want the legacy path", p.SpecDir())
+	if dirs := p.SpecDirs(); len(dirs) != 1 || dirs[0] != "/work/app/docs" {
+		t.Fatalf("SpecDirs = %v, want [the legacy path]", dirs)
 	}
 }
 
@@ -283,10 +427,10 @@ func TestLoadMixedAndMalformed(t *testing.T) {
 	if len(list) != 2 {
 		t.Fatalf("mixed file lost entries: got %d, want 2 (%v)", len(list), list)
 	}
-	if list[0].Root != "/old/repo" || list[0].Docs != "." {
+	if list[0].Root != "/old/repo" || len(list[0].Docs) != 1 || list[0].Docs[0] != "." {
 		t.Errorf("legacy entry not migrated: %+v", list[0])
 	}
-	if list[1].Root != "/new/repo" || list[1].Docs != "docs/specs" {
+	if list[1].Root != "/new/repo" || len(list[1].Docs) != 1 || list[1].Docs[0] != "docs/specs" {
 		t.Errorf("modern entry corrupted: %+v", list[1])
 	}
 	if err := os.WriteFile(file, []byte(`{not json`), 0o644); err != nil {
@@ -302,7 +446,7 @@ func TestLoadMixedAndMalformed(t *testing.T) {
 func TestSaveWritesNewShape(t *testing.T) {
 	file := regFile(t)
 	root := t.TempDir()
-	if _, err := Add(file, root, ".", "claude -p {prompt}"); err != nil {
+	if _, err := Add(file, root, []string{"."}, "claude -p {prompt}"); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(file)
@@ -317,5 +461,42 @@ func TestSaveWritesNewShape(t *testing.T) {
 	}
 	if strings.Contains(s, `"path"`) {
 		t.Fatalf("saved registry still has the legacy path key:\n%s", s)
+	}
+	// docs must serialise as a JSON array, not a bare string.
+	if !strings.Contains(s, `"docs": [`) {
+		t.Fatalf("saved registry docs is not a list:\n%s", s)
+	}
+}
+
+// TestLoadDocsShapes covers the three docs on-disk shapes the loader must accept:
+// a single string (#59), a list (current), and an empty/missing list (→ ["."]).
+func TestLoadDocsShapes(t *testing.T) {
+	file := regFile(t)
+	raw := `[` +
+		`{"name":"single","root":"/a","docs":"specs"},` +
+		`{"name":"list","root":"/b","docs":["specs","api-specs"]},` +
+		`{"name":"empty","root":"/c","docs":[]},` +
+		`{"name":"nulldocs","root":"/d"}]`
+	if err := os.WriteFile(file, []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	list, err := Load(file)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(list) != 4 {
+		t.Fatalf("loaded %d entries, want 4", len(list))
+	}
+	if got := list[0].Docs; len(got) != 1 || got[0] != "specs" {
+		t.Errorf("single-string docs = %v, want [specs]", got)
+	}
+	if got := list[1].Docs; len(got) != 2 || got[0] != "specs" || got[1] != "api-specs" {
+		t.Errorf("list docs = %v, want [specs api-specs]", got)
+	}
+	if got := list[2].Docs; len(got) != 1 || got[0] != "." {
+		t.Errorf("empty-list docs = %v, want [.]", got)
+	}
+	if got := list[3].Docs; len(got) != 1 || got[0] != "." {
+		t.Errorf("missing docs = %v, want [.]", got)
 	}
 }

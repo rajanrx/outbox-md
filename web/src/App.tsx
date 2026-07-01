@@ -129,6 +129,15 @@ export default function App() {
     for (const name of ["comment.created", "comment.replied", "comment.resolved", "document.approved", "comment.updated", "suggestion.proposed", "comment.processing"]) {
       es.addEventListener(name, onEvent);
     }
+    // docs.changed is the filesystem watcher's browser-only event: a .md was
+    // created/edited/deleted on disk while the server ran. Update the doc LIST
+    // ONLY (new files appear, deleted ones vanish) — deliberately do NOT reload
+    // the open document or its threads: a reader mid-doc must not be disturbed by
+    // a background file change. Fired on the SSE hub only, never the webhook runner.
+    const onDocsChanged = () => {
+      listDocs().then((d) => setDocs(d ?? []));
+    };
+    es.addEventListener("docs.changed", onDocsChanged);
     return () => es.close();
   }, []);
 

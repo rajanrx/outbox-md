@@ -27,9 +27,13 @@ EXPOSE 8181
 VOLUME ["/data"]
 # The local CLI defaults -dir to the current directory, but the distroless
 # runtime has no working dir, so pin the served folder to the mounted /data
-# volume. The arg-less ENTRYPOINT below runs `serve`, which reads OUTBOX_DIR.
+# volume. `serve` reads OUTBOX_DIR.
 ENV OUTBOX_DIR=/data
 # Marks a container install so the CLI never tries to self-update an immutable
 # image binary (Docker updates via image pull / Watchtower instead).
 ENV OUTBOX_CONTAINER=1
+# Bare `outbox` now prints help (not a server), so the default command is an
+# EXPLICIT `serve` — the container keeps serving /data by default, while a user
+# can still override the command (e.g. `docker run … outbox-md list`).
 ENTRYPOINT ["/outbox-md"]
+CMD ["serve"]
