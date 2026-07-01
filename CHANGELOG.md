@@ -4,6 +4,66 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0](https://github.com/rajanrx/outbox-md/compare/outbox-md-v0.1.1...outbox-md-v0.2.0) (2026-07-01)
+
+
+### Features
+
+* 'AI processing' state — self-expiring hint (mark_processing MCP tool + HTTP), live badge ([0d084ec](https://github.com/rajanrx/outbox-md/commit/0d084eccac7b3e98be0647515d70925ab14cdc10))
+* anchor re-mapping across edits (R1 spike core) ([5b946a5](https://github.com/rajanrx/outbox-md/commit/5b946a54c19413214561de02d8d9d60c0758241b))
+* **api:** thread, human reply, and owner-only resolve endpoints ([e539050](https://github.com/rajanrx/outbox-md/commit/e539050c6db8e11334a6bf1c9844ae049f8fc0ac))
+* approval gate, governance webhooks, and reply re-open (backend) ([dc9ef27](https://github.com/rajanrx/outbox-md/commit/dc9ef27a1660dcf65d92e25fe6a78e1094967169))
+* comment, suggestion, and thread-message persistence ([9bb9f67](https://github.com/rajanrx/outbox-md/commit/9bb9f67023a8bbce7f8b19dee055f3225f9ca6d0))
+* **comments:** margin comments, threads, resolve, and suggestion diff panel ([e376c73](https://github.com/rajanrx/outbox-md/commit/e376c73b1b02be8728fe2d8ed532e0ac4bbc632b))
+* core domain types and id helper ([4631e36](https://github.com/rajanrx/outbox-md/commit/4631e36fddae0e4236a3e83e302831c06371ddd7))
+* **council:** AI Council server slice — candidates, submit_review, pick ([bb2af8e](https://github.com/rajanrx/outbox-md/commit/bb2af8e9190cb6a30f5830366080d94fdf866c35))
+* document and version persistence ([8992bb9](https://github.com/rajanrx/outbox-md/commit/8992bb9deb331cc188f042b2d4c31941e0c9e5a7))
+* go module and /healthz endpoint ([b7b0b68](https://github.com/rajanrx/outbox-md/commit/b7b0b6849d1a4c28b63374f3d97bf3a0391af5a5))
+* http json api for the browser ui + dev simulate-agent endpoints ([01b1de3](https://github.com/rajanrx/outbox-md/commit/01b1de32d50806a0436c72b5cacaad631f7abb8a))
+* live comment updates over SSE + event-driven architecture docs ([aad67ec](https://github.com/rajanrx/outbox-md/commit/aad67ec192e0a635478bb8f1e882439048693298))
+* mcp server — 5 tools over official go sdk (read_doc, list_open_comments, claim, propose, reply) ([4d30b46](https://github.com/rajanrx/outbox-md/commit/4d30b466c832c9ef6dac34235d9165f50132823a))
+* Phase 0 foundations + v1-core walking skeleton (anchor spike proven) ([935c7ef](https://github.com/rajanrx/outbox-md/commit/935c7ef008b637213caac715723e537cdbdd4710))
+* **processing:** expose mark_processing via MCP tool and HTTP endpoint ([3c2c20c](https://github.com/rajanrx/outbox-md/commit/3c2c20cc8e253c58ad0181da18fca85b725ed228))
+* **processing:** live 'AI processing' badge in the web UI ([2ae49be](https://github.com/rajanrx/outbox-md/commit/2ae49bee0e86480ed1cf246436f3d167f117d4e4))
+* **processing:** raise default TTL to 180s ([1ffebd5](https://github.com/rajanrx/outbox-md/commit/1ffebd545cd6730c6231062e07d75901f32d9198))
+* **processing:** self-expiring processing hint on comments (domain/store/service/webhook) ([877ae0f](https://github.com/rajanrx/outbox-md/commit/877ae0fbf0a2214c46d5bf22b6e5461dd65ea40b))
+* **reader:** assemble source anchor from a rendered selection ([7207db2](https://github.com/rajanrx/outbox-md/commit/7207db254a1195f6feea7f2f73bcfa3675a8515f))
+* **reader:** document sidebar + compose the full review UI ([619896b](https://github.com/rajanrx/outbox-md/commit/619896bf2ca7a58533b23448a65094b26f2570a0))
+* **reader:** rendered markdown reader with gfm, highlighting, mermaid ([4ec5d94](https://github.com/rajanrx/outbox-md/commit/4ec5d94c9a6e21c103d6a1df9cbfa9d489340bff))
+* **reader:** rendered→source offset mapping (anchor spike core) ([0cc546f](https://github.com/rajanrx/outbox-md/commit/0cc546f455c49849e590f23ea1bc18d09c0b1c7a))
+* **reader:** source-position plugin + block-scoped selection offsets ([3e69618](https://github.com/rajanrx/outbox-md/commit/3e69618b78ddb25905e00361dd4a7b1a8758c63f))
+* scaffold vite react-ts frontend ([cdac2e2](https://github.com/rajanrx/outbox-md/commit/cdac2e2aed42d9ff58745d47cfe5a053401c72f6))
+* service loop with accept + re-anchoring (hypothesis proven) ([a2e0ece](https://github.com/rajanrx/outbox-md/commit/a2e0ecec38da1df72debae9909958e917c227172))
+* skeleton frontend (textarea editor, outbox, suggestion, accept) ([031e208](https://github.com/rajanrx/outbox-md/commit/031e208e9af5bbecfb2a5fd0b33499d52f9a1a9a))
+* sqlite store open + schema migration ([ddf55ce](https://github.com/rajanrx/outbox-md/commit/ddf55cec505f0de1609700aadd93958369cc2571))
+* **suggestion:** backend reject endpoint (reopens the comment) ([bc6c58e](https://github.com/rajanrx/outbox-md/commit/bc6c58e614cc0747bf664bc44557ca4bcd4d75af))
+* **ui:** premium 'Manuscript Desk' redesign — IDE chrome, file tree, collapsible panels ([36749e6](https://github.com/rajanrx/outbox-md/commit/36749e655935512ea725ffb41391995847b4c97e))
+* **web:** approval confirmation modal + comments-resolved gate ([13f59a4](https://github.com/rajanrx/outbox-md/commit/13f59a4d57b902d120208bee022ccaa4ad2ec938))
+* wire server — embed spa, import md folder, mount api + mcp over http ([5f64ad1](https://github.com/rajanrx/outbox-md/commit/5f64ad1158d9fb37264a0759fa2aff2fbba688db))
+
+
+### Bug Fixes
+
+* accept-level transaction + compensation; preserve file mode/ownership on atomic write ([47f6e1c](https://github.com/rajanrx/outbox-md/commit/47f6e1c1ae9645c6905836a0aaa0a07b5874d4df))
+* **config:** apply env overrides when no outbox.yaml exists ([5776d33](https://github.com/rajanrx/outbox-md/commit/5776d33d2c2188cddaf9101fd73129e18541815f))
+* **config:** apply env overrides when no outbox.yaml exists (webhooks silently disabled) ([7508928](https://github.com/rajanrx/outbox-md/commit/7508928699119b1d6a04b8e6424c7baed2f64bc0))
+* **council:** terminal-state guard on pick, validate lens, split GET errors, propagate writes ([dd8d5db](https://github.com/rajanrx/outbox-md/commit/dd8d5dbdff3761a0851e51b60e8ecb85956ac12f))
+* **docker:** cross-compile multi-arch (no QEMU hang) + lead README with published image ([0d62bbf](https://github.com/rajanrx/outbox-md/commit/0d62bbf4e3f9ef7bb2dc622852898e247a81a709))
+* **docker:** cross-compile multi-arch (unhang the publish) + surface published image in README ([74347bf](https://github.com/rajanrx/outbox-md/commit/74347bf612ddabc20be61c35b150bedfa90565ce))
+* empty doc no longer crashes the UI; default compose to docs/specs ([684a8eb](https://github.com/rajanrx/outbox-md/commit/684a8eb1b67dc92a83f6096b1a766e82181c6924))
+* harden file-write path against traversal (safeJoin guard) ([2543ce4](https://github.com/rajanrx/outbox-md/commit/2543ce43e4c705af0118644acdce1f6c373aa6e2))
+* make losing-accept requeue conditional to avoid lifecycle corruption ([125da54](https://github.com/rajanrx/outbox-md/commit/125da542197b289b8f351dfdb963f6daeb3711ff))
+* **reader:** rune-offset anchors, block-only source-pos, mermaid whole-block, liveness polling ([1acdcfb](https://github.com/rajanrx/outbox-md/commit/1acdcfbb04a2ae93acf434a20857d63cc015c4d6))
+* refresh on SSE reconnect, accurate hub comment, README anchor, disconnect test ([42cfab8](https://github.com/rajanrx/outbox-md/commit/42cfab84ba5881368fc9a97aa12f4cd4627b58cd))
+* reject stale/duplicate accepts and write file before advancing version ([0665a46](https://github.com/rajanrx/outbox-md/commit/0665a469b587984bdabec7ec4b355cd01a0a206b))
+* **runner:** default-deny unsigned, body size cap, py sig guard + README ref ([b463fd7](https://github.com/rajanrx/outbox-md/commit/b463fd79b17524726b70658f2e0833fda8f0cc7a))
+* serialize concurrent accepts with compare-and-swap on current version ([83f1f39](https://github.com/rajanrx/outbox-md/commit/83f1f39a310dbb598861219b5070ad24521f06eb))
+* sink-aware event short-circuit, drain webhook body, dedupe excerpt ([41f7f3f](https://github.com/rajanrx/outbox-md/commit/41f7f3f5c2527ff9d57a32003c6ac1f9d9412dbb))
+* **ui:** agent replies/suggestions update the browser live (SSE), no refresh ([ea9e499](https://github.com/rajanrx/outbox-md/commit/ea9e4999ba2bc2d55459039f941f8944149cbd5d))
+* **ui:** open comment thread re-renders live on SSE events (no refresh) ([6aca544](https://github.com/rajanrx/outbox-md/commit/6aca544537a5378fd0214202c95ce70f59b46b30))
+* **ui:** push agent replies/suggestions over SSE so the browser updates live ([8f697ee](https://github.com/rajanrx/outbox-md/commit/8f697ee6ef29b0e1f8dc070f88e3ea2bc48b1a8b))
+* **ui:** re-fetch the open thread on SSE events (agent reply appears without refresh) ([09b331f](https://github.com/rajanrx/outbox-md/commit/09b331f2652faa6b5f1d6aaef3bf7bf70f489e3e))
+
 ## [Unreleased]
 
 ### Added
