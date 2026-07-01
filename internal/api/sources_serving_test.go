@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/rajanrx/outbox-md/internal/config"
@@ -83,6 +84,35 @@ func TestCommentScopedEndpointsRespectSources(t *testing.T) {
 		if rec.Code != tc.want {
 			t.Fatalf("GET /api/comments/%s/thread = %d, want %d", tc.id, rec.Code, tc.want)
 		}
+	}
+}
+
+// P2: the dev agent endpoints carry comment ids in the body, which the
+// path-based route guard can't see — they must enforce the whitelist directly.
+func TestDevEndpointsRespectSources(t *testing.T) {
+	t.Setenv("OUTBOX_DEV", "1")
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := service.New(s, func(_, _ string) error { return nil })
+	svc.SetConfig(config.Config{Sources: []string{"docs/specs"}})
+	h := NewAPI(svc, s, sse.NewHub())
+
+	outDoc, outVer, _ := s.CreateDocument("other/out.md", "secret", "human")
+	outC, _ := s.CreateComment(domain.Comment{
+		DocID: outDoc.ID, AgainstVersionID: outVer.ID, Anchor: domain.Anchor{Start: 0, End: 6},
+		AuthorIdentity: "human", Owner: "human", Status: domain.CommentOpen,
+	})
+
+	post := func(path, body string) int {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, strings.NewReader(body)))
+		return rec.Code
+	}
+	if code := post("/api/dev/claim", `{"commentIds":["`+outC.ID+`"]}`); code != http.StatusNotFound {
+		t.Fatalf("/api/dev/claim on hidden-doc comment = %d, want 404", code)
+	}
+	if code := post("/api/dev/propose", `{"commentId":"`+outC.ID+`","token":"t","content":"x"}`); code != http.StatusNotFound {
+		t.Fatalf("/api/dev/propose on hidden-doc comment = %d, want 404", code)
 	}
 }
 

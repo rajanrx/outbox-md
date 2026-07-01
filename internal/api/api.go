@@ -221,6 +221,14 @@ func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub) http.Handler {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
+			// The route guard is path-based; these dev endpoints carry comment ids
+			// in the body, so enforce the whitelist here too.
+			for _, id := range in.CommentIDs {
+				if !commentDocServed(svc, st, id) {
+					http.Error(w, "not found", http.StatusNotFound)
+					return
+				}
+			}
 			tok, err := svc.Claim(in.CommentIDs, "dev-agent")
 			writeJSON(w, map[string]any{"token": tok}, err)
 		})
@@ -232,6 +240,10 @@ func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub) http.Handler {
 			}
 			if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if !commentDocServed(svc, st, in.CommentID) {
+				http.Error(w, "not found", http.StatusNotFound)
 				return
 			}
 			sg, err := svc.Propose(in.CommentID, in.Token, in.Content, "dev-agent")
@@ -360,6 +372,25 @@ func targetDocPath(st *store.Store, path string) (docPath string, scoped bool) {
 		return "", true
 	}
 	return "", false
+}
+
+// commentDocServed reports whether commentID's parent doc is inside the active
+// sources whitelist. Used by the body-carrying dev endpoints, which the
+// path-based guardSources cannot reach. No whitelist → always true.
+func commentDocServed(svc *service.Service, st *store.Store, commentID string) bool {
+	cfg := svc.Config()
+	if len(cfg.Sources) == 0 {
+		return true
+	}
+	c, err := st.GetComment(commentID)
+	if err != nil {
+		return false
+	}
+	doc, err := st.GetDocument(c.DocID)
+	if err != nil {
+		return false
+	}
+	return cfg.Serves(doc.Path)
 }
 
 func writeJSON(w http.ResponseWriter, v any, err error) {
