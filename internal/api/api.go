@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/rajanrx/outbox-md/internal/domain"
@@ -101,13 +102,6 @@ func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub) http.Handler {
 	mux.HandleFunc("GET /api/docs/{id}", func(w http.ResponseWriter, r *http.Request) {
 		doc, err := st.GetDocument(r.PathValue("id"))
 		if err != nil {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		// Enforce the sources whitelist at serve time: a doc imported under a
-		// broader earlier run but now outside the active whitelist is hidden
-		// (its data is preserved — narrowing sources is reversible).
-		if !svc.Config().Serves(doc.Path) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
@@ -315,7 +309,57 @@ func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub) http.Handler {
 		writeJSON(w, map[string]any{"ok": true}, nil)
 	})
 
-	return mux
+	// Enforce the sources whitelist uniformly across every doc- and
+	// comment-scoped route (GET/POST /api/docs/{id}/…, /api/comments/{id}/…),
+	// so a stale hidden-doc id can't read or mutate through any single endpoint.
+	// A single guard wrapping the mux can't miss a route the way per-handler
+	// checks could. No-op (zero extra lookups) when no whitelist is configured.
+	return guardSources(mux, svc, st)
+}
+
+// guardSources 404s any doc- or comment-scoped request whose target doc is
+// outside the active sources whitelist, before the request reaches its handler.
+func guardSources(next http.Handler, svc *service.Service, st *store.Store) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if cfg := svc.Config(); len(cfg.Sources) > 0 {
+			if docPath, scoped := targetDocPath(st, r.URL.Path); scoped && !cfg.Serves(docPath) {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// targetDocPath resolves the doc path a request targets when the path is
+// doc-scoped (/api/docs/{id}…) or comment-scoped (/api/comments/{id}…).
+// scoped is true for those paths (even when the id is unknown — then docPath is
+// "", which Serves rejects, matching the 404 the handler would return anyway);
+// false for non-scoped paths (list, config, events, suggestions/pending), which
+// do their own filtering.
+func targetDocPath(st *store.Store, path string) (docPath string, scoped bool) {
+	idAfter := func(prefix string) (string, bool) {
+		if !strings.HasPrefix(path, prefix) {
+			return "", false
+		}
+		id, _, _ := strings.Cut(strings.TrimPrefix(path, prefix), "/")
+		return id, id != ""
+	}
+	if id, ok := idAfter("/api/docs/"); ok {
+		if doc, err := st.GetDocument(id); err == nil {
+			return doc.Path, true
+		}
+		return "", true
+	}
+	if id, ok := idAfter("/api/comments/"); ok {
+		if c, err := st.GetComment(id); err == nil {
+			if doc, err := st.GetDocument(c.DocID); err == nil {
+				return doc.Path, true
+			}
+		}
+		return "", true
+	}
+	return "", false
 }
 
 func writeJSON(w http.ResponseWriter, v any, err error) {

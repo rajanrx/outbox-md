@@ -50,6 +50,42 @@ func TestServeRespectsSourcesWhitelist(t *testing.T) {
 	}
 }
 
+// P1: comment-scoped endpoints must also honour the whitelist — a stale
+// hidden-doc comment id must not read or mutate through /api/comments/{id}/…
+func TestCommentScopedEndpointsRespectSources(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := service.New(s, func(_, _ string) error { return nil })
+	svc.SetConfig(config.Config{Sources: []string{"docs/specs"}})
+	h := NewAPI(svc, s, sse.NewHub())
+
+	inDoc, inVer, _ := s.CreateDocument("docs/specs/in.md", "hello", "human")
+	outDoc, outVer, _ := s.CreateDocument("other/out.md", "secret", "human")
+	inC, _ := s.CreateComment(domain.Comment{
+		DocID: inDoc.ID, AgainstVersionID: inVer.ID, Anchor: domain.Anchor{Start: 0, End: 5},
+		AuthorIdentity: "human", Owner: "human", Status: domain.CommentOpen,
+	})
+	outC, _ := s.CreateComment(domain.Comment{
+		DocID: outDoc.ID, AgainstVersionID: outVer.ID, Anchor: domain.Anchor{Start: 0, End: 6},
+		AuthorIdentity: "human", Owner: "human", Status: domain.CommentOpen,
+	})
+
+	cases := []struct {
+		id   string
+		want int
+	}{
+		{outC.ID, http.StatusNotFound}, // hidden doc's comment → 404
+		{inC.ID, http.StatusOK},        // whitelisted doc's comment → reachable
+	}
+	for _, tc := range cases {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/comments/"+tc.id+"/thread", nil))
+		if rec.Code != tc.want {
+			t.Fatalf("GET /api/comments/%s/thread = %d, want %d", tc.id, rec.Code, tc.want)
+		}
+	}
+}
+
 // Empty/absent sources serves everything (backward-compatible).
 func TestServeEmptySourcesServesAll(t *testing.T) {
 	s, _ := store.Open(":memory:")

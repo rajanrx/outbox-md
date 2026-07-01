@@ -8,6 +8,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/rajanrx/outbox-md/internal/config"
 	"github.com/rajanrx/outbox-md/internal/store"
 )
 
@@ -80,6 +81,29 @@ func TestImportMarkdownWhitelistFolders(t *testing.T) {
 	want := []string{"a/a.md", "b/b.md"}
 	if !eq(got, want) {
 		t.Fatalf("whitelist imported %v, want %v (c excluded, nested excluded by non-recursive glob)", got, want)
+	}
+}
+
+// P2: a glob that matches a directory must NOT be recursed at import (single-
+// level, mirroring config.Config.Serves) — otherwise a nested file gets imported
+// and then hidden at serve time, an import/serve mismatch.
+func TestImportMarkdownGlobDoesNotRecurseMatchedDirs(t *testing.T) {
+	dir := t.TempDir()
+	seedTree(t, dir)
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	// "b/*" matches b/b.md (file) and b/nested (dir); the matched dir is skipped.
+	if err := importMarkdown(st, dir, []string{"b/*"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := importedPaths(t, st), []string{"b/b.md"}; !eq(got, want) {
+		t.Fatalf("glob-matched dir was recursed: imported %v, want %v", got, want)
+	}
+	// The imported set must equal what Serves would allow (no import/serve drift).
+	cfg := config.Config{Sources: []string{"b/*"}}
+	if !cfg.Serves("b/b.md") || cfg.Serves("b/nested/n.md") {
+		t.Fatalf("import/serve drift: Serves b/b.md=%v (want true), b/nested/n.md=%v (want false)",
+			cfg.Serves("b/b.md"), cfg.Serves("b/nested/n.md"))
 	}
 }
 

@@ -130,6 +130,11 @@ func importMarkdown(st *store.Store, dir string, sources []string) error {
 		if src == "" {
 			continue
 		}
+		// A plain entry names a folder served recursively (or an exact file); a
+		// glob entry matches files single-level. This mirrors config.Config.Serves
+		// exactly, so a glob like "docs/*" never imports a nested file it would
+		// then hide at serve time — use a plain folder entry to recurse.
+		isGlob := strings.ContainsAny(src, "*?[")
 		// Resolve within dir and refuse anything that escapes it. safeJoin cleans
 		// the path and rejects traversal; the glob metacharacters survive Join.
 		target, err := safeJoin(dir, src)
@@ -156,6 +161,11 @@ func importMarkdown(st *store.Store, dir string, sources []string) error {
 				return err
 			}
 			if fi.IsDir() {
+				if isGlob {
+					// A glob matched a directory: don't recurse (single-level
+					// semantics, matching Serves). A plain folder entry recurses.
+					continue
+				}
 				if err := importTree(st, dir, m); err != nil {
 					return err
 				}
