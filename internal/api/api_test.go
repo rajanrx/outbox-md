@@ -20,7 +20,7 @@ import (
 func TestDocAndCommentEndpoints(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := service.New(s, func(_, _ string) error { return nil })
+	svc := service.New(s, func(_, _, _ string) error { return nil })
 	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
 	h := NewAPI(svc, s, sse.NewHub())
 
@@ -55,7 +55,7 @@ func TestDocAndCommentEndpoints(t *testing.T) {
 func TestApproveEndpointPinsBaseline(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := service.New(s, func(_, _ string) error { return nil })
+	svc := service.New(s, func(_, _, _ string) error { return nil })
 	h := NewAPI(svc, s, sse.NewHub())
 	doc, _, _ := s.CreateDocument("a.md", "v1", "human")
 
@@ -90,7 +90,7 @@ func TestApproveEndpointPinsBaseline(t *testing.T) {
 func TestApproveBlockedByUnresolvedCommentReturns409(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := service.New(s, func(_, _ string) error { return nil })
+	svc := service.New(s, func(_, _, _ string) error { return nil })
 	h := NewAPI(svc, s, sse.NewHub())
 	doc, _, _ := s.CreateDocument("a.md", "v1", "human")
 	if _, err := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 1}, "human"); err != nil {
@@ -116,7 +116,7 @@ func TestApproveBlockedByUnresolvedCommentReturns409(t *testing.T) {
 func TestDocViewIncludesBaselineContent(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := service.New(s, func(_, _ string) error { return nil })
+	svc := service.New(s, func(_, _, _ string) error { return nil })
 	h := NewAPI(svc, s, sse.NewHub())
 	doc, _, _ := s.CreateDocument("a.md", "v1", "human")
 	rrA := httptest.NewRecorder()
@@ -145,7 +145,7 @@ func TestDevClaimAndPropose(t *testing.T) {
 	t.Setenv("OUTBOX_DEV", "1")
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := service.New(s, func(_, _ string) error { return nil })
+	svc := service.New(s, func(_, _, _ string) error { return nil })
 	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
 	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
 	h := NewAPI(svc, s, sse.NewHub())
@@ -172,7 +172,7 @@ func TestDevClaimAndPropose(t *testing.T) {
 func TestDecisionLogEndpoint(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := service.New(s, func(_, _ string) error { return nil })
+	svc := service.New(s, func(_, _, _ string) error { return nil })
 	h := NewAPI(svc, s, sse.NewHub())
 
 	doc, v1, _ := s.CreateDocument("spec.md", "hello world", "human")
@@ -198,7 +198,7 @@ func TestDecisionLogEndpoint(t *testing.T) {
 func TestConfigEndpoint(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := service.New(s, func(_, _ string) error { return nil })
+	svc := service.New(s, func(_, _, _ string) error { return nil })
 	h := NewAPI(svc, s, sse.NewHub())
 
 	rr := httptest.NewRecorder()
@@ -238,7 +238,7 @@ func TestConfigEndpoint(t *testing.T) {
 func TestEventsStreamDeliversEvent(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := service.New(s, func(_, _ string) error { return nil })
+	svc := service.New(s, func(_, _, _ string) error { return nil })
 	hub := sse.NewHub()
 	svc.SetWebhook(hub) // PostComment fires comment.created into the hub
 	doc, _, _ := s.CreateDocument("e.md", "Hello world", "human")
@@ -290,7 +290,7 @@ func TestEventsStreamDeliversEvent(t *testing.T) {
 func TestEventsStreamUnsubscribesOnDisconnect(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := service.New(s, func(_, _ string) error { return nil })
+	svc := service.New(s, func(_, _, _ string) error { return nil })
 	hub := sse.NewHub()
 
 	srv := httptest.NewServer(NewAPI(svc, s, hub))

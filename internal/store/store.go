@@ -43,10 +43,21 @@ func migrate(db *sql.DB) error {
 		`ALTER TABLE documents ADD COLUMN approved_version_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE comments ADD COLUMN post_approval INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE comments ADD COLUMN processing_until TEXT`,
+		// Multi-project: docs are keyed by (project, path). A pre-existing database
+		// gets the column here; fresh databases already have it from schema.sql.
+		`ALTER TABLE documents ADD COLUMN project TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 			return err
 		}
+	}
+	// Enforce the (project, path) key on legacy databases too (fresh ones already
+	// have it from schema.sql). Idempotent — a no-op once the index exists. Legacy
+	// databases still carry the original standalone UNIQUE(path) from their first
+	// CREATE TABLE; that is harmless because legacy data is all project '' (the
+	// single-folder mode), so path stays unique within that one project.
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_project_path ON documents(project, path)`); err != nil {
+		return err
 	}
 	return nil
 }

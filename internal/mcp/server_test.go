@@ -15,7 +15,7 @@ import (
 func TestServerRegistersProcessOutboxPrompt(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := service.New(s, func(_, _ string) error { return nil })
+	svc := service.New(s, func(_, _, _ string) error { return nil })
 	srv := NewServer(&Handlers{Svc: svc, St: s})
 
 	ctx := context.Background()

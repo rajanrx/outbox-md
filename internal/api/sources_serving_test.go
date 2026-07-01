@@ -20,7 +20,7 @@ import (
 func TestServeRespectsSourcesWhitelist(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := service.New(s, func(_, _ string) error { return nil })
+	svc := service.New(s, func(_, _, _ string) error { return nil })
 	svc.SetConfig(config.Config{Sources: []string{"docs/specs"}})
 	h := NewAPI(svc, s, sse.NewHub())
 
@@ -56,7 +56,7 @@ func TestServeRespectsSourcesWhitelist(t *testing.T) {
 func TestCommentScopedEndpointsRespectSources(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := service.New(s, func(_, _ string) error { return nil })
+	svc := service.New(s, func(_, _, _ string) error { return nil })
 	svc.SetConfig(config.Config{Sources: []string{"docs/specs"}})
 	h := NewAPI(svc, s, sse.NewHub())
 
@@ -93,7 +93,7 @@ func TestDevEndpointsRespectSources(t *testing.T) {
 	t.Setenv("OUTBOX_DEV", "1")
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := service.New(s, func(_, _ string) error { return nil })
+	svc := service.New(s, func(_, _, _ string) error { return nil })
 	svc.SetConfig(config.Config{Sources: []string{"docs/specs"}})
 	h := NewAPI(svc, s, sse.NewHub())
 
@@ -120,7 +120,7 @@ func TestDevEndpointsRespectSources(t *testing.T) {
 func TestServeEmptySourcesServesAll(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := service.New(s, func(_, _ string) error { return nil })
+	svc := service.New(s, func(_, _, _ string) error { return nil })
 	h := NewAPI(svc, s, sse.NewHub())
 
 	s.CreateDocument("docs/specs/in.md", "a", "import")

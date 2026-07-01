@@ -8,6 +8,7 @@ import (
 	"github.com/rajanrx/outbox-md/internal/anchor"
 	"github.com/rajanrx/outbox-md/internal/config"
 	"github.com/rajanrx/outbox-md/internal/domain"
+	"github.com/rajanrx/outbox-md/internal/registry"
 	"github.com/rajanrx/outbox-md/internal/store"
 	"github.com/rajanrx/outbox-md/internal/webhook"
 )
@@ -31,19 +32,30 @@ const DefaultProcessingTTL = 180 * time.Second
 const ReceivedTTL = 30 * time.Second
 
 type Service struct {
-	store     *store.Store
-	writeFile func(path, content string) error
+	store *store.Store
+	// writeFile persists a document's content to disk. It receives the document's
+	// project so the caller can route the write to the correct project folder; the
+	// empty project is the single-folder mode.
+	writeFile func(project, path, content string) error
 	cfg       config.Config
 	notify    webhook.Notifier
+	projects  []registry.Project
 }
 
-func New(st *store.Store, writeFile func(path, content string) error) *Service {
+func New(st *store.Store, writeFile func(project, path, content string) error) *Service {
 	return &Service{store: st, writeFile: writeFile, cfg: config.Defaults(), notify: webhook.Nop{}}
 }
 
 // SetConfig replaces the effective configuration (called once at startup with
 // the loaded outbox.yaml).
 func (s *Service) SetConfig(cfg config.Config) { s.cfg = cfg }
+
+// SetProjects records the registered projects being served (for the projects
+// API). The single-folder mode passes a single entry with an empty name.
+func (s *Service) SetProjects(p []registry.Project) { s.projects = p }
+
+// Projects returns the projects being served (read-only view for the API).
+func (s *Service) Projects() []registry.Project { return s.projects }
 
 // SetWebhook installs the notifier fired on governance events. Defaults to a
 // no-op; main wires in an HTTP notifier when a webhook URL is configured.
@@ -541,13 +553,13 @@ func (s *Service) Accept(commentID string) (domain.Version, error) {
 	} else {
 		writeFn := func(v domain.Version) error {
 			wrote = true
-			return s.writeFile(doc.Path, v.Content)
+			return s.writeFile(doc.Project, doc.Path, v.Content)
 		}
 		newVer, err = s.store.AddVersionTx(doc.ID, oldVer.ID, sg.ProposedContent, sg.CreatedBy, writeFn)
 	}
 	if err != nil {
 		if wrote {
-			_ = s.writeFile(doc.Path, oldVer.Content)
+			_ = s.writeFile(doc.Project, doc.Path, oldVer.Content)
 		}
 		if errors.Is(err, store.ErrVersionConflict) {
 			// Lost the race: re-queue so the agent can re-propose against the new
@@ -651,11 +663,11 @@ func (s *Service) Reapprove(docID, note string) (domain.Approval, error) {
 	wrote := false
 	err = s.store.ReapproveTx(docID, doc.CurrentVersionID, ver.Content, func() error {
 		wrote = true
-		return s.writeFile(doc.Path, ver.Content)
+		return s.writeFile(doc.Project, doc.Path, ver.Content)
 	})
 	if err != nil {
 		if wrote {
-			_ = s.writeFile(doc.Path, oldBaseline.Content)
+			_ = s.writeFile(doc.Project, doc.Path, oldBaseline.Content)
 		}
 		if errors.Is(err, store.ErrVersionConflict) {
 			return domain.Approval{}, errors.New("document changed during re-approval; retry")

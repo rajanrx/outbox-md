@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { listDocs, getDoc, approve, reapprove, type DocView } from "./api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { listDocs, listProjects, getDoc, approve, reapprove, type DocView, type Project } from "./api";
 import { FileTree } from "./docs/FileTree";
 import { Reader } from "./reader/Reader";
 import { Margin } from "./comments/Margin";
@@ -26,9 +26,14 @@ const COMMENTS_W_KEY = "outbox.commentsWidth";
 const clampW = (w: number) => Math.min(760, Math.max(300, w));
 const TREE_W_KEY = "outbox.treeWidth";
 const clampTreeW = (w: number) => Math.min(560, Math.max(180, w));
+const PROJECT_KEY = "outbox.project";
 
 export default function App() {
-  const [docs, setDocs] = useState<{ id: string; path: string }[]>([]);
+  const [docs, setDocs] = useState<{ id: string; path: string; project: string }[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  // Selected project name; persisted so a reload keeps the same project. The
+  // empty string is the single-folder mode (no switcher shown).
+  const [project, setProject] = useState<string>(() => localStorage.getItem(PROJECT_KEY) ?? "");
   const [docId, setDocId] = useState("");
   const [view, setView] = useState<DocView | null>(null);
   const [treeOpen, setTreeOpen] = useState(true);
@@ -127,16 +132,35 @@ export default function App() {
     return () => es.close();
   }, []);
 
+  useEffect(() => { listDocs().then((d) => setDocs(d ?? [])); }, []);
+  // Load the registered projects; keep the stored selection if it is still valid,
+  // otherwise fall back to the first project (single-folder mode → empty name).
   useEffect(() => {
-    listDocs().then((d) => {
-      const list = d ?? [];
-      setDocs(list);
-      if (!list.length) return;
-      const wantPath = new URLSearchParams(window.location.search).get("doc");
-      const match = wantPath ? list.find((x) => x.path === wantPath) : undefined;
-      setDocId(match ? match.id : list[0].id);
+    listProjects().then((ps) => {
+      setProjects(ps);
+      setProject((cur) => (ps.some((p) => p.name === cur) ? cur : ps[0]?.name ?? ""));
     });
   }, []);
+  useEffect(() => { localStorage.setItem(PROJECT_KEY, project); }, [project]);
+
+  // Show the switcher only with 2+ projects — single-folder UX stays uncluttered.
+  const multiProject = projects.length > 1;
+  // Docs visible in the tree: filtered to the selected project when multi-project,
+  // otherwise every doc (single-folder mode, back-compat).
+  const visibleDocs = useMemo(
+    () => (multiProject ? docs.filter((d) => d.project === project) : docs),
+    [docs, project, multiProject],
+  );
+
+  // Pick an open document within the visible set: keep the current one if it is
+  // still visible, else restore the ?doc= path, else the first visible doc.
+  useEffect(() => {
+    if (!visibleDocs.length) { if (docId) setDocId(""); return; }
+    if (visibleDocs.some((d) => d.id === docId)) return;
+    const wantPath = new URLSearchParams(window.location.search).get("doc");
+    const match = wantPath ? visibleDocs.find((x) => x.path === wantPath) : undefined;
+    setDocId(match ? match.id : visibleDocs[0].id);
+  }, [visibleDocs, docId]);
   // Reflect the open document in the URL (?doc=<path>) so refresh restores it.
   // replaceState (not pushState) to avoid history-stack spam.
   useEffect(() => {
@@ -174,6 +198,18 @@ export default function App() {
     <div className="app-shell">
       <div className="topbar" style={{ position: "relative" }}>
         <div className="brand"><span className="dot" /><b>outbox</b><span>·md</span></div>
+        {multiProject && (
+          <select
+            className="project-switcher"
+            value={project}
+            onChange={(e) => setProject(e.target.value)}
+            title="Switch project"
+          >
+            {projects.map((p) => (
+              <option key={p.name} value={p.name}>{p.name || "(root)"}</option>
+            ))}
+          </select>
+        )}
         {crumbs.length > 0 && (
           <div className="crumbs">
             {crumbs.slice(0, -1).map((c, i) => (
@@ -232,7 +268,7 @@ export default function App() {
         <aside className={"tree-panel" + (treeOpen ? "" : " collapsed")} style={{ width: treeOpen ? treeW : 0 }}>
           {treeOpen && <div className="tree-resize-handle" onMouseDown={startTreeResize} title="Drag to resize" />}
           <div className="panel-head">Explorer</div>
-          <div className="panel-body"><FileTree docs={docs} activeId={docId} onSelect={setDocId} /></div>
+          <div className="panel-body"><FileTree docs={visibleDocs} activeId={docId} onSelect={setDocId} /></div>
         </aside>
 
         <main className="reader-pane">

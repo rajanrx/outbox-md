@@ -15,7 +15,7 @@ import (
 func TestServerRegistersSubmitReview(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := service.New(s, func(_, _ string) error { return nil })
+	svc := service.New(s, func(_, _, _ string) error { return nil })
 	srv := NewServer(&Handlers{Svc: svc, St: s})
 
 	ctx := context.Background()
@@ -47,7 +47,7 @@ func TestServerRegistersSubmitReview(t *testing.T) {
 func TestSubmitReviewHandlerDrivesService(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := service.New(s, func(_, _ string) error { return nil })
+	svc := service.New(s, func(_, _, _ string) error { return nil })
 	h := &Handlers{Svc: svc, St: s}
 	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
 	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 6, End: 11}, "human")

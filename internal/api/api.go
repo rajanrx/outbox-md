@@ -63,6 +63,12 @@ func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub) http.Handler {
 		writeJSON(w, svc.Config(), nil)
 	})
 
+	// The projects being served: [{name, path}]. Single-folder mode returns one
+	// entry with an empty name; the UI hides the switcher when there is ≤1 project.
+	mux.HandleFunc("GET /api/projects", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, svc.Projects(), nil)
+	})
+
 	// Read-only folder view built from outbox-md's OWN data: every doc across the
 	// project that currently has a pending (proposed) suggestion, each as a
 	// current-vs-proposed pair the UI renders with its single-file diff. No git —

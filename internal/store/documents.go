@@ -7,7 +7,16 @@ import (
 	"github.com/rajanrx/outbox-md/internal/domain"
 )
 
+// CreateDocument creates a document in the single-folder (empty) project. It is
+// kept for backward compatibility with existing callers; new project-aware code
+// uses CreateDocumentInProject.
 func (s *Store) CreateDocument(path, content, createdBy string) (domain.Document, domain.Version, error) {
+	return s.CreateDocumentInProject("", path, content, createdBy)
+}
+
+// CreateDocumentInProject creates a document keyed by (project, path). Passing an
+// empty project is the single-folder mode.
+func (s *Store) CreateDocumentInProject(project, path, content, createdBy string) (domain.Document, domain.Version, error) {
 	docID := domain.NewID()
 	verID := domain.NewID()
 	tx, err := s.DB.Begin()
@@ -15,8 +24,8 @@ func (s *Store) CreateDocument(path, content, createdBy string) (domain.Document
 		return domain.Document{}, domain.Version{}, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`INSERT INTO documents(id, path, current_version_id) VALUES(?,?,?)`,
-		docID, path, verID); err != nil {
+	if _, err := tx.Exec(`INSERT INTO documents(id, project, path, current_version_id) VALUES(?,?,?,?)`,
+		docID, project, path, verID); err != nil {
 		return domain.Document{}, domain.Version{}, err
 	}
 	if _, err := tx.Exec(`INSERT INTO versions(id, doc_id, ordinal, content, created_by) VALUES(?,?,?,?,?)`,
@@ -26,7 +35,7 @@ func (s *Store) CreateDocument(path, content, createdBy string) (domain.Document
 	if err := tx.Commit(); err != nil {
 		return domain.Document{}, domain.Version{}, err
 	}
-	doc := domain.Document{ID: docID, Path: path, CurrentVersionID: verID, Status: domain.DocDraft}
+	doc := domain.Document{ID: docID, Project: project, Path: path, CurrentVersionID: verID, Status: domain.DocDraft}
 	ver := domain.Version{ID: verID, DocID: docID, Ordinal: 1, Content: content, CreatedBy: createdBy}
 	return doc, ver, nil
 }
@@ -34,19 +43,21 @@ func (s *Store) CreateDocument(path, content, createdBy string) (domain.Document
 func (s *Store) GetDocument(id string) (domain.Document, error) {
 	var d domain.Document
 	var cur *string
-	err := s.DB.QueryRow(`SELECT id, path, current_version_id, status, approved_version_id FROM documents WHERE id=?`, id).
-		Scan(&d.ID, &d.Path, &cur, &d.Status, &d.ApprovedVersionID)
+	err := s.DB.QueryRow(`SELECT id, project, path, current_version_id, status, approved_version_id FROM documents WHERE id=?`, id).
+		Scan(&d.ID, &d.Project, &d.Path, &cur, &d.Status, &d.ApprovedVersionID)
 	if cur != nil {
 		d.CurrentVersionID = *cur
 	}
 	return d, err
 }
 
-func (s *Store) GetDocumentByPath(path string) (domain.Document, bool, error) {
+// GetDocumentByPath looks up a document by its logical key (project, path). Pass
+// an empty project for the single-folder mode.
+func (s *Store) GetDocumentByPath(project, path string) (domain.Document, bool, error) {
 	var d domain.Document
 	var cur *string
-	err := s.DB.QueryRow(`SELECT id, path, current_version_id, status, approved_version_id FROM documents WHERE path=?`, path).
-		Scan(&d.ID, &d.Path, &cur, &d.Status, &d.ApprovedVersionID)
+	err := s.DB.QueryRow(`SELECT id, project, path, current_version_id, status, approved_version_id FROM documents WHERE project=? AND path=?`, project, path).
+		Scan(&d.ID, &d.Project, &d.Path, &cur, &d.Status, &d.ApprovedVersionID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Document{}, false, nil
 	}
@@ -57,7 +68,7 @@ func (s *Store) GetDocumentByPath(path string) (domain.Document, bool, error) {
 }
 
 func (s *Store) ListDocuments() ([]domain.Document, error) {
-	rows, err := s.DB.Query(`SELECT id, path, COALESCE(current_version_id,''), status, approved_version_id FROM documents ORDER BY path`)
+	rows, err := s.DB.Query(`SELECT id, project, path, COALESCE(current_version_id,''), status, approved_version_id FROM documents ORDER BY project, path`)
 	if err != nil {
 		return nil, err
 	}
@@ -65,10 +76,30 @@ func (s *Store) ListDocuments() ([]domain.Document, error) {
 	out := []domain.Document{}
 	for rows.Next() {
 		var d domain.Document
-		if err := rows.Scan(&d.ID, &d.Path, &d.CurrentVersionID, &d.Status, &d.ApprovedVersionID); err != nil {
+		if err := rows.Scan(&d.ID, &d.Project, &d.Path, &d.CurrentVersionID, &d.Status, &d.ApprovedVersionID); err != nil {
 			return nil, err
 		}
 		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// ListProjects returns the distinct non-empty project names present in the
+// document store, in name order. The single-folder mode's empty project is
+// excluded — it is not a named project.
+func (s *Store) ListProjects() ([]string, error) {
+	rows, err := s.DB.Query(`SELECT DISTINCT project FROM documents WHERE project <> '' ORDER BY project`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
 	}
 	return out, rows.Err()
 }

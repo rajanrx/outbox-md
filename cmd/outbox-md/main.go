@@ -19,6 +19,7 @@ import (
 	"github.com/rajanrx/outbox-md/internal/api"
 	"github.com/rajanrx/outbox-md/internal/config"
 	"github.com/rajanrx/outbox-md/internal/mcp"
+	"github.com/rajanrx/outbox-md/internal/registry"
 	"github.com/rajanrx/outbox-md/internal/service"
 	"github.com/rajanrx/outbox-md/internal/sse"
 	"github.com/rajanrx/outbox-md/internal/store"
@@ -125,9 +126,9 @@ func getenv(k, def string) string {
 // path relative to dir (so paths stay project-relative and disambiguate across
 // folders). Entries that escape dir are rejected; overlapping matches are
 // de-duped so a file is never imported twice.
-func importMarkdown(st *store.Store, dir string, sources []string) error {
+func importMarkdown(st *store.Store, project, dir string, sources []string) error {
 	if len(sources) == 0 {
-		return importTree(st, dir, dir)
+		return importTree(st, project, dir, dir)
 	}
 	seen := map[string]bool{}
 	for _, src := range sources {
@@ -171,11 +172,11 @@ func importMarkdown(st *store.Store, dir string, sources []string) error {
 					// semantics, matching Serves). A plain folder entry recurses.
 					continue
 				}
-				if err := importTree(st, dir, m); err != nil {
+				if err := importTree(st, project, dir, m); err != nil {
 					return err
 				}
 			} else if strings.HasSuffix(m, ".md") {
-				if err := importFile(st, dir, m); err != nil {
+				if err := importFile(st, project, dir, m); err != nil {
 					return err
 				}
 			}
@@ -185,8 +186,9 @@ func importMarkdown(st *store.Store, dir string, sources []string) error {
 }
 
 // importTree walks root recursively, importing every .md file keyed by its path
-// relative to dir. root may be dir itself or a whitelisted sub-folder.
-func importTree(st *store.Store, dir, root string) error {
+// relative to dir under the given project. root may be dir itself or a
+// whitelisted sub-folder.
+func importTree(st *store.Store, project, dir, root string) error {
 	return filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -200,22 +202,22 @@ func importTree(st *store.Store, dir, root string) error {
 		if !strings.HasSuffix(d.Name(), ".md") {
 			return nil
 		}
-		return importFile(st, dir, p)
+		return importFile(st, project, dir, p)
 	})
 }
 
-// importFile imports a single .md file at absolute path p, keyed by its path
-// relative to dir. Already-imported files are skipped.
-func importFile(st *store.Store, dir, p string) error {
+// importFile imports a single .md file at absolute path p, keyed by (project, its
+// path relative to dir). Already-imported files (same project+path) are skipped.
+func importFile(st *store.Store, project, dir, p string) error {
 	rel, _ := filepath.Rel(dir, p)
-	if _, ok, _ := st.GetDocumentByPath(rel); ok {
+	if _, ok, _ := st.GetDocumentByPath(project, rel); ok {
 		return nil
 	}
 	b, err := os.ReadFile(p)
 	if err != nil {
 		return err
 	}
-	_, _, err = st.CreateDocument(rel, string(b), "import")
+	_, _, err = st.CreateDocumentInProject(project, rel, string(b), "import")
 	return err
 }
 
@@ -256,6 +258,12 @@ func run(args []string, out io.Writer) error {
 		return serve(rest, true)
 	case "init":
 		return initProject(rest, out)
+	case "add":
+		return addProject(rest, out)
+	case "remove":
+		return removeProject(rest, out)
+	case "projects":
+		return listProjectsCmd(out)
 	case "upgrade":
 		return upgrade(out)
 	case "version", "--version", "-v":
@@ -280,6 +288,9 @@ Commands:
   serve      Serve the review UI + MCP endpoint for a folder of .md files (default)
   up         Serve, then open the browser at the review UI
   init       Scaffold outbox.yaml + register the MCP with Claude in this folder
+  add        Register a project folder (default: current directory)
+  remove     Unregister a project by name or path
+  projects   List registered projects
   upgrade    Update outbox to the latest release (self-update)
   version    Print the version
   help       Show this help
@@ -290,6 +301,11 @@ Flags (serve, up):
 
 Getting started:
   outbox init && outbox up
+
+Multiple projects:
+  outbox add ~/work/specs     # register a folder located anywhere on disk
+  outbox add ~/work/rfcs      # register another
+  outbox up                   # serve ALL registered projects; switch in the UI
 `)
 }
 
@@ -323,7 +339,8 @@ func serve(args []string, open bool) error {
 		// process (not this one) must be the one to bind the listener.
 		maybeAutoUpdate(config.Load(dir), os.Stdout)
 	}
-	mux, err := buildServer(dir)
+	projects := resolveProjects(dir)
+	mux, err := buildServer(dir, projects)
 	if err != nil {
 		return err
 	}
@@ -331,21 +348,66 @@ func serve(args []string, open bool) error {
 	if err != nil {
 		return err
 	}
-	log.Printf("outbox-md on %s serving %s (mcp at /mcp)", addr, dir)
+	log.Printf("outbox-md on %s serving %s (mcp at /mcp)", addr, describeProjects(projects, dir))
 	if open {
 		openBrowser(browseURL(addr))
 	}
 	return http.Serve(ln, mux)
 }
 
-// buildServer wires the store, service, config, event fan-out and HTTP routes
-// for dir, returning the ready handler. It is shared by `serve` and `up` so the
-// bootstrap lives in exactly one place.
-func buildServer(dir string) (http.Handler, error) {
-	if err := ensureDataDir(dir); err != nil {
-		return nil, err
+// resolveProjects returns the projects to serve. When the global registry has at
+// least one project, ALL of them are served. Otherwise it falls back to the
+// single -dir with the empty project name — so a plain `outbox up` with no
+// registry behaves exactly as it did before multi-project support.
+func resolveProjects(dir string) []registry.Project {
+	if projects, err := registry.Load(registryPath()); err == nil && len(projects) > 0 {
+		return projects
 	}
-	dbDir := filepath.Join(dir, ".outbox")
+	return []registry.Project{{Name: "", Path: dir}}
+}
+
+// describeProjects renders a short human summary of what is being served, for the
+// startup log line.
+func describeProjects(projects []registry.Project, dir string) string {
+	if len(projects) == 1 && projects[0].Name == "" {
+		return dir
+	}
+	names := make([]string, len(projects))
+	for i, p := range projects {
+		names[i] = p.Name
+	}
+	return fmt.Sprintf("%d projects [%s]", len(projects), strings.Join(names, ", "))
+}
+
+// buildServer wires the store, service, config, event fan-out and HTTP routes,
+// returning the ready handler. It is shared by `serve` and `up` so the bootstrap
+// lives in exactly one place.
+//
+// root is the folder that owns the database (root/.outbox/outbox.db) and the
+// GLOBAL config (webhook + auto_update) — in single-folder mode it is the served
+// dir, unchanged from before. projects is the set of folders to import & serve:
+// a single {Name:"", Path:root} entry is the backward-compatible single-folder
+// mode; two-or-more entries come from the registry. Each project keeps its OWN
+// outbox.yaml sources (loaded per project); the per-project whitelist is enforced
+// at import time (a hidden doc never enters the store).
+func buildServer(root string, projects []registry.Project) (http.Handler, error) {
+	multi := !(len(projects) == 1 && projects[0].Name == "")
+
+	// Database location. Single-folder mode keeps its database inside the served
+	// folder (root/.outbox/outbox.db), unchanged from before. Multi-project mode
+	// stores ONE shared database next to the registry, under the global config
+	// home — a fresh location that (a) never collides with a pre-existing
+	// single-folder database's legacy UNIQUE(path) constraint, and (b) keeps the
+	// review state independent of which directory the server was launched from.
+	var dbDir string
+	if multi {
+		dbDir = configHomeDir()
+	} else {
+		if err := ensureDataDir(root); err != nil {
+			return nil, err
+		}
+		dbDir = filepath.Join(root, ".outbox")
+	}
 	if err := os.MkdirAll(dbDir, 0o755); err != nil {
 		return nil, err
 	}
@@ -353,21 +415,46 @@ func buildServer(dir string) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	svc := service.New(st, func(path, content string) error {
-		target, err := safeJoin(dir, path)
+
+	// Route a document's disk write to its project's folder, keyed by project name.
+	dirByProject := make(map[string]string, len(projects))
+	for _, p := range projects {
+		dirByProject[p.Name] = p.Path
+	}
+	svc := service.New(st, func(project, path, content string) error {
+		base, ok := dirByProject[project]
+		if !ok {
+			return fmt.Errorf("unknown project %q", project)
+		}
+		target, err := safeJoin(base, path)
 		if err != nil {
 			return err
 		}
 		return atomicWrite(target, content)
 	})
-	cfg := config.Load(dir)
+
+	cfg := config.Load(root)
+	if multi {
+		// Only webhook + auto_update are global (loaded from root). Sources are
+		// per-project, enforced at import time below — so the root's sources must
+		// NOT leak into the runtime whitelist that gates every project's docs.
+		cfg.Sources = nil
+	}
 	svc.SetConfig(cfg)
+	svc.SetProjects(projects)
 	// One governance event fans out to two sinks: the external HTTP runner
 	// (webhook) and every open browser stream (SSE hub).
 	hub := sse.NewHub()
 	svc.SetWebhook(webhook.Fanout(webhook.New(cfg.Webhook), hub))
-	if err := importMarkdown(st, dir, cfg.Sources); err != nil {
-		return nil, err
+	// Import every project under its own name, honouring that project's own
+	// sources whitelist. Single-folder mode imports under the empty project.
+	for _, p := range projects {
+		if err := ensureDataDir(p.Path); err != nil {
+			return nil, err
+		}
+		if err := importMarkdown(st, p.Name, p.Path, config.Load(p.Path).Sources); err != nil {
+			return nil, err
+		}
 	}
 
 	mux := http.NewServeMux()
@@ -490,4 +577,84 @@ func registerMCP(out io.Writer, mcpURL string) {
 		return
 	}
 	fmt.Fprintf(out, "registered the outbox-md MCP with Claude:\n  %s\n", printable)
+}
+
+// configHomeDir resolves outbox-md's global config directory. It honours
+// XDG_CONFIG_HOME first (so the location is overridable and testable across
+// platforms, including macOS where os.UserConfigDir ignores XDG), then falls
+// back to the OS user-config directory. The directory is global: it is shared by
+// every `outbox` invocation regardless of the current directory.
+func configHomeDir() string {
+	base := os.Getenv("XDG_CONFIG_HOME")
+	if base == "" {
+		if d, err := os.UserConfigDir(); err == nil {
+			base = d
+		} else {
+			base = "." // last resort: keep the CLI usable even without a home dir
+		}
+	}
+	return filepath.Join(base, "outbox")
+}
+
+// registryPath is the global projects-registry file, under the config home.
+func registryPath() string { return filepath.Join(configHomeDir(), "projects.json") }
+
+// addProject registers a folder as a project. With no argument it registers the
+// current directory. The folder must exist; registration is idempotent by path
+// and names are kept unique (see registry.Add).
+func addProject(args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("add", flag.ContinueOnError)
+	fs.SetOutput(out)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	dir := "."
+	if fs.NArg() > 0 {
+		dir = fs.Arg(0)
+	}
+	p, err := registry.Add(registryPath(), dir)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "registered project %q → %s\n", p.Name, p.Path)
+	return nil
+}
+
+// removeProject unregisters a project by name or path.
+func removeProject(args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("remove", flag.ContinueOnError)
+	fs.SetOutput(out)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() == 0 {
+		return fmt.Errorf("usage: outbox remove <name|path>")
+	}
+	ref := fs.Arg(0)
+	removed, err := registry.Remove(registryPath(), ref)
+	if err != nil {
+		return err
+	}
+	if !removed {
+		fmt.Fprintf(out, "no project matching %q\n", ref)
+		return nil
+	}
+	fmt.Fprintf(out, "removed project %q\n", ref)
+	return nil
+}
+
+// listProjectsCmd prints the registered projects.
+func listProjectsCmd(out io.Writer) error {
+	projects, err := registry.List(registryPath())
+	if err != nil {
+		return err
+	}
+	if len(projects) == 0 {
+		fmt.Fprintln(out, "no projects registered — run `outbox add [path]` to register one")
+		return nil
+	}
+	for _, p := range projects {
+		fmt.Fprintf(out, "%s\t%s\n", p.Name, p.Path)
+	}
+	return nil
 }
