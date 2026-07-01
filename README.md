@@ -263,6 +263,19 @@ Past walking-skeleton: the review loop, governance, and audit log all work and a
 </table>
 </div>
 
+## Deploy & operate
+
+A turnkey ops layer wraps the published image and the reference runners so you don't hand-roll the commands:
+
+```bash
+make up        # start the server (docker compose) → http://localhost:8181
+make runner    # start a webhook runner detached → runner.log  (RUNNER_LANG=python|go|node)
+make status    # server containers + whether the runner port is listening
+make logs      # tail the runner
+```
+
+Run `make` on its own for the full menu. To keep the runner alive across reboots (**launchd** on macOS, **systemd --user** on Linux) and for the server → runner webhook wiring, see [`deploy/README.md`](deploy/README.md).
+
 ## Design
 
 - Core design: [`docs/specs/2026-06-27-outbox-md-design.md`](docs/specs/2026-06-27-outbox-md-design.md)
