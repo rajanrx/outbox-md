@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/mattn/go-isatty"
 	"github.com/rajanrx/outbox-md/internal/config"
 	"github.com/rajanrx/outbox-md/internal/registry"
 	"gopkg.in/yaml.v3"
@@ -128,19 +129,17 @@ func settingsCmd(args []string, out io.Writer, stdin io.Reader) error {
 	return settingsInteractive(path, out, stdin)
 }
 
-// isTerminal reports whether r is an interactive terminal. Only an *os.File whose
-// mode is a character device qualifies; a pipe, a regular file, /dev/null, or a
-// non-file reader (e.g. a test buffer) is treated as non-interactive.
+// isTerminal reports whether r is an interactive terminal. Only an *os.File
+// backed by a real tty qualifies (via an isatty ioctl, so /dev/null — a
+// character device — correctly reads as NOT a terminal); a pipe, a regular file,
+// /dev/null, or a non-file reader (e.g. a test buffer) is treated as
+// non-interactive so the interactive walkthrough never blocks on input.
 func isTerminal(r io.Reader) bool {
 	f, ok := r.(*os.File)
 	if !ok {
 		return false
 	}
-	fi, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return fi.Mode()&os.ModeCharDevice != 0
+	return isatty.IsTerminal(f.Fd()) || isatty.IsCygwinTerminal(f.Fd())
 }
 
 // printSettings writes the current effective settings (structured + read-only
