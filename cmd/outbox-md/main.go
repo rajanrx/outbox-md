@@ -26,6 +26,7 @@ import (
 	"github.com/rajanrx/outbox-md/internal/service"
 	"github.com/rajanrx/outbox-md/internal/sse"
 	"github.com/rajanrx/outbox-md/internal/store"
+	"github.com/rajanrx/outbox-md/internal/watcher"
 	"github.com/rajanrx/outbox-md/internal/webhook"
 	"github.com/rajanrx/outbox-md/web"
 )
@@ -336,10 +337,13 @@ func serve(args []string, open bool) error {
 		maybeAutoUpdate(config.Load(dir), os.Stdout)
 	}
 	projects := resolveProjects(dir)
-	mux, err := buildServer(dir, projects, autoReply)
+	mux, stop, err := buildServer(dir, projects, autoReply)
 	if err != nil {
 		return err
 	}
+	// http.Serve blocks until the listener errors; on return, stop the watcher so
+	// its goroutine and fsnotify handle are released (no leak in tests / re-exec).
+	defer stop()
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
@@ -386,7 +390,7 @@ func describeProjects(projects []registry.Project, dir string) string {
 // mode; two-or-more entries come from the registry. Each project keeps its OWN
 // outbox.yaml sources (loaded per project); the per-project whitelist is enforced
 // at import time (a hidden doc never enters the store).
-func buildServer(root string, projects []registry.Project, autoReplyFlag bool) (http.Handler, error) {
+func buildServer(root string, projects []registry.Project, autoReplyFlag bool) (http.Handler, func(), error) {
 	multi := !(len(projects) == 1 && projects[0].Name == "")
 
 	// Database location. Single-folder mode keeps its database inside the served
@@ -400,16 +404,16 @@ func buildServer(root string, projects []registry.Project, autoReplyFlag bool) (
 		dbDir = configHomeDir()
 	} else {
 		if err := ensureDataDir(root); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		dbDir = filepath.Join(root, ".outbox")
 	}
 	if err := os.MkdirAll(dbDir, 0o755); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	st, err := store.Open("file:" + filepath.Join(dbDir, "outbox.db"))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Route a document's disk write to its project ROOT, keyed by project name.
@@ -472,10 +476,10 @@ func buildServer(root string, projects []registry.Project, autoReplyFlag bool) (
 		sources[p.Name] = pcfg
 		for _, specDir := range p.SpecDirs() {
 			if err := ensureDataDir(specDir); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			if err := importMarkdown(st, p.Name, p.Root, specDir, pcfg.Sources); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 	}
@@ -496,7 +500,24 @@ func buildServer(root string, projects []registry.Project, autoReplyFlag bool) (
 
 	sub, _ := fs.Sub(web.Dist, "dist")
 	mux.Handle("/", http.FileServer(http.FS(sub)))
-	return mux, nil
+
+	// Live reload: watch each project's spec dirs so a .md created/edited/deleted
+	// while the server runs shows up in the UI without a restart. The watcher fires
+	// docs.changed on the SSE hub DIRECTLY (never the webhook fan-out), so it can
+	// never trigger the auto-reply engine. It is best-effort: if fsnotify is
+	// unavailable the server still serves, just without live reload.
+	stop := func() {}
+	wp := make([]watcher.Project, 0, len(projects))
+	for _, p := range projects {
+		wp = append(wp, watcher.Project{Name: p.Name, Root: p.Root, SpecDirs: p.SpecDirs()})
+	}
+	if w, err := watcher.New(wp, svc, hub, 0); err != nil {
+		log.Printf("watcher: disabled (%v)", err)
+	} else {
+		w.Start()
+		stop = func() { _ = w.Close() }
+	}
+	return mux, stop, nil
 }
 
 // autoReplyNotifier decides whether the in-process auto-reply engine should be

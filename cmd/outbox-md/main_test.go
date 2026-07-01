@@ -364,10 +364,11 @@ func TestBuildServerMultiWiresPerProjectSourcesGuard(t *testing.T) {
 	_ = seed.Close()
 
 	// A single named project forces multi mode (DB at configHomeDir).
-	h, err := buildServer(projDir, []registry.Project{{Name: "proj", Root: projDir, Docs: []string{"."}}}, false)
+	h, stop, err := buildServer(projDir, []registry.Project{{Name: "proj", Root: projDir, Docs: []string{"."}}}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer stop()
 
 	// The narrowed-out, previously-imported doc must be absent from /api/docs.
 	rec := httptest.NewRecorder()

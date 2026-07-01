@@ -104,6 +104,40 @@ func (s *Store) ListProjects() ([]string, error) {
 	return out, rows.Err()
 }
 
+// DeleteDocument removes a document and every row that hangs off it, in one
+// transaction: its versions, comments (and each comment's suggestions, thread
+// messages, candidate sets, candidates and syntheses) and approvals. Foreign
+// keys are not enforced on this SQLite database, so the dependents are deleted
+// explicitly to avoid orphans. It is used by the filesystem watcher when a
+// served .md file is deleted or renamed away on disk. Deleting an absent id is a
+// no-op (zero rows affected everywhere), not an error.
+func (s *Store) DeleteDocument(id string) error {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// Comment-scoped children first, resolved via the doc's comment ids.
+	commentIDs := `SELECT id FROM comments WHERE doc_id=?`
+	setIDs := `SELECT id FROM candidate_sets WHERE comment_id IN (` + commentIDs + `)`
+	for _, stmt := range []string{
+		`DELETE FROM syntheses WHERE candidate_set_id IN (` + setIDs + `)`,
+		`DELETE FROM candidates WHERE candidate_set_id IN (` + setIDs + `)`,
+		`DELETE FROM candidate_sets WHERE comment_id IN (` + commentIDs + `)`,
+		`DELETE FROM suggestions WHERE comment_id IN (` + commentIDs + `)`,
+		`DELETE FROM thread_messages WHERE comment_id IN (` + commentIDs + `)`,
+		`DELETE FROM approvals WHERE doc_id=?`,
+		`DELETE FROM comments WHERE doc_id=?`,
+		`DELETE FROM versions WHERE doc_id=?`,
+		`DELETE FROM documents WHERE id=?`,
+	} {
+		if _, err := tx.Exec(stmt, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (s *Store) GetVersion(id string) (domain.Version, error) {
 	var v domain.Version
 	err := s.DB.QueryRow(

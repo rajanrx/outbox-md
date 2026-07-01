@@ -152,6 +152,56 @@ func (s *Service) SourcesRestricted() bool {
 	return len(s.cfg.Sources) > 0
 }
 
+// SyncFile reconciles the on-disk .md file keyed (project, path) into the store.
+// It is the write half of the live filesystem watcher: it creates the document
+// when absent and appends a new version when the content differs from the
+// current one. When the content is byte-identical to the current version it is a
+// no-op returning changed=false — this is what stops the server's OWN
+// accept/reapprove disk writes (atomicWrite → rename, which the watcher sees)
+// from looping back into a spurious new version. It never writes disk (the file
+// on disk is the source of truth here) and never fires webhook events, so the
+// watcher path can never re-trigger the auto-reply engine. changed reports
+// whether the store actually changed (new doc or new version), so the caller
+// only broadcasts docs.changed when there is something to see.
+func (s *Service) SyncFile(project, path, content string) (bool, error) {
+	doc, ok, err := s.store.GetDocumentByPath(project, path)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		if _, _, err := s.store.CreateDocumentInProject(project, path, content, "watch"); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	cur, err := s.store.GetVersion(doc.CurrentVersionID)
+	if err != nil {
+		return false, err
+	}
+	if cur.Content == content {
+		return false, nil
+	}
+	if _, err := s.store.AddVersion(doc.ID, content, "watch"); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// RemoveFile drops the document keyed (project, path) from the store when its
+// .md file is deleted or renamed away on disk. It returns removed=false (no
+// error) when no such document exists, so a delete event for a file the store
+// never knew about is a harmless no-op.
+func (s *Service) RemoveFile(project, path string) (bool, error) {
+	doc, ok, err := s.store.GetDocumentByPath(project, path)
+	if err != nil || !ok {
+		return false, err
+	}
+	if err := s.store.DeleteDocument(doc.ID); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (s *Service) PostComment(docID string, a domain.Anchor, author string) (domain.Comment, error) {
 	doc, err := s.store.GetDocument(docID)
 	if err != nil {
