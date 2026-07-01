@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/rajanrx/outbox-md/internal/config"
@@ -163,6 +166,135 @@ func TestEnsureDataDirRejectsFile(t *testing.T) {
 	if fi, err := os.Stat(d); err != nil || !fi.IsDir() {
 		t.Fatal("ensureDataDir should create a missing directory")
 	}
+}
+
+// TestResolveCmdRouting table-tests the arg→subcommand routing without touching
+// a live listener. Bare invocation and an explicit "serve" both select "serve"
+// (the Docker ENTRYPOINT relies on the bare case).
+func TestResolveCmdRouting(t *testing.T) {
+	cases := []struct {
+		name     string
+		args     []string
+		wantName string
+		wantRest []string
+	}{
+		{"bare selects serve", nil, "serve", nil},
+		{"explicit serve", []string{"serve"}, "serve", []string{}},
+		{"serve with flags", []string{"serve", "-dir", "x"}, "serve", []string{"-dir", "x"}},
+		{"up", []string{"up"}, "up", []string{}},
+		{"init", []string{"init"}, "init", []string{}},
+		{"version", []string{"version"}, "version", []string{}},
+		{"unknown passes through", []string{"bogus"}, "bogus", []string{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotName, gotRest := resolveCmd(tc.args)
+			if gotName != tc.wantName {
+				t.Fatalf("name = %q, want %q", gotName, tc.wantName)
+			}
+			if !eq(gotRest, tc.wantRest) {
+				t.Fatalf("rest = %v, want %v", gotRest, tc.wantRest)
+			}
+		})
+	}
+}
+
+func TestRunVersionPrints(t *testing.T) {
+	old := version
+	version = "1.2.3"
+	defer func() { version = old }()
+	var buf bytes.Buffer
+	if err := run([]string{"version"}, &buf); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(buf.String()); got != "1.2.3" {
+		t.Fatalf("version output = %q, want %q", got, "1.2.3")
+	}
+}
+
+func TestRunUnknownCommandErrorsWithUsage(t *testing.T) {
+	var buf bytes.Buffer
+	err := run([]string{"bogus"}, &buf)
+	if err == nil {
+		t.Fatal("unknown command should return a non-nil error (non-zero exit)")
+	}
+	if !strings.Contains(buf.String(), "Usage:") {
+		t.Fatalf("unknown command should print usage, got:\n%s", buf.String())
+	}
+}
+
+func TestRunHelpPrintsUsage(t *testing.T) {
+	for _, arg := range []string{"help", "-h", "--help"} {
+		var buf bytes.Buffer
+		if err := run([]string{arg}, &buf); err != nil {
+			t.Fatalf("%s: %v", arg, err)
+		}
+		if !strings.Contains(buf.String(), "Usage:") {
+			t.Fatalf("%s: expected usage output, got:\n%s", arg, buf.String())
+		}
+	}
+}
+
+// TestInitWritesConfig covers init writing a fresh outbox.yaml. lookPath is
+// stubbed so `claude` reads as absent and the test never shells out to a real
+// binary; init must still succeed and degrade to printing the manual command.
+func TestInitWritesConfig(t *testing.T) {
+	dir := t.TempDir()
+	restore := stubClaudeAbsent(t)
+	defer restore()
+
+	var buf bytes.Buffer
+	if err := run([]string{"init", "-dir", dir}, &buf); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(dir, "outbox.yaml")
+	b, err := os.ReadFile(cfg)
+	if err != nil {
+		t.Fatalf("init did not write outbox.yaml: %v", err)
+	}
+	if !strings.Contains(string(b), "sources:") {
+		t.Fatalf("starter outbox.yaml missing commented sources example:\n%s", b)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "wrote "+cfg) {
+		t.Fatalf("expected 'wrote %s' in output, got:\n%s", cfg, out)
+	}
+	// claude absent → the exact registration command must be printed, not run.
+	if !strings.Contains(out, "claude mcp add --transport http outbox-md http://localhost:8181/mcp") {
+		t.Fatalf("expected manual MCP command in output, got:\n%s", out)
+	}
+}
+
+// TestInitKeepsExistingConfig verifies init never overwrites an existing file.
+func TestInitKeepsExistingConfig(t *testing.T) {
+	dir := t.TempDir()
+	restore := stubClaudeAbsent(t)
+	defer restore()
+
+	cfg := filepath.Join(dir, "outbox.yaml")
+	if err := os.WriteFile(cfg, []byte("sources:\n  - mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := run([]string{"init", "-dir", dir}, &buf); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(cfg)
+	if string(b) != "sources:\n  - mine\n" {
+		t.Fatalf("init overwrote an existing outbox.yaml: %q", b)
+	}
+	if !strings.Contains(buf.String(), "kept existing "+cfg) {
+		t.Fatalf("expected 'kept existing' message, got:\n%s", buf.String())
+	}
+}
+
+// stubClaudeAbsent forces lookPath to report `claude` as not installed so init
+// tests exercise the graceful-degradation path without a real CLI.
+func stubClaudeAbsent(t *testing.T) (restore func()) {
+	t.Helper()
+	orig := lookPath
+	lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	return func() { lookPath = orig }
 }
 
 func TestHealthz(t *testing.T) {

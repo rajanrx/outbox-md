@@ -72,3 +72,49 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  binaries:
+    # Cross-compile the CLI for darwin/linux × amd64/arm64 and attach the static
+    # binaries + checksums to the GitHub Release that release-please just cut.
+    # These are what install.sh downloads. One job (not a matrix) so all binaries
+    # share a single checksums.txt and a single upload.
+    needs: release-please
+    if: needs.release-please.outputs.created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # main now carries the version bump + tag release-please just created.
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.25" }
+
+      - name: Read released version from the manifest
+        id: ver
+        run: echo "version=$(jq -r '.["."]' .release-please-manifest.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Cross-compile static binaries
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          mkdir -p dist
+          for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
+            os="${target%/*}"
+            arch="${target#*/}"
+            echo "building outbox_${os}_${arch}"
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build \
+              -trimpath \
+              -ldflags "-s -w -X main.version=${VERSION}" \
+              -o "dist/outbox_${os}_${arch}" ./cmd/outbox-md
+          done
+          ( cd dist && sha256sum outbox_* > checksums.txt )
+          cat dist/checksums.txt
+
+      - name: Upload binaries to the release
+        # release-please tags releases as outbox-md-v<version> (include-v-in-tag +
+        # package-name); the asset names match install.sh's outbox_<os>_<arch>.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: gh release upload "outbox-md-v${VERSION}" dist/outbox_* dist/checksums.txt --clobber

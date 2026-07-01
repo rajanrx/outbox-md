@@ -44,6 +44,43 @@ You comment. Comments enter the ordered outbox. The service **fans each event ou
 
 ---
 
+## Install
+
+One command installs the `outbox` CLI (macOS + Linux, amd64 + arm64):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rajanrx/outbox-md/main/install.sh | sh
+```
+
+Then, from a folder of `.md` specs:
+
+```bash
+outbox init      # scaffold outbox.yaml + register the MCP with Claude (if installed)
+outbox up        # serve the review UI and open it in your browser
+```
+
+The installer downloads a prebuilt binary from the latest [GitHub Release](https://github.com/rajanrx/outbox-md/releases), verifies its `checksums.txt`, and installs to `/usr/local/bin` (or `~/.local/bin`). Prefer to read it first? `curl -fsSL …/install.sh | less`.
+
+**Or via Docker** — no install, point a volume at your specs (see [Run it](#1-run-it) below):
+
+```bash
+docker run --rm -p 8181:8181 -v "$PWD/specs:/data" rajanrauniyar/outbox-md
+```
+
+### `outbox` commands
+
+| Command | What it does |
+|---|---|
+| `outbox serve` | Serve the review UI + MCP endpoint for a folder of `.md` files (the default when run with no arguments). |
+| `outbox up` | Same as `serve`, then open the browser at the review UI. |
+| `outbox init` | Scaffold `outbox.yaml` and register the MCP endpoint with the Claude CLI in the current folder. |
+| `outbox version` | Print the CLI version. |
+| `outbox help` | Show usage. |
+
+Both `serve` and `up` take `-dir` (folder to serve, default `.`) and `-addr` (listen address, default `:8181`). Precedence is flag > `OUTBOX_DIR` / `OUTBOX_ADDR` env > default.
+
+---
+
 ## 1. Run it
 
 Two ways to start the server — the **published image** (recommended; no clone) or **from source**. Either way, open **http://localhost:8181** once it's up.
