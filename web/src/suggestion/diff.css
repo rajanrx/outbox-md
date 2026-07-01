@@ -100,7 +100,10 @@
 }
 
 /* ── review modal: near-full-screen, pinned header + footer, scrolling body ── */
-.diff-modal {
+/* .modal-card.diff-modal (not just .diff-modal) so this beats governance.css's
+   .modal-card { width: min(420px, 92vw) } on specificity, not load order —
+   otherwise the diff modal is capped at 420px wide. */
+.modal-card.diff-modal {
   width: 92vw; height: 90vh; max-width: 1400px; max-height: 960px;
   display: flex; flex-direction: column; padding: 0; overflow: hidden;
 }
