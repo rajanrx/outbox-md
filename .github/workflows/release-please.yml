@@ -125,9 +125,9 @@ jobs:
           cat dist/checksums.txt
 
       - name: Upload binaries to the release
-        # release-please tags releases as outbox-md-v<version> (include-v-in-tag +
-        # package-name); the asset names match install.sh's outbox_<os>_<arch>.
+        # release-please now tags releases as v<version> (include-v-in-tag +
+        # include-component-in-tag:false); asset names match install.sh's outbox_<os>_<arch>.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.ver.outputs.version }}
-        run: gh release upload "outbox-md-v${VERSION}" dist/outbox_* dist/checksums.txt --clobber
+        run: gh release upload "v${VERSION}" dist/outbox_* dist/checksums.txt --clobber

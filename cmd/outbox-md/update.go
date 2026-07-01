@@ -31,9 +31,12 @@ var (
 	// releaseDownloadBase is the prefix for a tagged release's assets:
 	// <base>/<tag>/<asset>.
 	releaseDownloadBase = "https://github.com/rajanrx/outbox-md/releases/download"
-	// tagPrefix is stripped from a tag to get a bare X.Y.Z version, and re-added
-	// when building a download URL.
-	tagPrefix = "outbox-md-v"
+	// tagPrefix is prepended to a bare version to form the release tag when
+	// building a download URL. Releases are tagged v<version> (e.g. v0.8.0).
+	tagPrefix = "v"
+	// legacyTagPrefix is the old component-prefixed tag form (outbox-md-v0.7.0);
+	// stripped when parsing so the checker still reads pre-cutover releases.
+	legacyTagPrefix = "outbox-md-"
 )
 
 // updateCheckInterval throttles the startup update check to at most once per day.
@@ -170,7 +173,8 @@ func latestRelease() (string, error) {
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body); err != nil {
 		return "", err
 	}
-	ver := strings.TrimPrefix(body.TagName, tagPrefix)
+	// Tags are v<version>; tolerate the legacy outbox-md-v<version> form too.
+	ver := strings.TrimPrefix(strings.TrimPrefix(body.TagName, legacyTagPrefix), tagPrefix)
 	if ver == "" || ver == body.TagName {
 		return "", fmt.Errorf("release check: unexpected tag %q", body.TagName)
 	}
