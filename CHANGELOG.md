@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.1](https://github.com/rajanrx/outbox-md/compare/v0.10.0...v0.10.1) (2026-07-01)
+
+
+### Bug Fixes
+
+* render suggestion diff for replied comments (gate on live proposed suggestion, not status==addressed) ([f0096e2](https://github.com/rajanrx/outbox-md/commit/f0096e2d02701c2edb73215aa0a37ed1c6538163))
+* render the suggestion diff for replied comments (not just addressed) ([d993956](https://github.com/rajanrx/outbox-md/commit/d993956b82d4aee82847044a8cd6b7a539a9cb0c))
+* **ui:** guard suggestion render against a late fetch after terminal (PR [#53](https://github.com/rajanrx/outbox-md/issues/53) P2) ([252cf36](https://github.com/rajanrx/outbox-md/commit/252cf36ff7449b1cffc7ed0dd9b0a8dd536e2e1f))
+
 ## [0.10.0](https://github.com/rajanrx/outbox-md/compare/v0.9.0...v0.10.0) (2026-07-01)
 
 
