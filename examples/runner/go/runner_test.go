@@ -251,6 +251,88 @@ func TestSingleFlightRerun(t *testing.T) {
 	}
 }
 
+// TestReceivedAckPostedBeforeSpawn: a valid, signed comment.created triggers a
+// best-effort POST to the server's /received endpoint (untokened, body-less) so
+// the processing badge lights up instantly, and the agent still runs.
+func TestReceivedAckPostedBeforeSpawn(t *testing.T) {
+	hit := make(chan string, 1)
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/received") {
+			hit <- r.URL.Path
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer stub.Close()
+
+	cfg := Config{
+		AllowUnsigned: true,
+		MaxBodyBytes:  1 << 20,
+		Events:        parseEvents("comment.created,comment.replied"),
+		Debounce:      5 * time.Millisecond,
+		ServerURL:     stub.URL,
+	}
+	backend := &stubBackend{}
+	h := NewServer(cfg, backend).Handler()
+
+	body := []byte(`{"event":"comment.created","commentId":"cmt-123"}`)
+	rec := postEvent(t, h, cfg, "comment.created", body)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("code = %d, want 202", rec.Code)
+	}
+	select {
+	case path := <-hit:
+		if path != "/api/comments/cmt-123/received" {
+			t.Fatalf("ack path = %q, want /api/comments/cmt-123/received", path)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected a POST to /received, got none")
+	}
+	time.Sleep(40 * time.Millisecond)
+	if got := atomic.LoadInt32(&backend.calls); got != 1 {
+		t.Fatalf("agent calls = %d, want 1 (spawn still happens after the ack)", got)
+	}
+}
+
+// TestReceivedAckFailureIsNonFatal: a failing /received target must not fail the
+// webhook (still 202) nor block the debounced agent run.
+func TestReceivedAckFailureIsNonFatal(t *testing.T) {
+	// Create a server then immediately close it so the ack POST is refused fast
+	// (not a 3s timeout black hole).
+	stub := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	deadURL := stub.URL
+	stub.Close()
+
+	cfg := Config{
+		AllowUnsigned: true,
+		MaxBodyBytes:  1 << 20,
+		Events:        parseEvents("comment.created"),
+		Debounce:      5 * time.Millisecond,
+		ServerURL:     deadURL,
+	}
+	backend := &stubBackend{}
+	h := NewServer(cfg, backend).Handler()
+
+	body := []byte(`{"event":"comment.created","commentId":"cmt-9"}`)
+	rec := postEvent(t, h, cfg, "comment.created", body)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("code = %d, want 202 despite a failing ack target", rec.Code)
+	}
+	time.Sleep(40 * time.Millisecond)
+	if got := atomic.LoadInt32(&backend.calls); got != 1 {
+		t.Fatalf("agent calls = %d, want 1 (ack failure must not block the run)", got)
+	}
+}
+
+// TestServerURLDefault: RUNNER_SERVER_URL unset → the default is the MCP URL with
+// "/mcp" stripped, i.e. http://localhost:8181 (the required contract).
+func TestServerURLDefault(t *testing.T) {
+	t.Setenv("RUNNER_SERVER_URL", "")
+	t.Setenv("OUTBOX_MCP_URL", "")
+	if got := LoadConfig().ServerURL; got != "http://localhost:8181" {
+		t.Fatalf("default ServerURL = %q, want http://localhost:8181", got)
+	}
+}
+
 func TestBuildArgs(t *testing.T) {
 	args := buildArgs("claude -p {prompt} --allowedTools mcp__outbox-md__*", "do the thing now")
 	want := []string{"claude", "-p", "do the thing now", "--allowedTools", "mcp__outbox-md__*"}

@@ -137,10 +137,41 @@ export function makeHandler(cfg, runner) {
       res.end("ignored\n");
       return;
     }
+    // Acknowledge receipt to the server BEFORE the debounced spawn so the human's
+    // "AI processing…" badge appears within ~1s — even if the agent later dies
+    // before it claims. Best-effort, non-blocking, non-fatal.
+    ackReceived(cfg, event, body);
     runner.trigger();
     res.writeHead(202);
     res.end("accepted\n");
   };
+}
+
+// ackReceived fires a best-effort, non-awaited POST to the server's untokened
+// /received endpoint for the comment carried by a comment.created/comment.replied
+// event, so the processing badge lights up instantly. It never throws into the
+// caller and never blocks: any failure is logged at most. It is a no-op when the
+// event carries no comment, no server URL is configured, or the payload has no
+// comment id.
+export function ackReceived(cfg, event, body) {
+  if (event !== "comment.created" && event !== "comment.replied") return;
+  if (!cfg.serverUrl) return;
+  let commentId = "";
+  try {
+    commentId = JSON.parse(body.toString("utf8")).commentId || "";
+  } catch {
+    commentId = "";
+  }
+  if (!commentId) return;
+  const url = `${cfg.serverUrl.replace(/\/+$/, "")}/api/comments/${encodeURIComponent(commentId)}/received`;
+  try {
+    const req = http.request(url, { method: "POST", timeout: 3000 }, (res) => res.resume());
+    req.on("timeout", () => req.destroy());
+    req.on("error", (e) => console.error("runner: received-ack failed:", e.message));
+    req.end();
+  } catch (e) {
+    console.error("runner: received-ack failed:", e.message);
+  }
 }
 
 // createServer builds the HTTP server (webhook at "/", health at "/healthz").

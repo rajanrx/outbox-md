@@ -242,6 +242,22 @@ func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub) http.Handler {
 		writeJSON(w, map[string]any{"processingUntil": until.Format(time.RFC3339)}, nil)
 	})
 
+	// Runner-facing: the instant "received" ack. The runner POSTs this the moment
+	// a webhook lands — before the agent claims — so the "AI processing…" badge
+	// appears within ~1s (and shows even if the agent dies before claiming).
+	// Deliberately UNTOKENED and body-less: no agent has claimed yet, so there is
+	// no claim token to present. Kept open on purpose — it is a low-risk, ephemeral
+	// hint (self-expires in ReceivedTTL) that writes no file and changes no status.
+	// The tokened /processing endpoint extends it once the agent is working.
+	mux.HandleFunc("POST /api/comments/{id}/received", func(w http.ResponseWriter, r *http.Request) {
+		until, err := svc.MarkReceived(r.PathValue("id"))
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, map[string]any{"processingUntil": until.Format(time.RFC3339)}, nil)
+	})
+
 	mux.HandleFunc("POST /api/comments/{id}/resolve", func(w http.ResponseWriter, r *http.Request) {
 		// Caller identity is server-set (the single local human); it is never
 		// taken from the request body, so it cannot be spoofed.

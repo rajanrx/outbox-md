@@ -332,6 +332,66 @@ func TestMarkProcessingHeartbeatExtends(t *testing.T) {
 	}
 }
 
+// TestMarkReceivedIsUntokenedAndSetsFutureDeadline: the runner's instant ack
+// needs NO claim token (the comment is never claimed here), sets ProcessingUntil
+// ~now+ReceivedTTL so IsProcessing reads true, and emits comment.processing so
+// the browser badge lights up at once.
+func TestMarkReceivedIsUntokenedAndSetsFutureDeadline(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _ string) error { return nil })
+	fn := newFakeNotifier()
+	svc.SetWebhook(fn)
+	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
+	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
+	<-fn.events // drain the comment.created fired by PostComment
+
+	// No Claim call, no token — the ack must still succeed.
+	before := time.Now()
+	until, err := svc.MarkReceived(c.ID)
+	if err != nil {
+		t.Fatalf("MarkReceived should succeed without a claim token: %v", err)
+	}
+	// Deadline lands close to now+ReceivedTTL (allow slack for the store round-trip).
+	wantMin := before.Add(ReceivedTTL - time.Second)
+	wantMax := time.Now().Add(ReceivedTTL + time.Second)
+	if until.Before(wantMin) || until.After(wantMax) {
+		t.Fatalf("deadline %v not within [%v, %v] for ReceivedTTL", until, wantMin, wantMax)
+	}
+	if ev := fn.next(t); ev.Event != webhook.EventCommentProcessing {
+		t.Fatalf("event = %q, want %q", ev.Event, webhook.EventCommentProcessing)
+	}
+	got, _ := s.GetComment(c.ID)
+	if !got.IsProcessing(time.Now()) {
+		t.Error("IsProcessing = false, want true right after MarkReceived")
+	}
+	if got.ClaimToken != "" {
+		t.Errorf("ClaimToken = %q, want empty (MarkReceived must not claim)", got.ClaimToken)
+	}
+}
+
+// TestMarkReceivedUnknownComment: an ack for a comment that does not exist is an
+// error (the payload/id could not be loaded), never a silent success.
+func TestMarkReceivedUnknownComment(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _ string) error { return nil })
+	if _, err := svc.MarkReceived("no-such-comment"); err == nil {
+		t.Fatal("expected an error for an unknown comment id")
+	}
+}
+
+// TestReceivedEventStaysOutOfWebhookDefaults: co-located with the endpoint, the
+// comment.processing event MUST remain absent from the webhook's default set so
+// the runner's own ack never re-triggers the runner.
+func TestReceivedEventStaysOutOfWebhookDefaults(t *testing.T) {
+	for _, e := range config.Defaults().Webhook.Events {
+		if e == webhook.EventCommentProcessing {
+			t.Fatalf("comment.processing must not be a default webhook event (would re-trigger the runner)")
+		}
+	}
+}
+
 // TestReplyAndProposeClearProcessing: finishing a comment (reply or propose)
 // clears the processing hint so the "AI processing…" badge disappears at once.
 func TestReplyAndProposeClearProcessing(t *testing.T) {

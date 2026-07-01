@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import http from "node:http";
 import { verifySignature, eventName, Runner, createServer } from "../runner.js";
-import { parseEvents } from "../config.js";
+import { loadConfig, parseEvents } from "../config.js";
 import { buildArgs } from "../cli.js";
 
 function sign(secret, body) {
@@ -145,6 +145,82 @@ test("oversize body → 413 before auth, agent never runs", async () => {
   await new Promise((r) => setTimeout(r, 30));
   assert.equal(calls, 0, "oversize body rejected before run");
   await new Promise((r) => server.close(r));
+});
+
+// --- received ack: instant processing badge ---
+
+test("received ack POSTed to /received for a signed comment.created, agent still runs", async () => {
+  const ackHits = [];
+  let ackNotify;
+  const gotAck = new Promise((r) => (ackNotify = r));
+  const stub = http.createServer((req, res) => {
+    if (req.method === "POST" && req.url.endsWith("/received")) {
+      ackHits.push(req.url);
+      ackNotify();
+    }
+    res.writeHead(200);
+    res.end();
+  });
+  await new Promise((r) => stub.listen(0, "127.0.0.1", r));
+  const stubUrl = `http://127.0.0.1:${stub.address().port}`;
+
+  let calls = 0;
+  const cfg = {
+    secret: "shh",
+    allowUnsigned: false,
+    maxBodyBytes: 1 << 20,
+    events: parseEvents("comment.created,comment.replied"),
+    debounceMs: 5,
+    agentMode: "cli",
+    serverUrl: stubUrl,
+  };
+  const server = createServer(cfg, { run: async () => { calls += 1; } });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const base = `http://127.0.0.1:${server.address().port}/`;
+
+  const body = '{"event":"comment.created","commentId":"cmt-123"}';
+  assert.equal(await postEvent(base, { event: "comment.created", body, secret: "shh" }), 202);
+  await gotAck;
+  assert.deepEqual(ackHits, ["/api/comments/cmt-123/received"]);
+  await new Promise((r) => setTimeout(r, 40));
+  assert.equal(calls, 1, "agent still runs after the ack");
+
+  await new Promise((r) => server.close(r));
+  await new Promise((r) => stub.close(r));
+});
+
+test("received ack failure is non-fatal: webhook still 202 and agent runs", async () => {
+  let calls = 0;
+  const cfg = {
+    secret: "",
+    allowUnsigned: true,
+    maxBodyBytes: 1 << 20,
+    events: parseEvents("comment.created"),
+    debounceMs: 5,
+    agentMode: "cli",
+    serverUrl: "http://127.0.0.1:1", // connection refused fast
+  };
+  const server = createServer(cfg, { run: async () => { calls += 1; } });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const base = `http://127.0.0.1:${server.address().port}/`;
+
+  const body = '{"event":"comment.created","commentId":"cmt-9"}';
+  assert.equal(await postEvent(base, { event: "comment.created", body }), 202);
+  await new Promise((r) => setTimeout(r, 40));
+  assert.equal(calls, 1, "ack failure must not block the run");
+  await new Promise((r) => server.close(r));
+});
+
+test("serverUrl default: RUNNER_SERVER_URL unset → MCP URL with /mcp stripped", () => {
+  const saved = { s: process.env.RUNNER_SERVER_URL, m: process.env.OUTBOX_MCP_URL };
+  delete process.env.RUNNER_SERVER_URL;
+  delete process.env.OUTBOX_MCP_URL;
+  try {
+    assert.equal(loadConfig().serverUrl, "http://localhost:8181");
+  } finally {
+    if (saved.s !== undefined) process.env.RUNNER_SERVER_URL = saved.s;
+    if (saved.m !== undefined) process.env.OUTBOX_MCP_URL = saved.m;
+  }
 });
 
 // --- debounce + single-flight (executor-level, no wall-clock assertions) ---

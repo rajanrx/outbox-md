@@ -2,14 +2,17 @@
 
 import hashlib
 import hmac
+import os
 import threading
 import time
 import unittest
 import urllib.error
 import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from unittest import mock
 
 from cli import build_args
-from config import Config, parse_events
+from config import Config, load_config, parse_events
 from runner import Runner, create_server, event_name, verify_signature
 
 
@@ -151,6 +154,73 @@ class AuthPolicyHTTPTest(unittest.TestCase):
             self.assertEqual(backend.calls, 0, "oversize body rejected before run")
         finally:
             server.shutdown()
+
+
+class _AckStubHandler(BaseHTTPRequestHandler):
+    def do_POST(self):  # noqa: N802 - BaseHTTPRequestHandler API
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        if length:
+            self.rfile.read(length)
+        if self.path.endswith("/received"):
+            self.server.ack_hits.append(self.path)
+            self.server.ack_event.set()
+        self.send_response(200)
+        self.end_headers()
+
+    def log_message(self, *_args):
+        pass
+
+
+class ReceivedAckTest(unittest.TestCase):
+    def test_ack_posted_for_signed_comment_created(self):
+        stub = ThreadingHTTPServer(("127.0.0.1", 0), _AckStubHandler)
+        stub.ack_hits = []
+        stub.ack_event = threading.Event()
+        threading.Thread(target=stub.serve_forever, daemon=True).start()
+        stub_url = f"http://127.0.0.1:{stub.server_address[1]}"
+
+        cfg = Config(secret="shh", events=parse_events("comment.created,comment.replied"), debounce_ms=5, server_url=stub_url)
+        backend = _CountingBackend()
+        server = create_server(cfg, backend, "127.0.0.1", 0)
+        port = server.server_address[1]
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        base = f"http://127.0.0.1:{port}/"
+        body = b'{"event":"comment.created","commentId":"cmt-123"}'
+        headers = {"X-Outbox-Event": "comment.created", "X-Outbox-Signature": sign("shh", body)}
+        try:
+            req = urllib.request.Request(base, data=body, headers=headers, method="POST")
+            with urllib.request.urlopen(req) as resp:
+                self.assertEqual(resp.status, 202)
+            self.assertTrue(stub.ack_event.wait(2.0), "expected a POST to /received")
+            self.assertEqual(stub.ack_hits, ["/api/comments/cmt-123/received"])
+            time.sleep(0.05)
+            self.assertEqual(backend.calls, 1, "agent still runs after the ack")
+        finally:
+            server.shutdown()
+            stub.shutdown()
+
+    def test_ack_failure_is_non_fatal(self):
+        # server_url points at a closed port → connection refused fast; the webhook
+        # must still succeed and the agent must still run.
+        cfg = Config(secret="", allow_unsigned=True, events=parse_events("comment.created"), debounce_ms=5, server_url="http://127.0.0.1:1")
+        backend = _CountingBackend()
+        server = create_server(cfg, backend, "127.0.0.1", 0)
+        port = server.server_address[1]
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        base = f"http://127.0.0.1:{port}/"
+        body = b'{"event":"comment.created","commentId":"cmt-9"}'
+        try:
+            req = urllib.request.Request(base, data=body, headers={"X-Outbox-Event": "comment.created"}, method="POST")
+            with urllib.request.urlopen(req) as resp:
+                self.assertEqual(resp.status, 202)
+            time.sleep(0.05)
+            self.assertEqual(backend.calls, 1, "ack failure must not block the run")
+        finally:
+            server.shutdown()
+
+    def test_server_url_default_strips_mcp_suffix(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(load_config().server_url, "http://localhost:8181")
 
 
 class DebounceTest(unittest.TestCase):

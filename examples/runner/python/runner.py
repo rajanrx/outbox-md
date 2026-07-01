@@ -8,6 +8,7 @@ import hmac
 import json
 import sys
 import threading
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -43,6 +44,39 @@ def event_name(header: str, body: bytes) -> str:
         return json.loads(body.decode("utf-8")).get("event", "")
     except (ValueError, UnicodeDecodeError):
         return ""
+
+
+def ack_received(cfg, event: str, body: bytes):
+    """Best-effort, fire-and-forget POST to the server's untokened /received endpoint.
+
+    For a comment.created/comment.replied event it tells the server the webhook
+    landed so the human's "AI processing…" badge appears within ~1s — even if the
+    agent later dies before it claims. It runs in a daemon thread with a short
+    timeout; any failure is logged at most and never blocks or fails webhook
+    handling. No-op when the event carries no comment, no server URL is
+    configured, or the payload has no comment id.
+    """
+    if event not in ("comment.created", "comment.replied"):
+        return
+    if not cfg.server_url:
+        return
+    try:
+        comment_id = json.loads(body.decode("utf-8")).get("commentId", "")
+    except (ValueError, UnicodeDecodeError, AttributeError):
+        comment_id = ""
+    if not comment_id:
+        return
+    url = cfg.server_url.rstrip("/") + "/api/comments/" + comment_id + "/received"
+
+    def _post():
+        try:
+            req = urllib.request.Request(url, data=b"", method="POST")
+            with urllib.request.urlopen(req, timeout=3):  # noqa: S310 - operator-configured URL
+                pass
+        except Exception as e:  # noqa: BLE001 - ack failure must never propagate
+            print(f"runner: received-ack failed: {e}", file=sys.stderr)
+
+    threading.Thread(target=_post, daemon=True).start()
 
 
 class Runner:
@@ -132,6 +166,10 @@ class _Handler(BaseHTTPRequestHandler):
         if event not in cfg.events:
             self._respond(200, "ignored\n")
             return
+        # Acknowledge receipt to the server BEFORE the debounced spawn so the
+        # human's "AI processing…" badge appears within ~1s — even if the agent
+        # later dies before it claims. Best-effort, non-blocking, non-fatal.
+        ack_received(cfg, event, body)
         runner.trigger()
         self._respond(202, "accepted\n")
 
