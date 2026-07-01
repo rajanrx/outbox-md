@@ -51,11 +51,10 @@ function scrollReaderToAnchor(root: HTMLElement, source: string, anchor: { start
   pane.scrollTo({ top: pane.scrollTop + (rect.top - paneRect.top) - 140, behavior: "smooth" });
 }
 
-export function Margin({ docId, content, docPath, hasGit = false, rootRef, comments, reloadKey = 0, onChange }: {
+export function Margin({ docId, content, docPath, rootRef, comments, reloadKey = 0, onChange }: {
   docId: string;
   content: string;
   docPath: string;
-  hasGit?: boolean;
   rootRef: React.RefObject<HTMLDivElement | null>;
   comments: Comment[];
   // Bumped on each SSE event for the open doc; forwarded to the open Card so its
@@ -261,7 +260,6 @@ export function Margin({ docId, content, docPath, hasGit = false, rootRef, comme
           comment={c}
           currentContent={content}
           docPath={docPath}
-          hasGit={hasGit}
           active={c.id === focused}
           pinned={pinned.has(c.id)}
           offscreen={offscreen.has(c.id)}

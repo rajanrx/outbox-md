@@ -40,11 +40,10 @@ const PinIcon = ({ filled }: { filled: boolean }) => (
 
 const initial = (who: string) => (who?.[0] || "?").toUpperCase();
 
-export function Card({ comment, currentContent, docPath = "", hasGit = false, active = false, pinned = false, offscreen = false, reloadKey = 0, onActivate, onJump, onTogglePin, onChange }: {
+export function Card({ comment, currentContent, docPath = "", active = false, pinned = false, offscreen = false, reloadKey = 0, onActivate, onJump, onTogglePin, onChange }: {
   comment: Comment;
   currentContent: string;
   docPath?: string;
-  hasGit?: boolean;
   active?: boolean;
   pinned?: boolean;
   offscreen?: boolean;
@@ -154,7 +153,6 @@ export function Card({ comment, currentContent, docPath = "", hasGit = false, ac
           commentId={comment.id}
           currentContent={currentContent}
           title={docPath || "Suggested change"}
-          hasGit={hasGit}
           onClose={() => setDiffOpen(false)}
           onChange={onChange}
         />

@@ -13,7 +13,6 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/rajanrx/outbox-md/internal/api"
 	"github.com/rajanrx/outbox-md/internal/config"
-	gitpkg "github.com/rajanrx/outbox-md/internal/git"
 	"github.com/rajanrx/outbox-md/internal/mcp"
 	"github.com/rajanrx/outbox-md/internal/service"
 	"github.com/rajanrx/outbox-md/internal/sse"
@@ -114,13 +113,65 @@ func getenv(k, def string) string {
 	return def
 }
 
-func importMarkdown(st *store.Store, dir string) error {
-	return filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+// importMarkdown ingests .md files under dir. When sources is empty it walks the
+// whole dir (the default, backward-compatible behaviour). When non-empty, each
+// entry is a folder path OR a glob relative to dir: a folder is walked
+// recursively, a glob is expanded, and every matched .md is imported keyed by its
+// path relative to dir (so paths stay project-relative and disambiguate across
+// folders). Entries that escape dir are rejected; overlapping matches are
+// de-duped so a file is never imported twice.
+func importMarkdown(st *store.Store, dir string, sources []string) error {
+	if len(sources) == 0 {
+		return importTree(st, dir, dir)
+	}
+	seen := map[string]bool{}
+	for _, src := range sources {
+		src = strings.TrimSpace(src)
+		if src == "" {
+			continue
+		}
+		// Resolve within dir and refuse anything that escapes it. safeJoin cleans
+		// the path and rejects traversal; the glob metacharacters survive Join.
+		target, err := safeJoin(dir, src)
+		if err != nil {
+			return err
+		}
+		matches, err := filepath.Glob(target)
+		if err != nil {
+			return err
+		}
+		for _, m := range matches {
+			if seen[m] {
+				continue
+			}
+			seen[m] = true
+			fi, err := os.Stat(m)
+			if err != nil {
+				return err
+			}
+			if fi.IsDir() {
+				if err := importTree(st, dir, m); err != nil {
+					return err
+				}
+			} else if strings.HasSuffix(m, ".md") {
+				if err := importFile(st, dir, m); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// importTree walks root recursively, importing every .md file keyed by its path
+// relative to dir. root may be dir itself or a whitelisted sub-folder.
+func importTree(st *store.Store, dir, root string) error {
+	return filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.IsDir() {
-			if d.Name() == ".outbox" || (strings.HasPrefix(d.Name(), ".") && p != dir) {
+			if d.Name() == ".outbox" || (strings.HasPrefix(d.Name(), ".") && p != root) {
 				return fs.SkipDir
 			}
 			return nil
@@ -128,17 +179,23 @@ func importMarkdown(st *store.Store, dir string) error {
 		if !strings.HasSuffix(d.Name(), ".md") {
 			return nil
 		}
-		rel, _ := filepath.Rel(dir, p)
-		if _, ok, _ := st.GetDocumentByPath(rel); ok {
-			return nil
-		}
-		b, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		_, _, err = st.CreateDocument(rel, string(b), "import")
-		return err
+		return importFile(st, dir, p)
 	})
+}
+
+// importFile imports a single .md file at absolute path p, keyed by its path
+// relative to dir. Already-imported files are skipped.
+func importFile(st *store.Store, dir, p string) error {
+	rel, _ := filepath.Rel(dir, p)
+	if _, ok, _ := st.GetDocumentByPath(rel); ok {
+		return nil
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return err
+	}
+	_, _, err = st.CreateDocument(rel, string(b), "import")
+	return err
 }
 
 func main() {
@@ -169,7 +226,7 @@ func main() {
 	// (webhook) and every open browser stream (SSE hub).
 	hub := sse.NewHub()
 	svc.SetWebhook(webhook.Fanout(webhook.New(cfg.Webhook), hub))
-	if err := importMarkdown(st, dir); err != nil {
+	if err := importMarkdown(st, dir, cfg.Sources); err != nil {
 		log.Fatal(err)
 	}
 
@@ -177,11 +234,7 @@ func main() {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 	})
-	// Detect once whether the served folder is inside a git work tree; when it
-	// is, the review UI can show a folder-wide diff of changed .md files. Purely
-	// read-only — outbox never writes to git.
-	gitSvc := gitpkg.Open(dir)
-	mux.Handle("/api/", api.NewAPI(svc, st, hub, gitSvc))
+	mux.Handle("/api/", api.NewAPI(svc, st, hub))
 
 	// MCP over Streamable HTTP at /mcp — any agent connects here.
 	mcpServer := mcp.NewServer(&mcp.Handlers{Svc: svc, St: st})

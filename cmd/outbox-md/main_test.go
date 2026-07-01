@@ -5,8 +5,93 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
+
+	"github.com/rajanrx/outbox-md/internal/store"
 )
+
+// seedTree lays out a fixed set of .md files under dir for the ingest tests.
+func seedTree(t *testing.T, dir string) {
+	t.Helper()
+	for _, rel := range []string{"a/a.md", "b/b.md", "c/c.md", "b/nested/n.md"} {
+		p := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("# "+rel+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func importedPaths(t *testing.T, st *store.Store) []string {
+	t.Helper()
+	docs, err := st.ListDocuments()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, d := range docs {
+		out = append(out, d.Path)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func eq(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestImportMarkdownEmptySourcesWalksAll(t *testing.T) {
+	dir := t.TempDir()
+	seedTree(t, dir)
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	if err := importMarkdown(st, dir, nil); err != nil {
+		t.Fatal(err)
+	}
+	got := importedPaths(t, st)
+	want := []string{"a/a.md", "b/b.md", "b/nested/n.md", "c/c.md"}
+	if !eq(got, want) {
+		t.Fatalf("empty sources imported %v, want all %v", got, want)
+	}
+}
+
+func TestImportMarkdownWhitelistFolders(t *testing.T) {
+	dir := t.TempDir()
+	seedTree(t, dir)
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	// Whitelist folder "a" (recursive) and glob "b/*.md" (non-recursive) — "c" and
+	// the nested b/nested/n.md must NOT be imported.
+	if err := importMarkdown(st, dir, []string{"a", "b/*.md"}); err != nil {
+		t.Fatal(err)
+	}
+	got := importedPaths(t, st)
+	want := []string{"a/a.md", "b/b.md"}
+	if !eq(got, want) {
+		t.Fatalf("whitelist imported %v, want %v (c excluded, nested excluded by non-recursive glob)", got, want)
+	}
+}
+
+func TestImportMarkdownRejectsEscape(t *testing.T) {
+	dir := t.TempDir()
+	seedTree(t, dir)
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	if err := importMarkdown(st, dir, []string{"../escape"}); err == nil {
+		t.Fatal("expected error for a source escaping OUTBOX_DIR")
+	}
+}
 
 func TestAtomicWritePreservesModeAndContent(t *testing.T) {
 	dir := t.TempDir()

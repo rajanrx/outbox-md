@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,22 +8,14 @@ import (
 	"os"
 	"time"
 
-	"github.com/rajanrx/outbox-md/internal/config"
 	"github.com/rajanrx/outbox-md/internal/domain"
-	gitsvc "github.com/rajanrx/outbox-md/internal/git"
 	"github.com/rajanrx/outbox-md/internal/service"
 	"github.com/rajanrx/outbox-md/internal/sse"
 	"github.com/rajanrx/outbox-md/internal/store"
 )
 
-// gitDiffTimeout bounds the read-only working-tree scan so a large or slow repo
-// can never hang the request; on timeout the endpoint returns an empty (but
-// enabled) result rather than blocking.
-const gitDiffTimeout = 5 * time.Second
-
-// NewAPI builds the JSON API. git may be nil (or a service whose HasGit() is
-// false), in which case the folder-diff feature is simply reported as disabled.
-func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub, git *gitsvc.Service) http.Handler {
+// NewAPI builds the JSON API.
+func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub) http.Handler {
 	mux := http.NewServeMux()
 
 	// SSE stream of governance events for live UI updates. The browser opens this
@@ -68,28 +59,16 @@ func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub, git *gitsvc.Ser
 	})
 
 	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, _ *http.Request) {
-		// Embed the loaded config and add the runtime-computed hasGit flag; the
-		// embedded struct's json fields (agent/approval/webhook) are promoted, so
-		// the shape is the config plus a single hasGit field.
-		writeJSON(w, struct {
-			config.Config
-			HasGit bool `json:"hasGit"`
-		}{Config: svc.Config(), HasGit: git.HasGit()}, nil)
+		writeJSON(w, svc.Config(), nil)
 	})
 
-	// Read-only folder diff: the working tree vs HEAD for every changed *.md file
-	// within the served directory, rendered with the same Row shape the frontend
-	// uses for single-file diffs. Disabled (enabled:false) when the served folder
-	// is not inside a git work tree. Best-effort and time-bounded — never panics.
-	mux.HandleFunc("GET /api/git/diff", func(w http.ResponseWriter, r *http.Request) {
-		defer func() {
-			if rec := recover(); rec != nil {
-				writeJSON(w, gitsvc.Result{Enabled: false, Files: []gitsvc.FileDiff{}}, nil)
-			}
-		}()
-		ctx, cancel := context.WithTimeout(r.Context(), gitDiffTimeout)
-		defer cancel()
-		writeJSON(w, git.Diff(ctx), nil)
+	// Read-only folder view built from outbox-md's OWN data: every doc across the
+	// project that currently has a pending (proposed) suggestion, each as a
+	// current-vs-proposed pair the UI renders with its single-file diff. No git —
+	// always available.
+	mux.HandleFunc("GET /api/suggestions/pending", func(w http.ResponseWriter, _ *http.Request) {
+		pending, err := st.ListPendingSuggestions()
+		writeJSON(w, pending, err)
 	})
 
 	mux.HandleFunc("GET /api/docs", func(w http.ResponseWriter, _ *http.Request) {
