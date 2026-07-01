@@ -221,6 +221,27 @@ func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub) http.Handler {
 		m, err := svc.HumanReply(r.PathValue("id"), in.Body)
 		writeJSON(w, m, err)
 	})
+	// Agent-facing (api-mode runner): mark a claimed comment as being worked on so
+	// the human sees an "AI processing…" indicator live. Requires the claim token;
+	// ttlSeconds is optional (<=0 uses the server default). Ephemeral — writes no
+	// file and changes no status. Mirrors the MCP mark_processing tool.
+	mux.HandleFunc("POST /api/comments/{id}/processing", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Token      string `json:"token"`
+			TTLSeconds int    `json:"ttlSeconds"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		until, err := svc.MarkProcessing(r.PathValue("id"), in.Token, time.Duration(in.TTLSeconds)*time.Second)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, map[string]any{"processingUntil": until.Format(time.RFC3339)}, nil)
+	})
+
 	mux.HandleFunc("POST /api/comments/{id}/resolve", func(w http.ResponseWriter, r *http.Request) {
 		// Caller identity is server-set (the single local human); it is never
 		// taken from the request body, so it cannot be spoofed.

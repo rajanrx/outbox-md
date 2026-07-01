@@ -129,7 +129,7 @@ func TestAgentEventsNotInDefaultSet(t *testing.T) {
 	if !ok {
 		t.Fatal("expected an *HTTPNotifier")
 	}
-	for _, e := range []string{EventCommentUpdated, EventSuggestionProposed} {
+	for _, e := range []string{EventCommentUpdated, EventSuggestionProposed, EventCommentProcessing} {
 		if n.allowed(e) {
 			t.Errorf("allowed(%q) = true, want false (agent events must not reach the runner)", e)
 		}

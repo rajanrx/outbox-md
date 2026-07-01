@@ -1,6 +1,8 @@
 package mcp
 
 import (
+	"time"
+
 	"github.com/rajanrx/outbox-md/internal/anchor"
 	"github.com/rajanrx/outbox-md/internal/domain"
 	"github.com/rajanrx/outbox-md/internal/service"
@@ -67,6 +69,17 @@ func (h *Handlers) ProposeSuggestion(commentID, token, content, agent string) (d
 
 func (h *Handlers) ReplyInThread(commentID, token, body, agent string) error {
 	return h.Svc.Reply(commentID, token, body, agent)
+}
+
+// MarkProcessing flags a claimed comment as being worked on by the agent, so the
+// human sees it live. ttlSeconds <= 0 uses the service default; re-calling
+// heartbeats (extends) the deadline. Returns the deadline as RFC3339.
+func (h *Handlers) MarkProcessing(commentID, token string, ttlSeconds int) (string, error) {
+	until, err := h.Svc.MarkProcessing(commentID, token, time.Duration(ttlSeconds)*time.Second)
+	if err != nil {
+		return "", err
+	}
+	return until.Format(time.RFC3339), nil
 }
 
 // SubmitReview is the council-mode sibling of ProposeSuggestion: it records one

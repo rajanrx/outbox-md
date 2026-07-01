@@ -267,6 +267,106 @@ func TestProposeRejectsBadToken(t *testing.T) {
 	}
 }
 
+// TestMarkProcessingRequiresToken: only the claiming agent (holding the token)
+// may mark a comment as processing.
+func TestMarkProcessingRequiresToken(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _ string) error { return nil })
+	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
+	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
+	tok, _ := svc.Claim([]string{c.ID}, "agent")
+
+	if _, err := svc.MarkProcessing(c.ID, "wrong-token", 0); err == nil {
+		t.Fatal("expected error for invalid claim token")
+	}
+	if _, err := svc.MarkProcessing(c.ID, tok, 0); err != nil {
+		t.Fatalf("valid token should mark: %v", err)
+	}
+}
+
+// TestMarkProcessingSetsFutureDeadline: a valid mark sets ProcessingUntil in the
+// future, IsProcessing reads true, and a ttl <= 0 falls back to the 180s default.
+func TestMarkProcessingSetsFutureDeadline(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _ string) error { return nil })
+	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
+	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
+	tok, _ := svc.Claim([]string{c.ID}, "agent")
+
+	before := time.Now()
+	until, err := svc.MarkProcessing(c.ID, tok, 0) // ttl<=0 → default
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Default TTL is ~180s: the deadline must land close to now+180s (allow slack).
+	wantMin := before.Add(DefaultProcessingTTL - time.Second)
+	wantMax := time.Now().Add(DefaultProcessingTTL + time.Second)
+	if until.Before(wantMin) || until.After(wantMax) {
+		t.Fatalf("deadline %v not within [%v, %v] for the 180s default", until, wantMin, wantMax)
+	}
+	got, _ := s.GetComment(c.ID)
+	if !got.IsProcessing(time.Now()) {
+		t.Error("IsProcessing = false, want true right after marking")
+	}
+	// IsProcessing is purely time-based: false once the deadline has passed.
+	if got.IsProcessing(until.Add(time.Second)) {
+		t.Error("IsProcessing = true past the deadline, want false")
+	}
+}
+
+// TestMarkProcessingHeartbeatExtends: re-marking pushes the deadline out.
+func TestMarkProcessingHeartbeatExtends(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _ string) error { return nil })
+	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
+	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
+	tok, _ := svc.Claim([]string{c.ID}, "agent")
+
+	first, _ := svc.MarkProcessing(c.ID, tok, 30*time.Second)
+	second, _ := svc.MarkProcessing(c.ID, tok, 120*time.Second)
+	if !second.After(first) {
+		t.Fatalf("heartbeat did not extend: second %v not after first %v", second, first)
+	}
+}
+
+// TestReplyAndProposeClearProcessing: finishing a comment (reply or propose)
+// clears the processing hint so the "AI processing…" badge disappears at once.
+func TestReplyAndProposeClearProcessing(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _ string) error { return nil })
+	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
+
+	// Reply clears it.
+	cReply, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
+	tokReply, _ := svc.Claim([]string{cReply.ID}, "agent")
+	if _, err := svc.MarkProcessing(cReply.ID, tokReply, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Reply(cReply.ID, tokReply, "let's discuss", "agent"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.GetComment(cReply.ID); got.ProcessingUntil != nil {
+		t.Errorf("Reply left ProcessingUntil = %v, want nil", got.ProcessingUntil)
+	}
+
+	// Propose clears it.
+	cProp, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 6, End: 11}, "human")
+	tokProp, _ := svc.Claim([]string{cProp.ID}, "agent")
+	if _, err := svc.MarkProcessing(cProp.ID, tokProp, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Propose(cProp.ID, tokProp, "Hello there", "agent"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.GetComment(cProp.ID); got.ProcessingUntil != nil {
+		t.Errorf("Propose left ProcessingUntil = %v, want nil", got.ProcessingUntil)
+	}
+}
+
 func TestHumanReplyAndResolve(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()

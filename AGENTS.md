@@ -15,6 +15,9 @@ list_open_comments  →  read the excerpt + thread (the feedback)
 claim_comment  →  get a claim token
         │
         ▼
+mark_processing  →  tell the human "AI processing…" (heartbeat on long runs)
+        │
+        ▼
 propose_suggestion (a tracked-change edit)   OR   reply_in_thread (counter / clarify / discuss)
         │
         ▼
@@ -54,6 +57,8 @@ The human's actual feedback lives in **`thread`** (the first message is what the
 ## Step 2 — claim it
 
 Call `claim_comment` with the comment id. You get back a **claim token**. Pass that token on every subsequent action for this comment. Claim only what you can work now, within the batch-size cap.
+
+Right after claiming, call **`mark_processing`** (comment id + token) so the human sees an **"AI processing…"** indicator on the comment while you work it. The hint is ephemeral and self-expiring (default 180s), so a crashed agent never leaves it stuck; on a long run, call `mark_processing` again to heartbeat (extend it). It writes nothing and changes no status — it clears on its own when you `propose_suggestion`/`reply_in_thread` or when the deadline passes.
 
 ## Step 3 — respond
 
@@ -103,6 +108,7 @@ You propose and discuss; the human decides. After a document is **approved**, yo
 | `read_doc` | Read a document's content + lifecycle status | — |
 | `list_open_comments` | See the ordered outbox **with each comment's excerpt + thread (feedback)** | — |
 | `claim_comment` | Claim comment(s) → receive a claim token | — |
+| `mark_processing` | Signal you're working a claimed comment ("AI processing…"); self-expiring, heartbeat to extend | — |
 | `propose_suggestion` | Propose a tracked-change edit (full replacement) | — |
 | `reply_in_thread` | Counter, clarify, or discuss | — |
 | `submit_review` | Council mode: record one lensed review (verdict + rationale, edit content iff `edit`) as a candidate | — |

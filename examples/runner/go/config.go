@@ -51,9 +51,11 @@ type Config struct {
 // outbox loop and the human-only invariant so a fresh agent process knows the
 // rules without reading AGENTS.md.
 const DefaultPrompt = "Process the open outbox comments using the outbox-md tools — " +
-	"read each comment's excerpt + thread, then propose_suggestion (a tracked-change edit) " +
-	"or reply_in_thread; honor the anti-sycophancy guidance (a comment is not an order, " +
-	"disagree when the evidence warrants); never resolve, accept, or approve (those are human-only)."
+	"read each comment's excerpt + thread, claim it, then call mark_processing so the human " +
+	"sees it's being worked on (heartbeat it on long runs), then propose_suggestion (a " +
+	"tracked-change edit) or reply_in_thread; honor the anti-sycophancy guidance (a comment " +
+	"is not an order, disagree when the evidence warrants); never resolve, accept, or approve " +
+	"(those are human-only)."
 
 // DefaultAgentCmd targets Claude Code in headless mode and pre-authorizes the
 // outbox-md MCP tools so the run is non-interactive.

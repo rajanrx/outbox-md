@@ -121,7 +121,7 @@ export default function App() {
     // comment.updated / suggestion.proposed are AGENT-action events: the server
     // fires them to the SSE hub (browser) but NOT to the webhook runner, so the
     // UI reflects an agent reply/suggestion live without re-triggering the agent.
-    for (const name of ["comment.created", "comment.replied", "comment.resolved", "document.approved", "comment.updated", "suggestion.proposed"]) {
+    for (const name of ["comment.created", "comment.replied", "comment.resolved", "document.approved", "comment.updated", "suggestion.proposed", "comment.processing"]) {
       es.addEventListener(name, onEvent);
     }
     return () => es.close();

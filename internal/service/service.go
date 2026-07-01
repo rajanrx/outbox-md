@@ -17,6 +17,12 @@ import (
 // map it to 404 rather than 500.
 var ErrNoCandidateSet = errors.New("no candidate set for comment")
 
+// DefaultProcessingTTL is how long a processing hint lives when the caller does
+// not specify one. It is bounded by design — long enough to cover a typical
+// agent run, short enough that a dead agent's hint self-expires; a live agent
+// re-marks (heartbeats) to extend it.
+const DefaultProcessingTTL = 180 * time.Second
+
 type Service struct {
 	store     *store.Store
 	writeFile func(path, content string) error
@@ -126,6 +132,29 @@ func (s *Service) Claim(commentIDs []string, agent string) (string, error) {
 	return token, nil
 }
 
+// MarkProcessing records an ephemeral, self-expiring hint that the claiming
+// agent is actively working commentID, so the human sees an "AI processing…"
+// indicator live. It requires a valid claim token (only the claiming agent may
+// mark), writes no file, and changes no status. Re-calling extends the deadline
+// (a heartbeat for long runs). A ttl <= 0 falls back to DefaultProcessingTTL. It
+// fires a browser-only comment.processing SSE event (absent from the webhook's
+// default set, so the runner is never re-triggered) and returns the new deadline.
+func (s *Service) MarkProcessing(commentID, token string, ttl time.Duration) (time.Time, error) {
+	c, err := s.requireToken(commentID, token)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if ttl <= 0 {
+		ttl = DefaultProcessingTTL
+	}
+	until := time.Now().UTC().Add(ttl)
+	if err := s.store.SetProcessingUntil(commentID, &until); err != nil {
+		return time.Time{}, err
+	}
+	s.fireCommentEvent(webhook.EventCommentProcessing, c)
+	return until, nil
+}
+
 func (s *Service) requireToken(commentID, token string) (domain.Comment, error) {
 	c, err := s.store.GetComment(commentID)
 	if err != nil {
@@ -150,6 +179,9 @@ func (s *Service) Propose(commentID, token, content, agent string) (domain.Sugge
 		return domain.Suggestion{}, err
 	}
 	_ = s.store.UpdateCommentStatus(commentID, domain.CommentAddressed, c.ClaimToken)
+	// The agent has finished this comment — clear the processing hint before firing
+	// so the browser's refresh reads no stale deadline.
+	_ = s.store.SetProcessingUntil(commentID, nil)
 	// Push the agent's proposal to the browser (SSE) so the UI reflects it live.
 	// suggestion.proposed is NOT in the webhook's default Events, so the HTTP
 	// runner is not re-triggered by the agent's own action — only the browser is.
@@ -351,6 +383,9 @@ func (s *Service) Reply(commentID, token, body, agent string) error {
 	if err := s.store.UpdateCommentStatus(commentID, domain.CommentReplied, c.ClaimToken); err != nil {
 		return err
 	}
+	// The agent has finished this comment — clear the processing hint before firing
+	// so the browser's refresh reads no stale deadline.
+	_ = s.store.SetProcessingUntil(commentID, nil)
 	// Push the agent's reply to the browser (SSE) so the UI reflects it live.
 	// comment.updated is NOT in the webhook's default Events, so the HTTP runner
 	// is not re-triggered by the agent's own reply — only the browser is.
@@ -398,6 +433,8 @@ func (s *Service) Resolve(commentID string) error {
 	if err := s.store.UpdateCommentStatus(commentID, domain.CommentResolved, ""); err != nil {
 		return err
 	}
+	// A resolved comment is done — clear any lingering processing hint.
+	_ = s.store.SetProcessingUntil(commentID, nil)
 	c.Status = domain.CommentResolved
 	s.fireCommentEvent(webhook.EventCommentResolved, c)
 	return nil

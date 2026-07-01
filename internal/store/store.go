@@ -42,6 +42,7 @@ func migrate(db *sql.DB) error {
 		`ALTER TABLE documents ADD COLUMN status TEXT NOT NULL DEFAULT 'draft'`,
 		`ALTER TABLE documents ADD COLUMN approved_version_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE comments ADD COLUMN post_approval INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE comments ADD COLUMN processing_until TEXT`,
 	} {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 			return err

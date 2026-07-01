@@ -35,6 +35,19 @@ export function Card({ comment, currentContent, active = false, pinned = false, 
   const [thread, setThread] = useState<ThreadMessage[]>([]);
   const [draft, setDraft] = useState("");
   const ref = useRef<HTMLDivElement>(null);
+  // "AI processing…" is a self-expiring hint: show it only while processingUntil
+  // is in the future, and hide it on its own at the deadline (a setTimeout) so the
+  // badge clears even if no event arrives. A heartbeat that extends the deadline
+  // updates processingUntil, re-running this effect and resetting the timer.
+  const [processing, setProcessing] = useState(false);
+  useEffect(() => {
+    const until = comment.processingUntil ? Date.parse(comment.processingUntil) : NaN;
+    const ms = until - Date.now();
+    if (!Number.isFinite(until) || ms <= 0) { setProcessing(false); return; }
+    setProcessing(true);
+    const t = setTimeout(() => setProcessing(false), ms);
+    return () => clearTimeout(t);
+  }, [comment.processingUntil]);
   const load = () => getThread(comment.id).then((t) => setThread(t ?? []));
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [comment.id, reloadKey]);
   useEffect(() => {
@@ -50,6 +63,9 @@ export function Card({ comment, currentContent, active = false, pinned = false, 
         <span className={`status-tag status-${comment.status}`}>{comment.status}</span>
         {comment.postApproval && (
           <span className="post-approval-tag" title="Feedback added after approval">post-approval</span>
+        )}
+        {processing && (
+          <span className="processing-tag" title="An AI agent is working on this comment">⋯ AI processing</span>
         )}
         <span className="card-tools">
           {offscreen && (

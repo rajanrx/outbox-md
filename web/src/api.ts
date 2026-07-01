@@ -6,6 +6,9 @@ export type Comment = {
   status: string;
   authorIdentity: string;
   postApproval: boolean;
+  // Ephemeral, self-expiring hint that an AI agent is working this comment.
+  // Absent/empty when idle; an ISO timestamp in the future while processing.
+  processingUntil?: string;
 };
 export type DocView = {
   document: { id: string; path: string; status: "draft" | "approved" | "amending"; approvedVersionId: string };

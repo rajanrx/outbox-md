@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS comments (
   status TEXT NOT NULL,
   claim_token TEXT NOT NULL DEFAULT '',
   post_approval INTEGER NOT NULL DEFAULT 0,
+  processing_until TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS suggestions (
