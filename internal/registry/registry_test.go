@@ -266,6 +266,37 @@ func TestMigrateLegacyEntryWithoutName(t *testing.T) {
 	}
 }
 
+// TestLoadMixedAndMalformed covers the data-loss surface: a file mixing legacy
+// {name,path} and current {name,root,docs} entries loads BOTH (no drops), and a
+// malformed file fails safe (error, never a silent empty registry).
+func TestLoadMixedAndMalformed(t *testing.T) {
+	file := regFile(t)
+	mixed := `[{"name":"legacy","path":"/old/repo"},` +
+		`{"name":"modern","root":"/new/repo","docs":"docs/specs","agent":"claude -p {prompt}"}]`
+	if err := os.WriteFile(file, []byte(mixed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	list, err := Load(file)
+	if err != nil {
+		t.Fatalf("Load errored on a mixed file: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("mixed file lost entries: got %d, want 2 (%v)", len(list), list)
+	}
+	if list[0].Root != "/old/repo" || list[0].Docs != "." {
+		t.Errorf("legacy entry not migrated: %+v", list[0])
+	}
+	if list[1].Root != "/new/repo" || list[1].Docs != "docs/specs" {
+		t.Errorf("modern entry corrupted: %+v", list[1])
+	}
+	if err := os.WriteFile(file, []byte(`{not json`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(file); err == nil {
+		t.Fatal("malformed registry should error, not silently return an empty list")
+	}
+}
+
 // TestSaveWritesNewShape verifies Save persists the {name,root,docs,agent} shape
 // (and never the legacy path key), so a migrated registry is rewritten forward.
 func TestSaveWritesNewShape(t *testing.T) {
