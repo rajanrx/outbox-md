@@ -130,14 +130,12 @@ export default function App() {
       es.addEventListener(name, onEvent);
     }
     // docs.changed is the filesystem watcher's browser-only event: a .md was
-    // created/edited/deleted on disk while the server ran. Re-fetch the whole doc
-    // LIST so new files appear and deleted ones vanish, and reload the open doc in
-    // case its content changed underneath us. Like the agent events above, it is
-    // fired on the SSE hub only, never the webhook runner.
+    // created/edited/deleted on disk while the server ran. Update the doc LIST
+    // ONLY (new files appear, deleted ones vanish) — deliberately do NOT reload
+    // the open document or its threads: a reader mid-doc must not be disturbed by
+    // a background file change. Fired on the SSE hub only, never the webhook runner.
     const onDocsChanged = () => {
       listDocs().then((d) => setDocs(d ?? []));
-      refreshRef.current?.();
-      setThreadTick((t) => t + 1);
     };
     es.addEventListener("docs.changed", onDocsChanged);
     return () => es.close();
