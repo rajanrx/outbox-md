@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -140,6 +141,50 @@ func TestDiffOnlyServedSubdir(t *testing.T) {
 	res := Open(sub).Diff(context.Background())
 	if len(res.Files) != 1 || res.Files[0].Path != "in.md" {
 		t.Fatalf("served-subdir diff = %+v (path must be dir-relative, outside.md excluded)", res.Files)
+	}
+}
+
+// P1: a symlinked .md must never be followed — its target (a file outside the
+// repo) must not leak into the diff.
+func TestDiffSkipsSymlinkedMd(t *testing.T) {
+	repo := t.TempDir()
+	initRepo(t, repo, "spec.md", "hello\n")
+	secret := filepath.Join(t.TempDir(), "secret.txt") // OUTSIDE the repo
+	if err := os.WriteFile(secret, []byte("TOP SECRET\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(repo, "leak.md")); err != nil {
+		t.Skip("symlinks unsupported here: " + err.Error())
+	}
+
+	res := Open(repo).Diff(context.Background())
+	for _, f := range res.Files {
+		if f.Path == "leak.md" {
+			t.Fatalf("symlinked .md leaked into the diff: %+v", f)
+		}
+		for _, r := range f.Rows {
+			if strings.Contains(r.Text, "TOP SECRET") {
+				t.Fatalf("leaked out-of-repo content: %+v", f)
+			}
+		}
+	}
+}
+
+// P2: a file that is "skipped" (too large) on one side must be OMITTED, not
+// rendered as a full deletion/addition.
+func TestDiffOmitsOversizeSide(t *testing.T) {
+	repo := t.TempDir()
+	initRepo(t, repo, "big.md", "small\n")
+	big := strings.Repeat("a\n", maxFileBytes) // > maxFileBytes on disk
+	if err := os.WriteFile(filepath.Join(repo, "big.md"), []byte(big), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res := Open(repo).Diff(context.Background())
+	for _, f := range res.Files {
+		if f.Path == "big.md" {
+			t.Fatalf("oversize file must be omitted, not rendered: %d rows", len(f.Rows))
+		}
 	}
 }
 

@@ -141,10 +141,16 @@ func (s *Service) build() []FileDiff {
 		if !withinPrefix(p, prefix) {
 			continue
 		}
-		oldC, okOld := headContent(p)
-		newC, okNew := readDisk(repoRoot, p)
-		if !okOld && !okNew {
-			continue // unreadable/too large/binary on both sides — skip
+		oldC, oldPresent, oldSkip := headContent(p)
+		newC, newPresent, newSkip := readDisk(repoRoot, p)
+		if oldSkip || newSkip {
+			// Intentionally skipped on a side (symlink, too large, binary,
+			// unreadable, or escaping the repo). Omit the file entirely rather
+			// than render a misleading full add/delete — or leak a symlink target.
+			continue
+		}
+		if !oldPresent && !newPresent {
+			continue // absent on both — nothing to show
 		}
 		if oldC == newC {
 			continue // no textual change
@@ -157,34 +163,37 @@ func (s *Service) build() []FileDiff {
 }
 
 // headResolver returns a lookup that yields the content of a repo-relative path
-// at HEAD. The second return is false when the path is absent at HEAD (an added
-// file) or the blob is too large/binary. A repo with no HEAD yields all-absent.
-func (s *Service) headResolver(repo *gogit.Repository) func(path string) (string, bool) {
+// at HEAD, with (content, present, skipped) semantics matching readDisk:
+// present=false → absent at HEAD (an added file); present=true & skipped=true →
+// exists but too large/binary/unreadable (omit it). A repo with no HEAD yields
+// all-absent.
+func (s *Service) headResolver(repo *gogit.Repository) func(path string) (string, bool, bool) {
+	absent := func(string) (string, bool, bool) { return "", false, false }
 	ref, err := repo.Head()
 	if err != nil {
-		return func(string) (string, bool) { return "", false }
+		return absent
 	}
 	commit, err := repo.CommitObject(ref.Hash())
 	if err != nil {
-		return func(string) (string, bool) { return "", false }
+		return absent
 	}
 	tree, err := commit.Tree()
 	if err != nil {
-		return func(string) (string, bool) { return "", false }
+		return absent
 	}
-	return func(path string) (string, bool) {
+	return func(path string) (string, bool, bool) {
 		f, err := tree.File(path)
 		if err != nil {
-			return "", false // not present at HEAD
+			return "", false, false // not present at HEAD
 		}
 		if f.Size > maxFileBytes {
-			return "", false
+			return "", true, true
 		}
 		c, err := f.Contents()
 		if err != nil || isBinaryStr(c) {
-			return "", false
+			return "", true, true
 		}
-		return c, true
+		return c, true, false
 	}
 }
 
@@ -215,19 +224,45 @@ func relToDir(p, prefix string) string {
 }
 
 // readDisk reads the on-disk (working tree) content of a repo-relative path.
-// The second return is false when the file is absent (a deletion), too large,
-// binary, or unreadable.
-func readDisk(repoRoot, p string) (string, bool) {
+// Returns (content, present, skipped):
+//   - present=false               → the file is absent on disk (a deletion).
+//   - present=true, skipped=true  → the file exists but must not be diffed
+//     (a symlink, a non-regular file, too large, binary, unreadable, or a path
+//     that resolves OUTSIDE the repo). The caller omits it entirely.
+//   - present=true, skipped=false → content is the file's text.
+//
+// It uses os.Lstat (NOT os.Stat) and refuses symlinks: a symlinked .md such as
+// leak.md -> /etc/passwd would otherwise be read through and leaked via the diff
+// endpoint. As defense in depth it also rejects any path whose resolved location
+// escapes the repo root (guards a symlinked *intermediate* directory).
+func readDisk(repoRoot, p string) (content string, present, skipped bool) {
 	full := filepath.Join(repoRoot, filepath.FromSlash(p))
-	fi, err := os.Stat(full)
-	if err != nil || fi.IsDir() || fi.Size() > maxFileBytes {
-		return "", false
+	fi, err := os.Lstat(full)
+	if err != nil {
+		return "", false, false // absent → a deletion
+	}
+	if fi.Mode()&os.ModeSymlink != 0 || !fi.Mode().IsRegular() {
+		return "", true, true // never follow symlinks / non-regular files
+	}
+	if rp := evalSymlinks(full); !withinDir(evalSymlinks(repoRoot), rp) {
+		return "", true, true // resolves outside the repo (symlinked ancestor)
+	}
+	if fi.Size() > maxFileBytes {
+		return "", true, true
 	}
 	b, err := os.ReadFile(full)
 	if err != nil || isBinary(b) {
-		return "", false
+		return "", true, true
 	}
-	return string(b), true
+	return string(b), true, false
+}
+
+// withinDir reports whether path is root itself or nested under it.
+func withinDir(root, path string) bool {
+	if path == root {
+		return true
+	}
+	return strings.HasPrefix(path, root+string(os.PathSeparator))
 }
 
 // isBinary flags content that should not be rendered as a text diff: a NUL byte
