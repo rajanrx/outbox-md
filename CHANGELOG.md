@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0](https://github.com/rajanrx/outbox-md/compare/outbox-md-v0.4.0...outbox-md-v0.5.0) (2026-07-01)
+
+
+### Features
+
+* **ui:** diff excerpt + modal with git folder-diff view ([99dc46e](https://github.com/rajanrx/outbox-md/commit/99dc46e493bc55e83d2ab89c3c0610caf9120198))
+* **ui:** suggestion diff excerpt + modal with git folder-diff view ([6bbb63b](https://github.com/rajanrx/outbox-md/commit/6bbb63b6c23b24841049f5a56bec7c5a82dbf692))
+
+
+### Bug Fixes
+
+* **git:** recover inside the diff goroutine (P2) + minor hardening ([14f2fe0](https://github.com/rajanrx/outbox-md/commit/14f2fe0d93e1d6d0ae0680c0b013d892ec1fb28a))
+* **git:** recover inside the diff goroutine + minor hardening ([bc42d48](https://github.com/rajanrx/outbox-md/commit/bc42d4833e8c30c18f4df6f75f92389d6f08ae00))
+* **git:** reject symlinks (P1 leak) + omit skipped files, don't render as add/delete (P2) ([0a3e54b](https://github.com/rajanrx/outbox-md/commit/0a3e54b32f3b719250c1e8fe04a5da9f429e7387))
+
 ## [0.4.0](https://github.com/rajanrx/outbox-md/compare/outbox-md-v0.3.0...outbox-md-v0.4.0) (2026-07-01)
 
 
