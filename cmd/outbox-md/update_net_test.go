@@ -24,15 +24,18 @@ func withSeam(t *testing.T, seam *string, val string) {
 }
 
 func TestLatestReleaseParsesTag(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `{"tag_name":"outbox-md-v0.7.0"}`)
-	}))
-	defer srv.Close()
-	withSeam(t, &latestReleaseAPI, srv.URL)
-
-	v, err := latestRelease()
-	if err != nil || v != "0.7.0" {
-		t.Fatalf("latestRelease() = %q, %v; want 0.7.0, nil", v, err)
+	// v<version> is the current tag form; outbox-md-v<version> is the legacy form
+	// (kept working so a pre-cutover release still parses).
+	for tag, want := range map[string]string{"v0.8.0": "0.8.0", "outbox-md-v0.7.0": "0.7.0"} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			fmt.Fprintf(w, `{"tag_name":%q}`, tag)
+		}))
+		withSeam(t, &latestReleaseAPI, srv.URL)
+		v, err := latestRelease()
+		srv.Close()
+		if err != nil || v != want {
+			t.Fatalf("latestRelease() for tag %q = %q, %v; want %q, nil", tag, v, err, want)
+		}
 	}
 }
 
