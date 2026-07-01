@@ -94,9 +94,14 @@ export function Card({ comment, currentContent, docPath = "", active = false, pi
   const terminal = comment.status === "resolved" || comment.status === "detached";
   useEffect(() => {
     if (terminal) { setSg(null); return; }
-    getSuggestion(comment.id).then(setSg);
+    let live = true;
+    getSuggestion(comment.id).then((s) => { if (live) setSg(s); });
+    return () => { live = false; };
   }, [terminal, comment.id, reloadKey]);
-  const showSuggestion = !!sg && sg.state === "proposed";
+  // Also gate the render on !terminal: a late getSuggestion response can resolve
+  // after the comment has gone terminal, and without this a stale proposed diff
+  // would render whose Reject would reopen a resolved/detached comment.
+  const showSuggestion = !terminal && !!sg && sg.state === "proposed";
   const rows = useMemo(() => (showSuggestion ? unifiedDiff(currentContent, sg!.proposedContent) : []), [showSuggestion, sg, currentContent]);
   const excerpt = useMemo(() => excerptRows(rows), [rows]);
   const changed = rows.some((r) => r.op === "ins" || r.op === "del");
