@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0](https://github.com/rajanrx/outbox-md/compare/v0.11.1...v0.12.0) (2026-07-01)
+
+
+### Features
+
+* project root + doc subpath + per-project agent (auto-reply runs in each project's context) ([37493f5](https://github.com/rajanrx/outbox-md/commit/37493f5143b8311dc3570478334a3bfe620491ff))
+* project root + doc subpath + per-project agent (spawn auto-reply in the project's context) ([875ae2d](https://github.com/rajanrx/outbox-md/commit/875ae2d38e192d75f6550938e44b1a217c8ae28e))
+
+
+### Bug Fixes
+
+* **registry:** resolve symlinks in docs containment check (PR [#59](https://github.com/rajanrx/outbox-md/issues/59) P1) ([298da46](https://github.com/rajanrx/outbox-md/commit/298da46f70165cf183ef2de0eb46677fcdf9de15))
+
 ## [0.11.1](https://github.com/rajanrx/outbox-md/compare/v0.11.0...v0.11.1) (2026-07-01)
 
 
