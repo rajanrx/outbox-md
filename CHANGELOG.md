@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0](https://github.com/rajanrx/outbox-md/compare/outbox-md-v0.8.0...outbox-md-v0.9.0) (2026-07-01)
+
+
+### Features
+
+* outbox init auto-wires Gemini/Cursor/Windsurf/Codex/Claude Desktop ([7f0d4cc](https://github.com/rajanrx/outbox-md/commit/7f0d4cca58cfe3b34852654f041e78ccfcf0ff3e))
+* outbox init auto-wires Gemini/Cursor/Windsurf/Codex/Claude Desktop ([aa208ea](https://github.com/rajanrx/outbox-md/commit/aa208ead6a1ecb5b2508eddaa5edb531cf98d4b0))
+
+
+### Bug Fixes
+
+* **mcpclients:** Codex uses native HTTP url, not the mcp-remote bridge (PR [#46](https://github.com/rajanrx/outbox-md/issues/46) P2) ([daa1094](https://github.com/rajanrx/outbox-md/commit/daa1094a4d519369d511ef0f31869f680571b4a7))
+* **mcpclients:** use a real TOML parser for Codex config merge (PR [#46](https://github.com/rajanrx/outbox-md/issues/46) P1) ([95c075e](https://github.com/rajanrx/outbox-md/commit/95c075e7bb5d5b9bffe06f95458109da5d0eb8ca))
+
 ## [0.8.0](https://github.com/rajanrx/outbox-md/compare/outbox-md-v0.7.0...outbox-md-v0.8.0) (2026-07-01)
 
 
