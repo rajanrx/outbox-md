@@ -153,16 +153,10 @@ func Add(file, root, docs, agentCmd string) (Project, error) {
 		docs = "."
 	}
 	docs = filepath.Clean(docs)
-	// Reject any docs that escapes root (absolute path or ../ traversal), then
-	// require the resolved spec dir to be an existing directory.
 	if filepath.IsAbs(docs) {
 		return Project{}, fmt.Errorf("cannot add: docs %q must be relative to the project root", docs)
 	}
 	specDir := filepath.Join(absRoot, docs)
-	rel, err := filepath.Rel(absRoot, specDir)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-		return Project{}, fmt.Errorf("cannot add: docs %q escapes the project root", docs)
-	}
 	sfi, err := os.Stat(specDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -172,6 +166,21 @@ func Add(file, root, docs, agentCmd string) (Project, error) {
 	}
 	if !sfi.IsDir() {
 		return Project{}, fmt.Errorf("cannot add: docs %q is not a directory", docs)
+	}
+	// Containment on the RESOLVED paths, not just lexically: a symlinked component
+	// in docs (or in root) can escape root while passing a ../ check. EvalSymlinks
+	// BOTH sides — resolving only one false-positives on macOS /tmp→/private/tmp.
+	resolvedRoot, err := filepath.EvalSymlinks(absRoot)
+	if err != nil {
+		return Project{}, err
+	}
+	resolvedSpec, err := filepath.EvalSymlinks(specDir)
+	if err != nil {
+		return Project{}, err
+	}
+	rel, err := filepath.Rel(resolvedRoot, resolvedSpec)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return Project{}, fmt.Errorf("cannot add: docs %q escapes the project root", docs)
 	}
 
 	projects, err := Load(file)

@@ -47,6 +47,17 @@ func safeJoin(dir, path string) (string, error) {
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
 		return "", fmt.Errorf("refusing to write outside managed dir: %q", path)
 	}
+	// Defense in depth: if target resolves (an existing dir/file, not a glob),
+	// re-check containment on the symlink-resolved paths — a symlinked component
+	// can escape dir while passing the lexical check. Skip when it can't resolve
+	// (globs / not-yet-created paths); the lexical guard above still applies there.
+	if rt, e1 := filepath.EvalSymlinks(target); e1 == nil {
+		if rd, e2 := filepath.EvalSymlinks(dir); e2 == nil {
+			if r, e3 := filepath.Rel(rd, rt); e3 != nil || r == ".." || strings.HasPrefix(r, ".."+string(os.PathSeparator)) {
+				return "", fmt.Errorf("refusing to write outside managed dir: %q", path)
+			}
+		}
+	}
 	return target, nil
 }
 

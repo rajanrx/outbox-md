@@ -134,6 +134,28 @@ func TestAddDocsTraversalRejected(t *testing.T) {
 	}
 }
 
+// TestAddRejectsSymlinkedDocsEscapingRoot verifies a docs subpath that passes the
+// lexical ../ check but resolves outside root via a symlink is rejected — the
+// containment check must run on the symlink-resolved paths, not just lexically.
+func TestAddRejectsSymlinkedDocsEscapingRoot(t *testing.T) {
+	file := regFile(t)
+	root := t.TempDir()
+	outside := t.TempDir() // a real dir OUTSIDE root
+	if err := os.Symlink(outside, filepath.Join(root, "link")); err != nil {
+		t.Skip("symlinks unsupported here: " + err.Error())
+	}
+	if _, err := Add(file, root, "link", ""); err == nil {
+		t.Fatal("docs symlink escaping root should be rejected")
+	}
+	// A real subdir under root is still accepted (fix doesn't over-reject).
+	if err := os.Mkdir(filepath.Join(root, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Add(file, root, "docs", ""); err != nil {
+		t.Fatalf("legit docs subdir wrongly rejected: %v", err)
+	}
+}
+
 // TestAddDisambiguatesNameCollision verifies two different roots that share a
 // basename get distinct names — routing writes by name demands uniqueness.
 func TestAddDisambiguatesNameCollision(t *testing.T) {
