@@ -74,10 +74,17 @@ docker run --rm -p 8181:8181 -v "$PWD/specs:/data" rajanrauniyar/outbox-md
 | `outbox serve` | Serve the review UI + MCP endpoint for a folder of `.md` files (the default when run with no arguments). |
 | `outbox up` | Same as `serve`, then open the browser at the review UI. |
 | `outbox init` | Scaffold `outbox.yaml` and register the MCP endpoint with the Claude CLI in the current folder. |
+| `outbox upgrade` | Update to the latest release (self-update). |
 | `outbox version` | Print the CLI version. |
 | `outbox help` | Show usage. |
 
 Both `serve` and `up` take `-dir` (folder to serve, default `.`) and `-addr` (listen address, default `:8181`). Precedence is flag > `OUTBOX_DIR` / `OUTBOX_ADDR` env > default.
+
+### Staying up to date
+
+- **Binary (curl/direct install):** `outbox up` **auto-updates by default** — it checks for a newer release (at most once a day) and, if found, self-updates and restarts. Turn it off with `auto_update: false` in `outbox.yaml` (or `OUTBOX_AUTO_UPDATE=false`); you can still update on demand with **`outbox upgrade`**.
+- **Homebrew:** `brew upgrade outbox-md` (the binary won't self-update a brew-managed install — it'll point you here).
+- **Docker:** the container binary can't self-update — pull a new image (`docker compose pull && docker compose up -d`), or enable the commented **Watchtower** service in `docker-compose.yml` for hands-off updates. Pin the image to a major tag (`:0`) so it applies `0.x` minors/patches but not a breaking major.
 
 ---
 
