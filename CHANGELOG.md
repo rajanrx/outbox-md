@@ -4,6 +4,24 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0](https://github.com/rajanrx/outbox-md/compare/v0.12.0...v0.13.0) (2026-07-01)
+
+
+### Features
+
+* **cli:** docs list + require &gt;=1 docs on add; help-first dispatch, paths & settings ([7cf148b](https://github.com/rajanrx/outbox-md/commit/7cf148b9badcfdb73a7f066caa1bc2413a72a7bd))
+* **cli:** interactive multiselect remove (project/docs granularity) ([bb9d972](https://github.com/rajanrx/outbox-md/commit/bb9d972e3b53c039770c555f2cd2d9a78801eeca))
+* live-reload .md via fsnotify watcher + docs.changed SSE ([e622926](https://github.com/rajanrx/outbox-md/commit/e6229267f8662bbf98b4f7d2651df216cbc2a158))
+* multi-docs projects, help-first CLI (paths/settings) + live file-watcher ([3ae0f0a](https://github.com/rajanrx/outbox-md/commit/3ae0f0a021b183e7ea218d9118105cb05067b9a1))
+
+
+### Bug Fixes
+
+* gate served set on the docs union + root-relative sources (import/serve parity) ([935d8f7](https://github.com/rajanrx/outbox-md/commit/935d8f7012905a606660a5810a3a8a235176d958))
+* **settings:** don't error on a comments-only outbox.yaml (init happy path) ([e81c6d1](https://github.com/rajanrx/outbox-md/commit/e81c6d18e2ba9797a3589ee60e51e8f067c87fc9))
+* **settings:** use isatty so a non-TTY stdin (incl. /dev/null) isn't treated as a terminal ([a1a2bce](https://github.com/rajanrx/outbox-md/commit/a1a2bce3fa77195d194e89a79abd9fd0645c7860))
+* **ui:** docs.changed updates the file list only, never reloads the open doc ([b373164](https://github.com/rajanrx/outbox-md/commit/b3731646896f594906718d58bda9de0c7cf1204a))
+
 ## [0.12.0](https://github.com/rajanrx/outbox-md/compare/v0.11.1...v0.12.0) (2026-07-01)
 
 
