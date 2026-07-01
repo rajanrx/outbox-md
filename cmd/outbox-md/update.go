@@ -229,7 +229,14 @@ func selfReplace(version string) error {
 	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = resolved
 	}
+	return selfReplaceTo(exe, version)
+}
 
+// selfReplaceTo downloads and sha256-verifies the release asset for version and
+// atomically swaps it over exe (temp file + rename in the same dir). Split from
+// selfReplace (which resolves the running executable) so the download → verify →
+// swap can be exercised against a temp file and a local server in tests.
+func selfReplaceTo(exe, version string) error {
 	asset := fmt.Sprintf("outbox_%s_%s", runtime.GOOS, runtime.GOARCH)
 	base := fmt.Sprintf("%s/%s%s", releaseDownloadBase, tagPrefix, version)
 
@@ -370,6 +377,12 @@ func maybeAutoUpdate(cfg config.Config, out io.Writer) {
 	if version == "dev" {
 		return
 	}
+	// Opt-out short-circuits BEFORE any throttle or network I/O: auto_update:
+	// false means the startup check is fully off (no daily GitHub request), not
+	// "notify but don't apply". `outbox upgrade` remains the manual path.
+	if !cfg.AutoUpdate {
+		return
+	}
 	// Docker never self-updates on `up` (and `up` is not the container path
 	// anyway); nothing actionable to print, so skip before any I/O.
 	kind := installKindOf()
@@ -394,10 +407,7 @@ func maybeAutoUpdate(cfg config.Config, out io.Writer) {
 
 	switch kind {
 	case kindStandalone:
-		if !cfg.AutoUpdate {
-			fmt.Fprintf(out, "outbox: v%s available — run `outbox upgrade` (auto_update is off)\n", latest)
-			return
-		}
+		// auto_update is on here (checked above), so apply.
 		if err := selfReplace(latest); err != nil {
 			// Leave the current binary running; surface nothing fatal.
 			fmt.Fprintf(out, "outbox: self-update to v%s failed (%v) — continuing on v%s\n", latest, err, version)

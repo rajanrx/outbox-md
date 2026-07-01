@@ -4,6 +4,9 @@ services:
     # clone still rebuilds from source with `docker compose up --build`.
     image: rajanrauniyar/outbox-md:latest
     build: .
+    # Fixed name so the optional Watchtower service (below) can target it; without
+    # this, Compose names it "<project>-outbox-md-1" and the name filter matches nothing.
+    container_name: outbox-md
     ports:
       # host:container — change the host side if 8181 is taken
       - "8181:8181"
