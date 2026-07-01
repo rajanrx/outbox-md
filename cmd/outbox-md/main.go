@@ -277,7 +277,7 @@ func run(args []string, out io.Writer) error {
 	case "add":
 		return addProject(rest, out)
 	case "remove":
-		return removeProject(rest, out)
+		return removeProject(rest, out, os.Stdin)
 	case "list", "projects":
 		return listProjectsCmd(out)
 	case "paths":
@@ -785,27 +785,37 @@ func addProject(args []string, out io.Writer) error {
 	return nil
 }
 
-// removeProject unregisters a project by name or path. A missing ref prints the
-// remove usage + examples and returns an error.
-func removeProject(args []string, out io.Writer) error {
+// removeProject unregisters registered projects (or individual docs subpaths).
+// With a name/root argument it removes the WHOLE matching project (the
+// non-interactive, back-compatible shortcut); an unknown ref is an error. With no
+// argument it runs the interactive multiselect (rows = every project × each of its
+// docs), removing the ticked docs entries and dropping any project whose last
+// docs entry goes. When stdin is not a terminal and no argument is given it prints
+// a hint and returns an error rather than hanging — mirroring the settings guard.
+func removeProject(args []string, out io.Writer, stdin io.Reader) error {
 	fs := flag.NewFlagSet("remove", flag.ContinueOnError)
 	fs.SetOutput(out)
 	fs.Usage = func() { usageFor(out, "remove") }
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+
+	// No argument: interactive multiselect, guarded against a non-TTY stdin.
 	if fs.NArg() == 0 {
-		usageFor(out, "remove")
-		return fmt.Errorf("remove requires a project name or root")
+		if !isTerminal(stdin) {
+			return fmt.Errorf("remove needs a project name (non-interactive), or run in a terminal for multiselect")
+		}
+		return removeInteractive(out, stdin)
 	}
+
+	// `remove <name|root>`: remove the whole matching project (back-compat).
 	ref := fs.Arg(0)
 	removed, err := registry.Remove(registryPath(), ref)
 	if err != nil {
 		return err
 	}
 	if !removed {
-		fmt.Fprintf(out, "no project matching %q\n", ref)
-		return nil
+		return fmt.Errorf("no project matching %q", ref)
 	}
 	fmt.Fprintf(out, "removed project %q\n", ref)
 	return nil

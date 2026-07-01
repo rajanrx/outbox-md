@@ -83,14 +83,21 @@ Examples:
   outbox add ~/work/app specs api-specs   # serve TWO subpaths as one project
   outbox add ~/work/api . --agent codex   # this project's auto-reply uses codex
 `,
-	"remove": `outbox remove — unregister a project by name or root.
+	"remove": `outbox remove — unregister projects, or individual docs subpaths.
 
 Usage:
-  outbox remove <name|root>
+  outbox remove                       # interactive multiselect (docs granularity)
+  outbox remove <name|root>           # remove the WHOLE matching project
+
+With no argument, remove lists every project AND each of its docs entries as a
+tickable row; space toggles, enter confirms, q/esc cancels. Removing a project's
+LAST docs entry drops the project entirely. (Needs a terminal — pass a name to
+remove non-interactively.)
 
 Examples:
-  outbox remove app                   # remove the project named "app"
-  outbox remove ~/work/app            # remove the project rooted at ~/work/app
+  outbox remove                       # pick docs/projects to remove from a list
+  outbox remove app                   # remove the whole project named "app"
+  outbox remove ~/work/app            # remove the whole project rooted there
 `,
 	"list": `outbox list — list registered projects (alias: outbox projects).
 
@@ -176,7 +183,7 @@ Commands (with a one-line example each):
   up         Serve, then open the browser            outbox up
   init       Scaffold outbox.yaml + register MCP     outbox init
   add        Register a project (root + docs...)     outbox add ~/work/app docs/specs
-  remove     Unregister a project                    outbox remove app
+  remove     Unregister projects/docs (multiselect)  outbox remove
   list       List registered projects (a: projects) outbox list
   paths      Print outbox's on-disk locations        outbox paths
   settings   View/change outbox.yaml fields          outbox settings auto_reply true

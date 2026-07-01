@@ -276,6 +276,91 @@ func TestRemoveUnknownIsNoError(t *testing.T) {
 	}
 }
 
+// TestApplyRemovalsTrimsProject verifies removing ONE of a project's docs entries
+// leaves the project registered with the remaining entries — not dropped.
+func TestApplyRemovalsTrimsProject(t *testing.T) {
+	projects := []Project{{Name: "app", Root: "/work/app", Docs: []string{"specs", "api-specs"}}}
+	kept, applied := ApplyRemovals(projects, []DocRemoval{{Project: "app", Docs: "specs"}})
+	if len(kept) != 1 {
+		t.Fatalf("kept = %d projects, want 1", len(kept))
+	}
+	if len(kept[0].Docs) != 1 || kept[0].Docs[0] != "api-specs" {
+		t.Fatalf("docs = %v, want [api-specs]", kept[0].Docs)
+	}
+	if len(applied) != 1 || applied[0].Project != "app" || applied[0].Docs != "specs" {
+		t.Fatalf("applied = %v, want [{app specs}]", applied)
+	}
+}
+
+// TestApplyRemovalsDropsProjectOnLastDocs verifies removing a project's LAST docs
+// entry drops the whole project.
+func TestApplyRemovalsDropsProjectOnLastDocs(t *testing.T) {
+	projects := []Project{{Name: "app", Root: "/work/app", Docs: []string{"specs"}}}
+	kept, applied := ApplyRemovals(projects, []DocRemoval{{Project: "app", Docs: "specs"}})
+	if len(kept) != 0 {
+		t.Fatalf("kept = %v, want the project dropped", kept)
+	}
+	if len(applied) != 1 {
+		t.Fatalf("applied = %v, want one removal", applied)
+	}
+}
+
+// TestApplyRemovalsBatchSpanningProjects is the discriminating case: a batch that
+// removes ALL docs of one project (dropping it) AND some docs of another (trimming
+// it) in a single pass. A naive per-removal "delete then check empty" mis-handles
+// this; verify both outcomes.
+func TestApplyRemovalsBatchSpanningProjects(t *testing.T) {
+	projects := []Project{
+		{Name: "gone", Root: "/g", Docs: []string{"a", "b"}},
+		{Name: "trim", Root: "/t", Docs: []string{"x", "y", "z"}},
+		{Name: "keep", Root: "/k", Docs: []string{"."}},
+	}
+	removals := []DocRemoval{
+		{Project: "gone", Docs: "a"},
+		{Project: "gone", Docs: "b"},
+		{Project: "trim", Docs: "y"},
+	}
+	kept, applied := ApplyRemovals(projects, removals)
+	if len(kept) != 2 {
+		t.Fatalf("kept = %v, want 2 (gone dropped)", kept)
+	}
+	if kept[0].Name != "trim" || len(kept[0].Docs) != 2 || kept[0].Docs[0] != "x" || kept[0].Docs[1] != "z" {
+		t.Fatalf("trim project = %+v, want docs [x z]", kept[0])
+	}
+	if kept[1].Name != "keep" || len(kept[1].Docs) != 1 || kept[1].Docs[0] != "." {
+		t.Fatalf("keep project = %+v, want docs [.] untouched", kept[1])
+	}
+	if len(applied) != 3 {
+		t.Fatalf("applied = %v, want all 3 removals", applied)
+	}
+}
+
+// TestApplyRemovalsPureNoInputMutation verifies ApplyRemovals does not mutate the
+// caller's input slice/entries — it operates on copies.
+func TestApplyRemovalsPureNoInputMutation(t *testing.T) {
+	orig := []Project{{Name: "app", Root: "/work/app", Docs: []string{"specs", "api-specs"}}}
+	_, _ = ApplyRemovals(orig, []DocRemoval{{Project: "app", Docs: "specs"}})
+	if len(orig) != 1 || len(orig[0].Docs) != 2 {
+		t.Fatalf("input mutated: %+v", orig)
+	}
+}
+
+// TestApplyRemovalsIgnoresUnknown verifies removals naming an unknown project or
+// docs entry are simply ignored (no drop, no panic, nothing applied).
+func TestApplyRemovalsIgnoresUnknown(t *testing.T) {
+	projects := []Project{{Name: "app", Root: "/work/app", Docs: []string{"specs"}}}
+	kept, applied := ApplyRemovals(projects, []DocRemoval{
+		{Project: "ghost", Docs: "specs"},
+		{Project: "app", Docs: "nope"},
+	})
+	if len(kept) != 1 || len(kept[0].Docs) != 1 || kept[0].Docs[0] != "specs" {
+		t.Fatalf("kept = %+v, want the project untouched", kept)
+	}
+	if len(applied) != 0 {
+		t.Fatalf("applied = %v, want none", applied)
+	}
+}
+
 // TestMigrateLegacyPathEntry verifies an older {name,path} registry loads as the
 // new shape: root ← path, docs ← ".", agent ← "", name preserved.
 func TestMigrateLegacyPathEntry(t *testing.T) {

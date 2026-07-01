@@ -579,6 +579,84 @@ func TestAddMultipleDocsCLI(t *testing.T) {
 	}
 }
 
+// TestRemoveWholeProjectByName verifies `outbox remove <name>` removes the whole
+// matching project (back-compat shortcut) and `list` then reports none.
+func TestRemoveWholeProjectByName(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	root := t.TempDir()
+	for _, d := range []string{"specs", "api-specs"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := registry.Add(filepath.Join(home, ".config", "outbox", "projects.json"), root, []string{"specs", "api-specs"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	name := filepath.Base(root)
+
+	var out bytes.Buffer
+	if err := removeProject([]string{name}, &out, strings.NewReader("")); err != nil {
+		t.Fatalf("remove <name>: %v", err)
+	}
+	if !strings.Contains(out.String(), "removed project") {
+		t.Fatalf("remove output = %q", out.String())
+	}
+	// The whole project (both docs) is gone.
+	var listOut bytes.Buffer
+	if err := run([]string{"list"}, &listOut); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(listOut.String(), "no projects registered") {
+		t.Fatalf("list after remove should be empty:\n%s", listOut.String())
+	}
+}
+
+// TestRemoveUnknownNameErrors verifies `outbox remove <unknown>` is an error (not a
+// silent no-op).
+func TestRemoveUnknownNameErrors(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	var out bytes.Buffer
+	if err := removeProject([]string{"ghost"}, &out, strings.NewReader("")); err == nil {
+		t.Fatal("remove of an unknown project should error")
+	}
+}
+
+// TestRemoveNonTTYNoArgGuard verifies `outbox remove` with no argument and a
+// non-terminal stdin returns an error (never hangs) with the guidance message.
+func TestRemoveNonTTYNoArgGuard(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	var out bytes.Buffer
+	err := removeProject(nil, &out, strings.NewReader(""))
+	if err == nil {
+		t.Fatal("remove with no arg on a non-TTY stdin should error, not hang")
+	}
+	if !strings.Contains(err.Error(), "non-interactive") {
+		t.Fatalf("guard error = %q, want the non-interactive hint", err.Error())
+	}
+}
+
+// TestBuildRemoveRowsFlattensDocs verifies the multiselect rows are one per
+// (project, docs) pair, in registry order — the docs-granular row model.
+func TestBuildRemoveRowsFlattensDocs(t *testing.T) {
+	projects := []registry.Project{
+		{Name: "outbox-md", Root: "/o", Docs: []string{"docs/specs", "api-specs"}},
+		{Name: "other", Root: "/x", Docs: []string{"."}},
+	}
+	rows := buildRemoveRows(projects)
+	want := []string{"outbox-md · docs/specs", "outbox-md · api-specs", "other · ."}
+	if len(rows) != len(want) {
+		t.Fatalf("rows = %d, want %d", len(rows), len(want))
+	}
+	for i, w := range want {
+		if rows[i].label() != w {
+			t.Fatalf("row %d = %q, want %q", i, rows[i].label(), w)
+		}
+	}
+}
+
 // TestBareInvocationPrintsHelp verifies `outbox` with no args prints help (and
 // does NOT start a server), and returns no error.
 func TestBareInvocationPrintsHelp(t *testing.T) {

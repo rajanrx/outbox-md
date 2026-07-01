@@ -328,5 +328,66 @@ func Remove(file, ref string) (bool, error) {
 	return true, nil
 }
 
+// DocRemoval identifies one docs entry to remove: a project by name and one of
+// its docs subpaths. It is the unit the interactive `outbox remove` multiselect
+// collects (one per ticked row) and the key ApplyRemovals matches on.
+type DocRemoval struct {
+	Project string
+	Docs    string
+}
+
+// ApplyRemovals removes each requested docs entry from its project (matched by
+// project name AND docs subpath) and returns the resulting project slice plus the
+// subset of removals actually applied (for reporting). A project whose docs list
+// becomes empty after removals is dropped entirely. It is pure — no file I/O and
+// no mutation of the input slice — so the multiselect's selection→mutation logic
+// is unit-testable without a terminal.
+//
+// Batch-safe: all removals for a project are collected first, then applied in one
+// pass, so removing several docs from one project (or the last docs of one project
+// while trimming another) drops/keeps each project correctly.
+func ApplyRemovals(projects []Project, removals []DocRemoval) ([]Project, []DocRemoval) {
+	// Index the requested docs to remove per project name.
+	toRemove := make(map[string]map[string]bool, len(removals))
+	for _, r := range removals {
+		if toRemove[r.Project] == nil {
+			toRemove[r.Project] = map[string]bool{}
+		}
+		toRemove[r.Project][r.Docs] = true
+	}
+
+	kept := make([]Project, 0, len(projects))
+	applied := make([]DocRemoval, 0, len(removals))
+	for _, p := range projects {
+		drop, ok := toRemove[p.Name]
+		if !ok {
+			kept = append(kept, p)
+			continue
+		}
+		docs := p.Docs
+		if len(docs) == 0 {
+			docs = []string{"."}
+		}
+		remaining := make([]string, 0, len(docs))
+		for _, d := range docs {
+			if d == "" {
+				d = "."
+			}
+			if drop[d] {
+				applied = append(applied, DocRemoval{Project: p.Name, Docs: d})
+				continue
+			}
+			remaining = append(remaining, d)
+		}
+		// A project whose every docs entry was removed is dropped entirely.
+		if len(remaining) == 0 {
+			continue
+		}
+		p.Docs = remaining
+		kept = append(kept, p)
+	}
+	return kept, applied
+}
+
 // List returns the registered projects (equivalent to Load).
 func List(file string) ([]Project, error) { return Load(file) }
