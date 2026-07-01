@@ -138,3 +138,39 @@ func (c Config) Serves(docPath string) bool {
 	}
 	return false
 }
+
+// ProjectSources maps a served project's name to its loaded Config, so the
+// runtime read guards enforce each project's OWN Sources whitelist against its
+// own documents rather than a single global whitelist. The empty-string key is
+// the single-folder mode (its Config carries the real single-dir Sources). A
+// project absent from the map is treated as NOT served — orphaned documents left
+// behind by a removed project stay hidden on every surface.
+type ProjectSources map[string]Config
+
+// Serves reports whether docPath in the named project is inside that project's
+// active whitelist. An unknown project is not served (deny), which hides
+// orphaned docs. A known project with an empty whitelist serves everything,
+// exactly like Config.Serves.
+func (m ProjectSources) Serves(project, docPath string) bool {
+	cfg, ok := m[project]
+	if !ok {
+		return false
+	}
+	return cfg.Serves(docPath)
+}
+
+// Restricted reports whether the sources guards must run at all. It is false
+// only in the classic single-folder mode with no whitelist (exactly one entry,
+// keyed "", with empty Sources) — the original zero-extra-lookup fast path,
+// preserved bit-for-bit. Any configured whitelist, or multi-project mode (where
+// orphaned docs must be hidden), makes it restricted.
+func (m ProjectSources) Restricted() bool {
+	if len(m) != 1 {
+		return true
+	}
+	cfg, ok := m[""]
+	if !ok {
+		return true
+	}
+	return len(cfg.Sources) > 0
+}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/rajanrx/outbox-md/internal/config"
+	"github.com/rajanrx/outbox-md/internal/domain"
+	"github.com/rajanrx/outbox-md/internal/registry"
 	"github.com/rajanrx/outbox-md/internal/store"
 )
 
@@ -295,6 +298,79 @@ func stubClaudeAbsent(t *testing.T) (restore func()) {
 	orig := lookPath
 	lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	return func() { lookPath = orig }
+}
+
+// TestBuildServerMultiWiresPerProjectSourcesGuard is the wiring test: it proves
+// buildServer actually connects the per-project sources guard, which the
+// api/mcp package tests (which set the map by hand) cannot. It reproduces PR #42
+// P2's runtime state — a doc that entered the shared store under a broad config,
+// then a project whose outbox.yaml narrows sources so that doc is excluded — and
+// asserts the doc is hidden on the handler buildServer returns. If buildServer
+// stops calling SetProjectSources (the original bug), the guard reverts to the
+// nil-fallback on the global cfg, whose Sources is nil in multi mode, so the
+// excluded doc would reappear and this test fails.
+func TestBuildServerMultiWiresPerProjectSourcesGuard(t *testing.T) {
+	// Redirect the multi-mode shared DB (configHomeDir/outbox.db) into a temp dir.
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", home)
+
+	projDir := t.TempDir()
+	// The project narrows sources to docs/specs; only served files live there.
+	if err := os.WriteFile(filepath.Join(projDir, "outbox.yaml"),
+		[]byte("sources:\n  - docs/specs\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	served := filepath.Join(projDir, "docs", "specs", "in.md")
+	if err := os.MkdirAll(filepath.Dir(served), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(served, []byte("# in\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pre-seed the shared multi-mode DB with a doc OUTSIDE the narrowed whitelist,
+	// as if a broader earlier run had imported it. Close it before buildServer
+	// opens the same file so the single-connection store never contends.
+	dbDir := filepath.Join(home, "outbox")
+	if err := os.MkdirAll(dbDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seed, err := store.Open("file:" + filepath.Join(dbDir, "outbox.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, _, err := seed.CreateDocumentInProject("proj", "secret.md", "top secret", "import")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = seed.Close()
+
+	// A single named project forces multi mode (DB at configHomeDir).
+	h, err := buildServer(projDir, []registry.Project{{Name: "proj", Path: projDir}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The narrowed-out, previously-imported doc must be absent from /api/docs.
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/docs", nil))
+	var docs []domain.Document
+	_ = json.Unmarshal(rec.Body.Bytes(), &docs)
+	for _, d := range docs {
+		if d.ID == secret.ID {
+			t.Fatalf("/api/docs leaked the narrowed-out doc secret.md: %+v", docs)
+		}
+	}
+	// And a direct read is a 404.
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/docs/"+secret.ID, nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET narrowed-out doc via buildServer = %d, want 404", rec.Code)
+	}
+	// Sanity: the served file was imported and IS visible (guard isn't hiding all).
+	if len(docs) != 1 || docs[0].Path != "docs/specs/in.md" {
+		t.Fatalf("/api/docs = %+v, want only docs/specs/in.md", docs)
+	}
 }
 
 func TestHealthz(t *testing.T) {

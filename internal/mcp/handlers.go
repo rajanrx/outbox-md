@@ -20,9 +20,10 @@ func (h *Handlers) ReadDoc(docID string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Enforce the sources whitelist on the MCP surface too: a doc outside the
-	// active whitelist is hidden from agents, mirroring the HTTP API's 404.
-	if !h.Svc.Config().Serves(doc.Path) {
+	// Enforce the sources whitelist on the MCP surface too: a doc outside its
+	// project's active whitelist is hidden from agents, mirroring the HTTP API's
+	// 404. The check is project-aware — each project's own Sources gate its docs.
+	if h.Svc.SourcesRestricted() && !h.Svc.ProjectServes(doc.Project, doc.Path) {
 		return nil, fmt.Errorf("document %s not found", docID)
 	}
 	ver, err := h.St.GetVersion(doc.CurrentVersionID)
@@ -50,16 +51,16 @@ func (h *Handlers) ListOpenComments() ([]OpenComment, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg := h.Svc.Config()
+	restricted := h.Svc.SourcesRestricted()
 	out := make([]OpenComment, 0, len(comments))
 	for _, c := range comments {
 		oc := OpenComment{Comment: c, Thread: []domain.ThreadMessage{}}
 		// Don't fail the whole list if one lookup errors — just skip that field.
 		if doc, err := h.St.GetDocument(c.DocID); err == nil {
-			// Hide comments on docs outside the sources whitelist from agents,
-			// mirroring the HTTP list filter (a resolvable doc that isn't served
-			// is skipped; an unresolvable lookup falls through, as before).
-			if !cfg.Serves(doc.Path) {
+			// Hide comments on docs outside their project's sources whitelist from
+			// agents, mirroring the HTTP list filter (a resolvable doc that isn't
+			// served is skipped; an unresolvable lookup falls through, as before).
+			if restricted && !h.Svc.ProjectServes(doc.Project, doc.Path) {
 				continue
 			}
 			oc.DocPath = doc.Path
@@ -81,6 +82,9 @@ func (h *Handlers) ListOpenComments() ([]OpenComment, error) {
 // comment-scoped MCP write gates on this so an agent can neither discover
 // (list_open_comments/read_doc) nor mutate a hidden doc via a stale id.
 func (h *Handlers) served(commentID string) bool {
+	if !h.Svc.SourcesRestricted() {
+		return true
+	}
 	c, err := h.St.GetComment(commentID)
 	if err != nil {
 		return false
@@ -89,7 +93,7 @@ func (h *Handlers) served(commentID string) bool {
 	if err != nil {
 		return false
 	}
-	return h.Svc.Config().Serves(doc.Path)
+	return h.Svc.ProjectServes(doc.Project, doc.Path)
 }
 
 func (h *Handlers) ClaimComment(ids []string, agent string) (string, error) {

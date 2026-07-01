@@ -76,10 +76,10 @@ func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub) http.Handler {
 	mux.HandleFunc("GET /api/suggestions/pending", func(w http.ResponseWriter, _ *http.Request) {
 		pending, err := st.ListPendingSuggestions()
 		if err == nil {
-			if cfg := svc.Config(); len(cfg.Sources) > 0 {
+			if svc.SourcesRestricted() {
 				kept := pending[:0:0]
 				for _, p := range pending {
-					if cfg.Serves(p.Path) {
+					if svc.ProjectServes(p.Project, p.Path) {
 						kept = append(kept, p)
 					}
 				}
@@ -92,10 +92,10 @@ func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub) http.Handler {
 	mux.HandleFunc("GET /api/docs", func(w http.ResponseWriter, _ *http.Request) {
 		docs, err := st.ListDocuments()
 		if err == nil {
-			if cfg := svc.Config(); len(cfg.Sources) > 0 {
+			if svc.SourcesRestricted() {
 				kept := docs[:0:0]
 				for _, d := range docs {
-					if cfg.Serves(d.Path) {
+					if svc.ProjectServes(d.Project, d.Path) {
 						kept = append(kept, d)
 					}
 				}
@@ -339,8 +339,8 @@ func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub) http.Handler {
 // outside the active sources whitelist, before the request reaches its handler.
 func guardSources(next http.Handler, svc *service.Service, st *store.Store) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if cfg := svc.Config(); len(cfg.Sources) > 0 {
-			if docPath, scoped := targetDocPath(st, r.URL.Path); scoped && !cfg.Serves(docPath) {
+		if svc.SourcesRestricted() {
+			if project, docPath, scoped := targetDocPath(st, r.URL.Path); scoped && !svc.ProjectServes(project, docPath) {
 				http.Error(w, "not found", http.StatusNotFound)
 				return
 			}
@@ -349,13 +349,13 @@ func guardSources(next http.Handler, svc *service.Service, st *store.Store) http
 	})
 }
 
-// targetDocPath resolves the doc path a request targets when the path is
-// doc-scoped (/api/docs/{id}…) or comment-scoped (/api/comments/{id}…).
-// scoped is true for those paths (even when the id is unknown — then docPath is
-// "", which Serves rejects, matching the 404 the handler would return anyway);
-// false for non-scoped paths (list, config, events, suggestions/pending), which
-// do their own filtering.
-func targetDocPath(st *store.Store, path string) (docPath string, scoped bool) {
+// targetDocPath resolves the project and doc path a request targets when the
+// path is doc-scoped (/api/docs/{id}…) or comment-scoped (/api/comments/{id}…).
+// scoped is true for those paths (even when the id is unknown — then project and
+// docPath are both "", which ProjectServes rejects for any restricted config,
+// matching the 404 the handler would return anyway); false for non-scoped paths
+// (list, config, events, suggestions/pending), which do their own filtering.
+func targetDocPath(st *store.Store, path string) (project, docPath string, scoped bool) {
 	idAfter := func(prefix string) (string, bool) {
 		if !strings.HasPrefix(path, prefix) {
 			return "", false
@@ -365,27 +365,26 @@ func targetDocPath(st *store.Store, path string) (docPath string, scoped bool) {
 	}
 	if id, ok := idAfter("/api/docs/"); ok {
 		if doc, err := st.GetDocument(id); err == nil {
-			return doc.Path, true
+			return doc.Project, doc.Path, true
 		}
-		return "", true
+		return "", "", true
 	}
 	if id, ok := idAfter("/api/comments/"); ok {
 		if c, err := st.GetComment(id); err == nil {
 			if doc, err := st.GetDocument(c.DocID); err == nil {
-				return doc.Path, true
+				return doc.Project, doc.Path, true
 			}
 		}
-		return "", true
+		return "", "", true
 	}
-	return "", false
+	return "", "", false
 }
 
 // commentDocServed reports whether commentID's parent doc is inside the active
 // sources whitelist. Used by the body-carrying dev endpoints, which the
 // path-based guardSources cannot reach. No whitelist → always true.
 func commentDocServed(svc *service.Service, st *store.Store, commentID string) bool {
-	cfg := svc.Config()
-	if len(cfg.Sources) == 0 {
+	if !svc.SourcesRestricted() {
 		return true
 	}
 	c, err := st.GetComment(commentID)
@@ -396,7 +395,7 @@ func commentDocServed(svc *service.Service, st *store.Store, commentID string) b
 	if err != nil {
 		return false
 	}
-	return cfg.Serves(doc.Path)
+	return svc.ProjectServes(doc.Project, doc.Path)
 }
 
 func writeJSON(w http.ResponseWriter, v any, err error) {

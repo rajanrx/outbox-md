@@ -119,6 +119,49 @@ func TestMCPSurfaceRespectsSourcesWhitelist(t *testing.T) {
 	}
 }
 
+// PR #42 P2: the MCP surface must gate per project in multi mode. A doc hidden
+// by narrowing its project's sources (imported earlier, still in the store) must
+// vanish from list_open_comments/read_doc and refuse every comment-scoped write.
+func TestMCPSurfaceRespectsPerProjectSources(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := service.New(s, func(_, _, _ string) error { return nil })
+	svc.SetProjectSources(config.ProjectSources{
+		"web": config.Config{Sources: []string{"docs/specs"}},
+	})
+
+	inDoc, _, _ := s.CreateDocumentInProject("web", "docs/specs/in.md", "hello world", "human")
+	secretDoc, _, _ := s.CreateDocumentInProject("web", "secret.md", "top secret", "human")
+	if _, err := svc.PostComment(inDoc.ID, domain.Anchor{Start: 0, End: 5}, "human"); err != nil {
+		t.Fatal(err)
+	}
+	secretC, err := svc.PostComment(secretDoc.ID, domain.Anchor{Start: 0, End: 3}, "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hh := &Handlers{Svc: svc, St: s}
+	list, err := hh.ListOpenComments()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].DocPath != "docs/specs/in.md" {
+		t.Fatalf("ListOpenComments = %+v, want only docs/specs/in.md", list)
+	}
+	if _, err := hh.ReadDoc(secretDoc.ID); err == nil {
+		t.Fatal("ReadDoc on narrowed-out doc: want error, got nil")
+	}
+	if _, err := hh.ReadDoc(inDoc.ID); err != nil {
+		t.Fatalf("ReadDoc on whitelisted doc: unexpected error %v", err)
+	}
+	if _, err := hh.ClaimComment([]string{secretC.ID}, "agent"); err == nil {
+		t.Fatal("ClaimComment on narrowed-out doc's comment: want error, got nil")
+	}
+	if _, err := hh.ProposeSuggestion(secretC.ID, "tok", "x", "agent"); err == nil {
+		t.Fatal("ProposeSuggestion on narrowed-out doc's comment: want error, got nil")
+	}
+}
+
 func TestReadDocExposesLifecycle(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()

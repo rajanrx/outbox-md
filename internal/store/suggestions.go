@@ -50,6 +50,7 @@ func (s *Store) RejectSuggestionIfProposed(id string) error {
 // it shows inline.
 type PendingSuggestion struct {
 	DocID     string `json:"docId"`
+	Project   string `json:"project"` // the project the doc belongs to ("" = single-folder mode)
 	Path      string `json:"path"`
 	CommentID string `json:"commentId"`
 	Current   string `json:"current"`
@@ -66,7 +67,7 @@ type PendingSuggestion struct {
 // subquery mirrors GetSuggestionByComment.
 func (s *Store) ListPendingSuggestions() ([]PendingSuggestion, error) {
 	rows, err := s.DB.Query(`
-		SELECT c.doc_id, d.path, s.comment_id, v.content, s.proposed_content
+		SELECT c.doc_id, d.project, d.path, s.comment_id, v.content, s.proposed_content
 		FROM suggestions s
 		JOIN comments c   ON c.id = s.comment_id
 		JOIN documents d  ON d.id = c.doc_id
@@ -86,7 +87,7 @@ func (s *Store) ListPendingSuggestions() ([]PendingSuggestion, error) {
 	out := []PendingSuggestion{}
 	for rows.Next() {
 		var p PendingSuggestion
-		if err := rows.Scan(&p.DocID, &p.Path, &p.CommentID, &p.Current, &p.Proposed); err != nil {
+		if err := rows.Scan(&p.DocID, &p.Project, &p.Path, &p.CommentID, &p.Current, &p.Proposed); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
