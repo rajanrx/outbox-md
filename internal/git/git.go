@@ -82,6 +82,14 @@ func (s *Service) Diff(ctx context.Context) Result {
 	type out struct{ files []FileDiff }
 	done := make(chan out, 1)
 	go func() {
+		// go-git can panic on a corrupt/unusual repo. Recover HERE — the request
+		// goroutine's recover cannot catch a panic on this child goroutine — so a
+		// bad repo degrades to an empty diff instead of crashing the server.
+		defer func() {
+			if recover() != nil {
+				done <- out{files: nil}
+			}
+		}()
 		files := s.build()
 		done <- out{files: files}
 	}()
@@ -135,7 +143,7 @@ func (s *Service) build() []FileDiff {
 	var files []FileDiff
 	for path := range status {
 		p := filepath.ToSlash(path)
-		if !strings.HasSuffix(p, ".md") {
+		if !strings.HasSuffix(strings.ToLower(p), ".md") {
 			continue
 		}
 		if !withinPrefix(p, prefix) {
@@ -268,9 +276,6 @@ func withinDir(root, path string) bool {
 // isBinary flags content that should not be rendered as a text diff: a NUL byte
 // is the classic heuristic and never appears in Markdown.
 func isBinary(b []byte) bool {
-	if len(b) > maxFileBytes {
-		return true
-	}
 	for _, c := range b {
 		if c == 0 {
 			return true
