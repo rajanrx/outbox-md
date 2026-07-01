@@ -1,6 +1,29 @@
-import { useEffect, useRef, useState } from "react";
-import { getThread, reply, resolve, type Comment, type ThreadMessage } from "../api";
-import { DiffPanel } from "../suggestion/DiffPanel";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { getThread, reply, resolve, getSuggestion, type Comment, type ThreadMessage, type Suggestion } from "../api";
+import { unifiedDiff, type Row } from "../suggestion/diff";
+import { DiffRows, counts } from "../suggestion/DiffRows";
+import { DiffModal } from "../suggestion/DiffModal";
+
+// excerptRows keeps the first ~maxChanges changed (ins/del) lines of a unified
+// diff, along with any context/gap rows encountered up to that point, so the
+// inline preview stays compact. `truncated` is true when changes were dropped.
+function excerptRows(rows: Row[], maxChanges = 6): { rows: Row[]; truncated: boolean } {
+  const out: Row[] = [];
+  let seen = 0;
+  let i = 0;
+  for (; i < rows.length; i++) {
+    const r = rows[i];
+    if (r.op === "ins" || r.op === "del") {
+      if (seen >= maxChanges) break;
+      seen++;
+    }
+    out.push(r);
+  }
+  // Trim a trailing context/gap run so the excerpt ends on a change line.
+  while (out.length && out[out.length - 1].op !== "ins" && out[out.length - 1].op !== "del") out.pop();
+  const truncated = rows.slice(i).some((r) => r.op === "ins" || r.op === "del");
+  return { rows: out, truncated };
+}
 
 const LocateIcon = () => (
   <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
@@ -17,9 +40,11 @@ const PinIcon = ({ filled }: { filled: boolean }) => (
 
 const initial = (who: string) => (who?.[0] || "?").toUpperCase();
 
-export function Card({ comment, currentContent, active = false, pinned = false, offscreen = false, reloadKey = 0, onActivate, onJump, onTogglePin, onChange }: {
+export function Card({ comment, currentContent, docPath = "", hasGit = false, active = false, pinned = false, offscreen = false, reloadKey = 0, onActivate, onJump, onTogglePin, onChange }: {
   comment: Comment;
   currentContent: string;
+  docPath?: string;
+  hasGit?: boolean;
   active?: boolean;
   pinned?: boolean;
   offscreen?: boolean;
@@ -57,6 +82,21 @@ export function Card({ comment, currentContent, active = false, pinned = false, 
   const stop = (e: React.MouseEvent, fn?: () => void) => { e.stopPropagation(); fn?.(); };
   const sendReply = async () => { if (!draft.trim()) return; await reply(comment.id, draft); setDraft(""); await load(); };
 
+  // When a comment is addressed it carries a proposed suggestion. Fetch it here
+  // to build the compact excerpt shown inline; the full diff + Approve/Reject
+  // live in the modal (which re-fetches via DiffPanel).
+  const [sg, setSg] = useState<Suggestion | null>(null);
+  const [diffOpen, setDiffOpen] = useState(false);
+  const addressed = comment.status === "addressed";
+  useEffect(() => {
+    if (!addressed) { setSg(null); return; }
+    getSuggestion(comment.id).then(setSg);
+  }, [addressed, comment.id, reloadKey]);
+  const rows = useMemo(() => (sg ? unifiedDiff(currentContent, sg.proposedContent) : []), [sg, currentContent]);
+  const excerpt = useMemo(() => excerptRows(rows), [rows]);
+  const changed = rows.some((r) => r.op === "ins" || r.op === "del");
+  const c = counts(rows);
+
   return (
     <div ref={ref} className={"card" + (active ? " active" : "") + (pinned ? " pinned" : "")} data-comment={comment.id} onClick={onActivate}>
       <div className="card-bar">
@@ -88,8 +128,36 @@ export function Card({ comment, currentContent, active = false, pinned = false, 
         ))}
       </div>
 
-      {comment.status === "addressed" && (
-        <DiffPanel commentId={comment.id} currentContent={currentContent} onDone={onChange} />
+      {addressed && sg && (
+        <div className="suggestion" onClick={(e) => e.stopPropagation()}>
+          <div className="suggestion-head">
+            Suggested change
+            {changed && <span className="diff-count"><span className="ins">+{c.ins}</span> <span className="del">−{c.del}</span></span>}
+          </div>
+          {changed ? (
+            <>
+              <DiffRows rows={excerpt.rows} />
+              {excerpt.truncated && <div className="diff-more">… more changes</div>}
+            </>
+          ) : (
+            <div className="diff-empty">No textual changes from the current version.</div>
+          )}
+          <div className="diff-actions">
+            <button className="primary" onClick={(e) => stop(e, () => setDiffOpen(true))}>See diff →</button>
+          </div>
+        </div>
+      )}
+
+      {addressed && diffOpen && (
+        <DiffModal
+          open={diffOpen}
+          commentId={comment.id}
+          currentContent={currentContent}
+          title={docPath || "Suggested change"}
+          hasGit={hasGit}
+          onClose={() => setDiffOpen(false)}
+          onChange={onChange}
+        />
       )}
 
       {comment.status !== "resolved" && (

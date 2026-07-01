@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { listDocs, getDoc, approve, reapprove, type DocView } from "./api";
+import { listDocs, getDoc, approve, reapprove, getConfig, type DocView } from "./api";
 import { FileTree } from "./docs/FileTree";
 import { Reader } from "./reader/Reader";
 import { Margin } from "./comments/Margin";
@@ -35,6 +35,10 @@ export default function App() {
   const [commentsOpen, setCommentsOpen] = useState(true);
   const [showBaseline, setShowBaseline] = useState(false);
   const [showLog, setShowLog] = useState(false);
+  // Whether the served folder is a git repo — enables the modal's folder-diff
+  // view. Fetched once at startup; false is a safe default (single-file only).
+  const [hasGit, setHasGit] = useState(false);
+  useEffect(() => { getConfig().then((c) => setHasGit(!!c.hasGit)); }, []);
   // Which approval action is awaiting confirmation in the modal (null = closed).
   const [confirm, setConfirm] = useState<null | "approve" | "reapprove">(null);
   const [commentsW, setCommentsW] = useState(() => {
@@ -245,7 +249,7 @@ export default function App() {
           {commentsOpen && <div className="resize-handle" onMouseDown={startResize} title="Drag to resize" />}
           <div className="panel-head">Comments <span className="count">{openCount}</span></div>
           <div className="panel-body">
-            {view && <Margin docId={docId} content={view.content} rootRef={rootRef} comments={view.comments ?? []} reloadKey={threadTick} onChange={refresh} />}
+            {view && <Margin docId={docId} content={view.content} docPath={view.document.path} hasGit={hasGit} rootRef={rootRef} comments={view.comments ?? []} reloadKey={threadTick} onChange={refresh} />}
           </div>
         </aside>
       </div>

@@ -22,7 +22,7 @@ func TestDocAndCommentEndpoints(t *testing.T) {
 	defer s.Close()
 	svc := service.New(s, func(_, _ string) error { return nil })
 	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
-	h := NewAPI(svc, s, sse.NewHub())
+	h := NewAPI(svc, s, sse.NewHub(), nil)
 
 	// list docs
 	rec := httptest.NewRecorder()
@@ -56,7 +56,7 @@ func TestApproveEndpointPinsBaseline(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
 	svc := service.New(s, func(_, _ string) error { return nil })
-	h := NewAPI(svc, s, sse.NewHub())
+	h := NewAPI(svc, s, sse.NewHub(), nil)
 	doc, _, _ := s.CreateDocument("a.md", "v1", "human")
 
 	rr := httptest.NewRecorder()
@@ -91,7 +91,7 @@ func TestApproveBlockedByUnresolvedCommentReturns409(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
 	svc := service.New(s, func(_, _ string) error { return nil })
-	h := NewAPI(svc, s, sse.NewHub())
+	h := NewAPI(svc, s, sse.NewHub(), nil)
 	doc, _, _ := s.CreateDocument("a.md", "v1", "human")
 	if _, err := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 1}, "human"); err != nil {
 		t.Fatal(err)
@@ -117,7 +117,7 @@ func TestDocViewIncludesBaselineContent(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
 	svc := service.New(s, func(_, _ string) error { return nil })
-	h := NewAPI(svc, s, sse.NewHub())
+	h := NewAPI(svc, s, sse.NewHub(), nil)
 	doc, _, _ := s.CreateDocument("a.md", "v1", "human")
 	rrA := httptest.NewRecorder()
 	h.ServeHTTP(rrA, httptest.NewRequest("POST", "/api/docs/"+doc.ID+"/approve", nil))
@@ -148,7 +148,7 @@ func TestDevClaimAndPropose(t *testing.T) {
 	svc := service.New(s, func(_, _ string) error { return nil })
 	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
 	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
-	h := NewAPI(svc, s, sse.NewHub())
+	h := NewAPI(svc, s, sse.NewHub(), nil)
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost,
@@ -173,7 +173,7 @@ func TestDecisionLogEndpoint(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
 	svc := service.New(s, func(_, _ string) error { return nil })
-	h := NewAPI(svc, s, sse.NewHub())
+	h := NewAPI(svc, s, sse.NewHub(), nil)
 
 	doc, v1, _ := s.CreateDocument("spec.md", "hello world", "human")
 	_, _ = s.CreateComment(domain.Comment{
@@ -199,7 +199,7 @@ func TestConfigEndpoint(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
 	svc := service.New(s, func(_, _ string) error { return nil })
-	h := NewAPI(svc, s, sse.NewHub())
+	h := NewAPI(svc, s, sse.NewHub(), nil)
 
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest("GET", "/api/config", nil))
@@ -243,7 +243,7 @@ func TestEventsStreamDeliversEvent(t *testing.T) {
 	svc.SetWebhook(hub) // PostComment fires comment.created into the hub
 	doc, _, _ := s.CreateDocument("e.md", "Hello world", "human")
 
-	srv := httptest.NewServer(NewAPI(svc, s, hub))
+	srv := httptest.NewServer(NewAPI(svc, s, hub, nil))
 	defer srv.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -293,7 +293,7 @@ func TestEventsStreamUnsubscribesOnDisconnect(t *testing.T) {
 	svc := service.New(s, func(_, _ string) error { return nil })
 	hub := sse.NewHub()
 
-	srv := httptest.NewServer(NewAPI(svc, s, hub))
+	srv := httptest.NewServer(NewAPI(svc, s, hub, nil))
 	defer srv.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())

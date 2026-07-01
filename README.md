@@ -134,7 +134,7 @@ Resolving comments and approving documents stay **human-only** — agents can't 
 
 1. **You** open the doc, select a sentence, leave a comment. It joins the outbox (the doc is untouched).
 2. **Your agent** calls `list_open_comments`, `claim_comment`, then `propose_suggestion` (a tracked change) or `reply_in_thread`.
-3. **You** review the suggestion as an inline diff and **Accept** — the `.md` is rewritten and a new version recorded — or reply to push back.
+3. **You** review the suggestion as an inline diff and **Accept** — the `.md` is rewritten and a new version recorded — or reply to push back. Each addressed comment shows a compact diff excerpt with a **See diff** button that opens a modal with the full single-file change. If the served folder is a git repo (mount the **repo root** so `.git` is visible inside the container), the modal also shows a GitHub-style diff of every changed `.md` file in the folder — read-only, outbox never writes to git. Otherwise the modal is single-file only.
 4. When a spec is ready, **Approve** it to pin a baseline. After that, edits become **tracked amendments** that need re-approval, so an approved doc is never silently changed.
 5. **History** shows the full decision log — who commented, proposed, edited, and approved, and why.
 

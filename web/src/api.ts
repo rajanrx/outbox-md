@@ -18,6 +18,30 @@ export type DocView = {
 };
 export type Suggestion = { id: string; proposedContent: string; state: string };
 
+// Row is the shape of one diff line, shared with the server-built folder diff
+// (internal/git) and the client-built single-file diff (suggestion/diff.ts).
+export type { Row } from "./suggestion/diff";
+import type { Row } from "./suggestion/diff";
+
+// Config is the subset of /api/config the UI reads. hasGit is true when the
+// served folder is inside a git work tree, enabling the folder-diff view.
+export type Config = { hasGit?: boolean };
+
+export type FolderDiff = { enabled: boolean; files: { path: string; rows: Row[] }[] };
+
+export async function getConfig(): Promise<Config> {
+  const r = await fetch("/api/config");
+  return r.ok ? r.json() : {};
+}
+
+// getFolderDiff returns the working-tree-vs-HEAD diff of changed .md files in
+// the served folder. When the folder is not a git repo the server returns
+// { enabled: false, files: [] } — never an error.
+export async function getFolderDiff(): Promise<FolderDiff> {
+  const r = await fetch("/api/git/diff");
+  return r.ok ? r.json() : { enabled: false, files: [] };
+}
+
 export type LogEntry = {
   time: string;
   kind: "created" | "comment" | "proposal" | "edit" | "approval";
