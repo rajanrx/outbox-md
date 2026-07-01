@@ -17,11 +17,13 @@ export type DocView = {
   baselineContent: string;
 };
 
-// Project is a registered project outbox-md serves: a repo root plus a docs
-// subpath (root/docs is the served spec dir). name is the root's basename. In
-// single-folder mode the server returns a single project with an empty name.
-// path stays optional for back-compat with older servers that emitted it.
-export type Project = { name: string; root?: string; docs?: string; path?: string };
+// Project is a registered project outbox-md serves: a repo root plus a LIST of
+// docs subpaths (root/<docs[i]> are the served spec dirs; the project serves
+// their union). name is the root's basename. In single-folder mode the server
+// returns a single project with an empty name. docs is an array in the current
+// server; a bare string (older single-docs server) and path (oldest server) stay
+// accepted for back-compat.
+export type Project = { name: string; root?: string; docs?: string[] | string; path?: string };
 export type Suggestion = { id: string; proposedContent: string; state: string };
 
 // Row is the shape of one diff line, shared by the client-built single-file

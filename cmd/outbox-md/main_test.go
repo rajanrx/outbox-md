@@ -63,7 +63,7 @@ func TestImportMarkdownEmptySourcesWalksAll(t *testing.T) {
 	seedTree(t, dir)
 	st, _ := store.Open(":memory:")
 	defer st.Close()
-	if err := importMarkdown(st, "", dir, nil); err != nil {
+	if err := importMarkdown(st, "", dir, dir, nil); err != nil {
 		t.Fatal(err)
 	}
 	got := importedPaths(t, st)
@@ -80,7 +80,7 @@ func TestImportMarkdownWhitelistFolders(t *testing.T) {
 	defer st.Close()
 	// Whitelist folder "a" (recursive) and glob "b/*.md" (non-recursive) — "c" and
 	// the nested b/nested/n.md must NOT be imported.
-	if err := importMarkdown(st, "", dir, []string{"a", "b/*.md"}); err != nil {
+	if err := importMarkdown(st, "", dir, dir, []string{"a", "b/*.md"}); err != nil {
 		t.Fatal(err)
 	}
 	got := importedPaths(t, st)
@@ -99,7 +99,7 @@ func TestImportMarkdownGlobDoesNotRecurseMatchedDirs(t *testing.T) {
 	st, _ := store.Open(":memory:")
 	defer st.Close()
 	// "b/*" matches b/b.md (file) and b/nested (dir); the matched dir is skipped.
-	if err := importMarkdown(st, "", dir, []string{"b/*"}); err != nil {
+	if err := importMarkdown(st, "", dir, dir, []string{"b/*"}); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := importedPaths(t, st), []string{"b/b.md"}; !eq(got, want) {
@@ -118,7 +118,7 @@ func TestImportMarkdownRejectsEscape(t *testing.T) {
 	seedTree(t, dir)
 	st, _ := store.Open(":memory:")
 	defer st.Close()
-	if err := importMarkdown(st, "", dir, []string{"../escape"}); err == nil {
+	if err := importMarkdown(st, "", dir, dir, []string{"../escape"}); err == nil {
 		t.Fatal("expected error for a source escaping OUTBOX_DIR")
 	}
 }
@@ -171,34 +171,16 @@ func TestEnsureDataDirRejectsFile(t *testing.T) {
 	}
 }
 
-// TestResolveCmdRouting table-tests the arg→subcommand routing without touching
-// a live listener. Bare invocation and an explicit "serve" both select "serve"
-// (the Docker ENTRYPOINT relies on the bare case).
-func TestResolveCmdRouting(t *testing.T) {
-	cases := []struct {
-		name     string
-		args     []string
-		wantName string
-		wantRest []string
-	}{
-		{"bare selects serve", nil, "serve", nil},
-		{"explicit serve", []string{"serve"}, "serve", []string{}},
-		{"serve with flags", []string{"serve", "-dir", "x"}, "serve", []string{"-dir", "x"}},
-		{"up", []string{"up"}, "up", []string{}},
-		{"init", []string{"init"}, "init", []string{}},
-		{"version", []string{"version"}, "version", []string{}},
-		{"unknown passes through", []string{"bogus"}, "bogus", []string{}},
+// TestUnknownCommandErrors verifies an unknown subcommand prints the top-level
+// help and returns a non-nil error (bare invocation is covered separately by
+// TestBareInvocationPrintsHelp, which asserts help rather than a server start).
+func TestUnknownCommandErrors(t *testing.T) {
+	var out bytes.Buffer
+	if err := run([]string{"bogus"}, &out); err == nil {
+		t.Fatal("unknown command should error")
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			gotName, gotRest := resolveCmd(tc.args)
-			if gotName != tc.wantName {
-				t.Fatalf("name = %q, want %q", gotName, tc.wantName)
-			}
-			if !eq(gotRest, tc.wantRest) {
-				t.Fatalf("rest = %v, want %v", gotRest, tc.wantRest)
-			}
-		})
+	if !strings.Contains(out.String(), "Commands") {
+		t.Fatalf("unknown command should print top-level help:\n%s", out.String())
 	}
 }
 
@@ -382,7 +364,7 @@ func TestBuildServerMultiWiresPerProjectSourcesGuard(t *testing.T) {
 	_ = seed.Close()
 
 	// A single named project forces multi mode (DB at configHomeDir).
-	h, err := buildServer(projDir, []registry.Project{{Name: "proj", Root: projDir, Docs: "."}}, false)
+	h, err := buildServer(projDir, []registry.Project{{Name: "proj", Root: projDir, Docs: []string{"."}}}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -534,7 +516,7 @@ func TestAddAgentCmdOverridesPreset(t *testing.T) {
 	root := t.TempDir()
 
 	var out bytes.Buffer
-	if err := run([]string{"add", root, "--agent", "claude", "--agent-cmd", "custom {prompt}"}, &out); err != nil {
+	if err := run([]string{"add", root, ".", "--agent", "claude", "--agent-cmd", "custom {prompt}"}, &out); err != nil {
 		t.Fatalf("add: %v", err)
 	}
 	if !strings.Contains(out.String(), "custom {prompt}") {
@@ -551,4 +533,176 @@ func TestAddAgentCmdOverridesPreset(t *testing.T) {
 	if len(list) != 1 || list[0].Agent != "custom {prompt}" {
 		t.Fatalf("stored agent = %+v, want custom {prompt}", list)
 	}
+}
+
+// TestAddZeroDocsFailsWithHelp verifies `outbox add <root>` (no docs) fails with a
+// non-nil error AND prints the add help/examples — a docs arg is mandatory.
+func TestAddZeroDocsFailsWithHelp(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	root := t.TempDir()
+	var out bytes.Buffer
+	if err := run([]string{"add", root}, &out); err == nil {
+		t.Fatal("add with no docs must error")
+	}
+	if !strings.Contains(out.String(), "Examples:") || !strings.Contains(out.String(), "outbox add") {
+		t.Fatalf("add-with-no-docs should print the add help/examples:\n%s", out.String())
+	}
+	// Nothing registered.
+	if list, _ := registry.List(filepath.Join(home, ".config", "outbox", "projects.json")); len(list) != 0 {
+		t.Fatalf("a rejected add must register nothing, got %v", list)
+	}
+}
+
+// TestAddMultipleDocsCLI verifies `outbox add <root> d1 d2` registers both
+// subpaths as one project and `outbox list` shows both locations.
+func TestAddMultipleDocsCLI(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	root := t.TempDir()
+	for _, d := range []string{"specs", "api-specs"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var addOut bytes.Buffer
+	if err := run([]string{"add", root, "specs", "api-specs"}, &addOut); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	var listOut bytes.Buffer
+	if err := run([]string{"list"}, &listOut); err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if !strings.Contains(listOut.String(), "specs") || !strings.Contains(listOut.String(), "api-specs") {
+		t.Fatalf("list should show both docs subpaths:\n%s", listOut.String())
+	}
+}
+
+// TestBareInvocationPrintsHelp verifies `outbox` with no args prints help (and
+// does NOT start a server), and returns no error.
+func TestBareInvocationPrintsHelp(t *testing.T) {
+	var out bytes.Buffer
+	if err := run(nil, &out); err != nil {
+		t.Fatalf("bare invocation should not error: %v", err)
+	}
+	s := out.String()
+	if !strings.Contains(s, "Usage:") || !strings.Contains(s, "Commands") {
+		t.Fatalf("bare invocation should print help:\n%s", s)
+	}
+	if strings.Contains(s, "serving") {
+		t.Fatalf("bare invocation must not start a server:\n%s", s)
+	}
+}
+
+// TestEveryCommandHasExamples asserts each documented command's help carries an
+// EXAMPLES section (the help-first ergonomics requirement).
+func TestEveryCommandHasExamples(t *testing.T) {
+	for _, name := range commandNames() {
+		var out bytes.Buffer
+		if err := run([]string{"help", name}, &out); err != nil {
+			t.Fatalf("help %s: %v", name, err)
+		}
+		if !strings.Contains(out.String(), "Examples:") {
+			t.Fatalf("command %q help is missing an Examples section:\n%s", name, out.String())
+		}
+	}
+}
+
+// TestPathsCmd verifies `outbox paths` prints the registry, review database and
+// config locations, and is mode-aware.
+func TestPathsCmd(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	// Single-dir mode (no projects registered).
+	var single bytes.Buffer
+	if err := run([]string{"paths"}, &single); err != nil {
+		t.Fatalf("paths: %v", err)
+	}
+	if !strings.Contains(single.String(), "projects.json") ||
+		!strings.Contains(single.String(), "outbox.db") ||
+		!strings.Contains(single.String(), "single-dir") {
+		t.Fatalf("single-dir paths output incomplete:\n%s", single.String())
+	}
+
+	// Register a project → multi-project mode.
+	root := t.TempDir()
+	if _, err := registry.Add(filepath.Join(home, ".config", "outbox", "projects.json"), root, []string{"."}, ""); err != nil {
+		t.Fatal(err)
+	}
+	var multi bytes.Buffer
+	if err := run([]string{"paths"}, &multi); err != nil {
+		t.Fatalf("paths (multi): %v", err)
+	}
+	if !strings.Contains(multi.String(), "multi-project") ||
+		!strings.Contains(multi.String(), filepath.Join(root, "outbox.yaml")) {
+		t.Fatalf("multi-project paths output incomplete:\n%s", multi.String())
+	}
+}
+
+// TestSettingsSetAndNonTTY verifies `outbox settings <key> <value>` writes the
+// field, and the interactive form on a non-TTY stdin prints settings without
+// hanging.
+func TestSettingsSetAndNonTTY(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "outbox.yaml")
+	// Seed a config with an unmanaged key to prove round-trip preservation.
+	if err := os.WriteFile(cfgPath, []byte("sources:\n  - docs/specs\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// settings operates on ./outbox.yaml — run from dir.
+	restore := chdir(t, dir)
+	defer restore()
+
+	var setOut bytes.Buffer
+	if err := run([]string{"settings", "auto_reply", "true"}, &setOut); err != nil {
+		t.Fatalf("settings set: %v", err)
+	}
+	if !strings.Contains(setOut.String(), "auto_reply = true") {
+		t.Fatalf("settings set output = %q", setOut.String())
+	}
+	// The write must set auto_reply AND preserve the unmanaged sources key.
+	b, _ := os.ReadFile(cfgPath)
+	if !strings.Contains(string(b), "auto_reply") || !strings.Contains(string(b), "docs/specs") {
+		t.Fatalf("outbox.yaml did not preserve sources / set auto_reply:\n%s", b)
+	}
+
+	// Interactive form with a non-TTY stdin (a bytes.Reader) must not hang; it
+	// prints the current settings and returns nil.
+	var iOut bytes.Buffer
+	if err := settingsCmd(nil, &iOut, strings.NewReader("")); err != nil {
+		t.Fatalf("settings non-TTY: %v", err)
+	}
+	if !strings.Contains(iOut.String(), "auto_reply") {
+		t.Fatalf("non-TTY settings should print current settings:\n%s", iOut.String())
+	}
+
+	// An unknown key is rejected.
+	if err := run([]string{"settings", "bogus", "1"}, &bytes.Buffer{}); err == nil {
+		t.Fatal("settings with an unknown key should error")
+	}
+}
+
+// TestSettingsRequiresInit verifies `outbox settings` errors (pointing at init)
+// when there is no ./outbox.yaml.
+func TestSettingsRequiresInit(t *testing.T) {
+	dir := t.TempDir()
+	restore := chdir(t, dir)
+	defer restore()
+	if err := run([]string{"settings", "auto_reply", "true"}, &bytes.Buffer{}); err == nil {
+		t.Fatal("settings without an outbox.yaml should error")
+	}
+}
+
+// chdir changes to dir for the duration of a test, returning a restore func.
+func chdir(t *testing.T, dir string) func() {
+	t.Helper()
+	prev, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	return func() { _ = os.Chdir(prev) }
 }
