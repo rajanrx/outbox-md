@@ -122,6 +122,8 @@ claude mcp list   # should show: outbox-md ✓ connected
 
 The stdio clients (Claude Desktop, Codex) can't speak HTTP directly, so they're wired through the [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) bridge (`npx -y mcp-remote <url>`), which requires `npx` (Node.js) on `PATH` at run time.
 
+Every config is parsed and re-serialised, so all other settings are preserved but formatting and key order may change. The JSON configs (Claude Desktop, Cursor, Windsurf, Gemini) keep all other keys and servers. Codex's `~/.codex/config.toml` is parsed and re-written with a real TOML parser: every other table and key is preserved and the `outbox-md` entry is added or replaced, but TOML **comments are not preserved** (the deliberate trade for guaranteed-valid output — the previous line-based merge could corrupt spec-legal TOML). If `config.toml` is present but not valid TOML, `outbox init` leaves it untouched and prints the `[mcp_servers.outbox-md]` table for you to add by hand.
+
 Once connected, your agent gets five tools:
 
 | Tool | What the agent does |

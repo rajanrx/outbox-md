@@ -7,9 +7,11 @@
 // Each supported client is a descriptor that knows how to DETECT itself (a
 // command on PATH or a config directory that exists) and how to REGISTER the
 // outbox-md server (either by running a CLI command, or by merging a native
-// config file). Registration is always idempotent: an existing config is parsed,
-// only the "outbox-md" entry is added or replaced, and everything else is
-// preserved.
+// config file). Registration is always idempotent: an existing config is parsed
+// with a real parser, only the "outbox-md" entry is added or replaced, and every
+// other setting is preserved. (The Codex TOML writer re-marshals via a TOML
+// library, which preserves all other tables/keys but not comments; the JSON
+// writers preserve everything.)
 package mcpclients
 
 import (
@@ -20,6 +22,8 @@ import (
 	"io/fs"
 	"path/filepath"
 	"strings"
+
+	toml "github.com/pelletier/go-toml/v2"
 )
 
 // serverName is the key/table name used for the outbox-md MCP entry across every
@@ -323,18 +327,34 @@ func jsonRegister(pathFn func(Env) string, entryFn func(url string) map[string]a
 }
 
 // codexRegister merges the Codex TOML config, adding or replacing only the
-// [mcp_servers.outbox-md] table with the mcp-remote bridge.
+// [mcp_servers.outbox-md] table with the mcp-remote bridge. It parses the
+// existing config with a real TOML library, so any spec-legal file (multi-line
+// strings, trailing header comments, inline/dotted-key table forms) is handled
+// correctly. If the existing file is present but is NOT valid TOML, it fails
+// safe: the file is left untouched and the user is handed the exact table to add
+// by hand, so a hand-edited or corrupt config is never clobbered.
 func codexRegister(env Env, url string) (regOutcome, error) {
 	path := codexPath(env)
 	existing, err := readConfig(env, path)
 	if err != nil {
 		return regOutcome{}, err
 	}
-	merged := MergeTOML(existing, serverName, url)
+	merged, err := MergeTOML(existing, serverName, mcpRemoteBridge(url))
+	if err != nil {
+		return regOutcome{Detail: path}, fmt.Errorf(
+			"existing %s is not valid TOML — left untouched to avoid corrupting it; "+
+				"add this table manually:\n%s", path, codexManualSnippet(url))
+	}
 	if err := writeConfig(env, path, merged); err != nil {
 		return regOutcome{}, err
 	}
 	return regOutcome{Detail: path}, nil
+}
+
+// codexManualSnippet is the [mcp_servers.outbox-md] table a user can paste into
+// ~/.codex/config.toml by hand; printed on the fail-safe (unparseable) path.
+func codexManualSnippet(url string) string {
+	return fmt.Sprintf("[mcp_servers.%s]\ncommand = \"npx\"\nargs = [\"-y\", \"mcp-remote\", %q]\n", serverName, url)
 }
 
 // readConfig reads path, treating a missing file as empty (nil) content. Any
@@ -386,56 +406,31 @@ func MergeJSON(existing []byte, name string, entry map[string]any) ([]byte, erro
 	return append(out, '\n'), nil
 }
 
-// MergeTOML adds or replaces the [mcp_servers.<name>] table (an mcp-remote bridge
-// to url) in an existing TOML config, preserving all other content. It strips any
-// prior [mcp_servers.<name>] table and its subtables, then appends a fresh one,
-// so re-running is idempotent (replace, never duplicate).
-func MergeTOML(existing []byte, name, url string) []byte {
-	table := "mcp_servers." + name
-	block := "[" + table + "]\n" +
-		"command = \"npx\"\n" +
-		fmt.Sprintf("args = [\"-y\", \"mcp-remote\", %q]\n", url)
-
-	stripped := strings.TrimRight(string(stripTOMLTable(existing, table)), "\n")
-	if stripped == "" {
-		return []byte(block)
-	}
-	return []byte(stripped + "\n\n" + block)
-}
-
-// stripTOMLTable removes the [table] section and any [table.sub] subtables from
-// TOML source: it drops each matching table header line and every line under it
-// up to (but excluding) the next table header or end of input. Header matching is
-// whitespace-tolerant and handles both [table] and [[table]] (array-of-tables)
-// forms.
-func stripTOMLTable(existing []byte, table string) []byte {
-	lines := strings.Split(string(existing), "\n")
-	out := make([]string, 0, len(lines))
-	skipping := false
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "[") {
-			header := tomlHeaderName(trimmed)
-			if header == table || strings.HasPrefix(header, table+".") {
-				skipping = true
-				continue
-			}
-			skipping = false
+// MergeTOML parses an existing Codex config.toml (an empty or whitespace-only
+// input, or nil, is treated as an empty config), sets mcp_servers[name] to entry,
+// preserves every other table and key, and returns re-marshalled TOML. Because it
+// parses with a real TOML library and overwrites exactly one key, it is
+// inherently idempotent (re-running overwrites the same key, never duplicating a
+// table) and lexically correct on spec-legal input that the old line-based strip
+// corrupted (multi-line strings, trailing header comments, inline/dotted-key
+// forms). It returns an error if existing is present but is NOT valid TOML, so
+// callers can refuse to overwrite a corrupt or hand-edited file. Note: a full
+// re-marshal does not preserve TOML comments — the deliberate trade for
+// guaranteed-valid output.
+func MergeTOML(existing []byte, name string, entry map[string]any) ([]byte, error) {
+	root := map[string]any{}
+	if s := bytes.TrimSpace(existing); len(s) > 0 {
+		if err := toml.Unmarshal(existing, &root); err != nil {
+			return nil, fmt.Errorf("parse existing config: %w", err)
 		}
-		if skipping {
-			continue
-		}
-		out = append(out, line)
 	}
-	return []byte(strings.Join(out, "\n"))
-}
 
-// tomlHeaderName extracts the dotted table name from a trimmed header line,
-// tolerating both [name] and [[name]] and any surrounding spaces.
-func tomlHeaderName(trimmed string) string {
-	s := strings.TrimSpace(strings.TrimPrefix(trimmed, "[")) // "name]" or "name]]"
-	s = strings.TrimSpace(strings.TrimSuffix(s, "]"))
-	s = strings.TrimSpace(strings.TrimSuffix(s, "]")) // second ] for [[name]]
-	s = strings.TrimSpace(strings.TrimPrefix(s, "[")) // second [ for [[name]]
-	return strings.TrimSpace(s)
+	servers, _ := root["mcp_servers"].(map[string]any)
+	if servers == nil {
+		servers = map[string]any{}
+	}
+	servers[name] = entry
+	root["mcp_servers"] = servers
+
+	return toml.Marshal(root)
 }
