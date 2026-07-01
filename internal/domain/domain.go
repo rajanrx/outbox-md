@@ -16,7 +16,11 @@ const (
 )
 
 type Document struct {
-	ID                string         `json:"id"`
+	ID string `json:"id"`
+	// Project is the registered project this document belongs to. The empty
+	// string is the single-folder mode (backward compatible). Together with Path
+	// it forms the logical document key (project, path).
+	Project           string         `json:"project"`
 	Path              string         `json:"path"`
 	CurrentVersionID  string         `json:"currentVersionId"`
 	Status            DocumentStatus `json:"status"`

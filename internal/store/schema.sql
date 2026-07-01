@@ -1,10 +1,14 @@
 CREATE TABLE IF NOT EXISTS documents (
   id TEXT PRIMARY KEY,
-  path TEXT NOT NULL UNIQUE,
+  project TEXT NOT NULL DEFAULT '',
+  path TEXT NOT NULL,
   current_version_id TEXT,
   status TEXT NOT NULL DEFAULT 'draft',
   approved_version_id TEXT NOT NULL DEFAULT ''
 );
+-- (project, path) is the logical document key: a path is unique WITHIN a project,
+-- and single-folder mode uses the empty project '' so its keys are unchanged.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_project_path ON documents(project, path);
 CREATE TABLE IF NOT EXISTS versions (
   id TEXT PRIMARY KEY,
   doc_id TEXT NOT NULL REFERENCES documents(id),

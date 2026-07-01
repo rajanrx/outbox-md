@@ -60,7 +60,7 @@ func TestImportMarkdownEmptySourcesWalksAll(t *testing.T) {
 	seedTree(t, dir)
 	st, _ := store.Open(":memory:")
 	defer st.Close()
-	if err := importMarkdown(st, dir, nil); err != nil {
+	if err := importMarkdown(st, "", dir, nil); err != nil {
 		t.Fatal(err)
 	}
 	got := importedPaths(t, st)
@@ -77,7 +77,7 @@ func TestImportMarkdownWhitelistFolders(t *testing.T) {
 	defer st.Close()
 	// Whitelist folder "a" (recursive) and glob "b/*.md" (non-recursive) — "c" and
 	// the nested b/nested/n.md must NOT be imported.
-	if err := importMarkdown(st, dir, []string{"a", "b/*.md"}); err != nil {
+	if err := importMarkdown(st, "", dir, []string{"a", "b/*.md"}); err != nil {
 		t.Fatal(err)
 	}
 	got := importedPaths(t, st)
@@ -96,7 +96,7 @@ func TestImportMarkdownGlobDoesNotRecurseMatchedDirs(t *testing.T) {
 	st, _ := store.Open(":memory:")
 	defer st.Close()
 	// "b/*" matches b/b.md (file) and b/nested (dir); the matched dir is skipped.
-	if err := importMarkdown(st, dir, []string{"b/*"}); err != nil {
+	if err := importMarkdown(st, "", dir, []string{"b/*"}); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := importedPaths(t, st), []string{"b/b.md"}; !eq(got, want) {
@@ -115,7 +115,7 @@ func TestImportMarkdownRejectsEscape(t *testing.T) {
 	seedTree(t, dir)
 	st, _ := store.Open(":memory:")
 	defer st.Close()
-	if err := importMarkdown(st, dir, []string{"../escape"}); err == nil {
+	if err := importMarkdown(st, "", dir, []string{"../escape"}); err == nil {
 		t.Fatal("expected error for a source escaping OUTBOX_DIR")
 	}
 }

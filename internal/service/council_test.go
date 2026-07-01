@@ -25,7 +25,7 @@ func claimedComment(t *testing.T, s *store.Store, svc *Service) (domain.Comment,
 func TestSubmitReviewRequiresValidTokenAndRecordsCandidate(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := New(s, func(_, _ string) error { return nil })
+	svc := New(s, func(_, _, _ string) error { return nil })
 	c, tok := claimedComment(t, s, svc)
 
 	// Bad token is rejected.
@@ -60,7 +60,7 @@ func TestSubmitReviewRequiresValidTokenAndRecordsCandidate(t *testing.T) {
 func TestSubmitReviewContentRequiredIffEdit(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := New(s, func(_, _ string) error { return nil })
+	svc := New(s, func(_, _, _ string) error { return nil })
 	c, tok := claimedComment(t, s, svc)
 
 	// edit without content → error.
@@ -84,7 +84,7 @@ func TestSubmitReviewContentRequiredIffEdit(t *testing.T) {
 func TestPickCandidateHumanOnlyAndEmitsAcceptEligibleSuggestion(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := New(s, func(_, _ string) error { return nil })
+	svc := New(s, func(_, _, _ string) error { return nil })
 	c, tok := claimedComment(t, s, svc)
 
 	edit, err := svc.SubmitReview(c.ID, tok, domain.LensCorrectness, domain.VerdictEdit, "fix", "Hello there", "m1")
@@ -128,7 +128,7 @@ func TestPickCandidateHumanOnlyAndEmitsAcceptEligibleSuggestion(t *testing.T) {
 func TestPickRejectsForeignCandidate(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := New(s, func(_, _ string) error { return nil })
+	svc := New(s, func(_, _, _ string) error { return nil })
 	c1, tok1 := claimedComment(t, s, svc)
 
 	// A candidate belonging to a different comment's set.
@@ -149,7 +149,7 @@ func TestPickRejectsForeignCandidate(t *testing.T) {
 func TestRecordSynthesisEmitsSuggestionAndSetsState(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := New(s, func(_, _ string) error { return nil })
+	svc := New(s, func(_, _, _ string) error { return nil })
 	c, tok := claimedComment(t, s, svc)
 	if _, err := svc.SubmitReview(c.ID, tok, domain.LensCorrectness, domain.VerdictEdit, "fix", "Hello there", "m1"); err != nil {
 		t.Fatal(err)
@@ -175,7 +175,7 @@ func TestRecordSynthesisEmitsSuggestionAndSetsState(t *testing.T) {
 func TestSubmitReviewRejectsUnknownLens(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := New(s, func(_, _ string) error { return nil })
+	svc := New(s, func(_, _, _ string) error { return nil })
 	c, tok := claimedComment(t, s, svc)
 
 	// Unknown lens → rejected (mirrors the strict verdict check).
@@ -197,7 +197,7 @@ func TestSubmitReviewRejectsUnknownLens(t *testing.T) {
 func TestPickCandidateRejectsSecondPickAfterDecided(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := New(s, func(_, _ string) error { return nil })
+	svc := New(s, func(_, _, _ string) error { return nil })
 	c, tok := claimedComment(t, s, svc)
 
 	first, err := svc.SubmitReview(c.ID, tok, domain.LensCorrectness, domain.VerdictEdit, "fix", "Hello there", "m1")
@@ -248,7 +248,7 @@ func TestPickCandidateRejectsSecondPickAfterDecided(t *testing.T) {
 func TestListCandidatesErrorsWhenNoSet(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := New(s, func(_, _ string) error { return nil })
+	svc := New(s, func(_, _, _ string) error { return nil })
 	if _, err := svc.ListCandidates("missing"); err == nil {
 		t.Fatal("expected error for comment with no candidate set")
 	}

@@ -64,7 +64,7 @@ func TestConcurrentAcceptsSerialize(t *testing.T) {
 	defer s.Close()
 	var mu sync.Mutex
 	written := ""
-	svc := New(s, func(_, content string) error {
+	svc := New(s, func(_, _, content string) error {
 		mu.Lock()
 		written = content
 		mu.Unlock()
@@ -108,7 +108,7 @@ func TestAcceptRewritesFileAndReanchors(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
 	var written string
-	svc := New(s, func(_, content string) error { written = content; return nil })
+	svc := New(s, func(_, _, content string) error { written = content; return nil })
 
 	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
 	cWorld, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 6, End: 11}, "human") // "world"
@@ -146,7 +146,7 @@ func TestAcceptRejectsStaleSuggestion(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
 	var written string
-	svc := New(s, func(_, content string) error { written = content; return nil })
+	svc := New(s, func(_, _, content string) error { written = content; return nil })
 	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
 
 	c1, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
@@ -189,7 +189,7 @@ func TestDuplicateAcceptSameCommentStaysConsistent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	svc := New(s, func(_, _ string) error { return nil })
+	svc := New(s, func(_, _, _ string) error { return nil })
 	doc, _, _ := s.CreateDocument("spec.md", "base", "human")
 	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 4}, "human")
 	tok, _ := svc.Claim([]string{c.ID}, "agent")
@@ -220,7 +220,7 @@ func TestDuplicateAcceptSameCommentStaysConsistent(t *testing.T) {
 func TestAcceptRejectsRepeatedAccept(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := New(s, func(_, _ string) error { return nil })
+	svc := New(s, func(_, _, _ string) error { return nil })
 	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
 	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
 	tok, _ := svc.Claim([]string{c.ID}, "agent")
@@ -242,7 +242,7 @@ func TestAcceptRejectsRepeatedAccept(t *testing.T) {
 func TestAcceptFailedWriteDoesNotAdvanceDB(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := New(s, func(_, _ string) error { return errors.New("disk full") })
+	svc := New(s, func(_, _, _ string) error { return errors.New("disk full") })
 	doc, v1, _ := s.CreateDocument("spec.md", "Hello world", "human")
 	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
 	tok, _ := svc.Claim([]string{c.ID}, "agent")
@@ -259,7 +259,7 @@ func TestAcceptFailedWriteDoesNotAdvanceDB(t *testing.T) {
 func TestProposeRejectsBadToken(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := New(s, func(_, _ string) error { return nil })
+	svc := New(s, func(_, _, _ string) error { return nil })
 	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
 	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
 	if _, err := svc.Propose(c.ID, "wrong-token", "x", "agent"); err == nil {
@@ -272,7 +272,7 @@ func TestProposeRejectsBadToken(t *testing.T) {
 func TestMarkProcessingRequiresToken(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := New(s, func(_, _ string) error { return nil })
+	svc := New(s, func(_, _, _ string) error { return nil })
 	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
 	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
 	tok, _ := svc.Claim([]string{c.ID}, "agent")
@@ -290,7 +290,7 @@ func TestMarkProcessingRequiresToken(t *testing.T) {
 func TestMarkProcessingSetsFutureDeadline(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := New(s, func(_, _ string) error { return nil })
+	svc := New(s, func(_, _, _ string) error { return nil })
 	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
 	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
 	tok, _ := svc.Claim([]string{c.ID}, "agent")
@@ -320,7 +320,7 @@ func TestMarkProcessingSetsFutureDeadline(t *testing.T) {
 func TestMarkProcessingHeartbeatExtends(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := New(s, func(_, _ string) error { return nil })
+	svc := New(s, func(_, _, _ string) error { return nil })
 	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
 	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
 	tok, _ := svc.Claim([]string{c.ID}, "agent")
@@ -339,7 +339,7 @@ func TestMarkProcessingHeartbeatExtends(t *testing.T) {
 func TestMarkReceivedIsUntokenedAndSetsFutureDeadline(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := New(s, func(_, _ string) error { return nil })
+	svc := New(s, func(_, _, _ string) error { return nil })
 	fn := newFakeNotifier()
 	svc.SetWebhook(fn)
 	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
@@ -375,7 +375,7 @@ func TestMarkReceivedIsUntokenedAndSetsFutureDeadline(t *testing.T) {
 func TestMarkReceivedUnknownComment(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := New(s, func(_, _ string) error { return nil })
+	svc := New(s, func(_, _, _ string) error { return nil })
 	if _, err := svc.MarkReceived("no-such-comment"); err == nil {
 		t.Fatal("expected an error for an unknown comment id")
 	}
@@ -397,7 +397,7 @@ func TestReceivedEventStaysOutOfWebhookDefaults(t *testing.T) {
 func TestReplyAndProposeClearProcessing(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := New(s, func(_, _ string) error { return nil })
+	svc := New(s, func(_, _, _ string) error { return nil })
 	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
 
 	// Reply clears it.
@@ -430,7 +430,7 @@ func TestReplyAndProposeClearProcessing(t *testing.T) {
 func TestHumanReplyAndResolve(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := New(s, func(_, _ string) error { return nil })
+	svc := New(s, func(_, _, _ string) error { return nil })
 	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
 	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
 
@@ -459,7 +459,7 @@ func TestHumanReplyAndResolve(t *testing.T) {
 func TestRejectSuggestionReopens(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := New(s, func(_, _ string) error { return nil })
+	svc := New(s, func(_, _, _ string) error { return nil })
 	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
 	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
 	tok, _ := svc.Claim([]string{c.ID}, "agent")
@@ -476,7 +476,7 @@ func TestRejectSuggestionReopens(t *testing.T) {
 func TestApprovePinsBaseline(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := New(s, func(_, _ string) error { return nil })
+	svc := New(s, func(_, _, _ string) error { return nil })
 	doc, _, _ := s.CreateDocument("a.md", "v1", "human")
 
 	app, err := svc.Approve(doc.ID, "looks good")
@@ -499,7 +499,7 @@ func TestApprovePinsBaseline(t *testing.T) {
 func TestReapproveRejectedWhenNothingPending(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := New(s, func(_, _ string) error { return nil })
+	svc := New(s, func(_, _, _ string) error { return nil })
 	doc, _, _ := s.CreateDocument("a.md", "v1", "human")
 	_, _ = svc.Approve(doc.ID, "")
 	if _, err := svc.Reapprove(doc.ID, ""); err == nil {
@@ -512,7 +512,7 @@ func TestAcceptOnApprovedDocAccumulatesAmendmentWithoutWritingDisk(t *testing.T)
 	defer s.Close()
 	var written string
 	writes := 0
-	svc := New(s, func(_, content string) error { written = content; writes++; return nil })
+	svc := New(s, func(_, _, content string) error { written = content; writes++; return nil })
 
 	doc, _, _ := s.CreateDocument("a.md", "baseline", "human")
 	if _, err := svc.Approve(doc.ID, ""); err != nil {
@@ -594,7 +594,7 @@ func TestGovernedConcurrentAcceptsSerialize(t *testing.T) {
 		var mu sync.Mutex
 		disk := "base" // models the on-disk baseline; writeFile is the only mutator
 		writes := 0
-		svc := New(s, func(_, content string) error {
+		svc := New(s, func(_, _, content string) error {
 			mu.Lock()
 			disk = content
 			writes++
@@ -675,7 +675,7 @@ func TestApproveAcceptInterleavingNeverCorrupts(t *testing.T) {
 		}
 		var mu sync.Mutex
 		disk := "v1" // models the on-disk file; for a draft doc it equals current
-		svc := New(s, func(_, content string) error {
+		svc := New(s, func(_, _, content string) error {
 			mu.Lock()
 			disk = content
 			mu.Unlock()
@@ -752,7 +752,7 @@ func TestGovernedAcceptReapproveInterleavingNeverCorrupts(t *testing.T) {
 		}
 		var mu sync.Mutex
 		disk := "base"
-		svc := New(s, func(_, content string) error {
+		svc := New(s, func(_, _, content string) error {
 			mu.Lock()
 			disk = content
 			mu.Unlock()
@@ -813,7 +813,7 @@ func TestGovernedAcceptReapproveInterleavingNeverCorrupts(t *testing.T) {
 func TestClaimRejectsOverBatchSize(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := New(s, func(_, _ string) error { return nil })
+	svc := New(s, func(_, _, _ string) error { return nil })
 	svc.SetConfig(config.Config{Agent: config.AgentConfig{BatchSize: 2}, Approval: config.ApprovalConfig{PostApprovalComments: true}})
 
 	doc, _, _ := s.CreateDocument("a.md", "hello world", "human")
@@ -836,7 +836,7 @@ func TestClaimRejectsOverBatchSize(t *testing.T) {
 func TestApproveBlockedByUnresolvedComments(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := New(s, func(_, _ string) error { return nil })
+	svc := New(s, func(_, _, _ string) error { return nil })
 	doc, _, _ := s.CreateDocument("a.md", "hello world", "human")
 
 	c, err := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
@@ -874,7 +874,7 @@ func TestApproveBlockedByUnresolvedComments(t *testing.T) {
 func TestHumanReplyReopensComment(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := New(s, func(_, _ string) error { return nil })
+	svc := New(s, func(_, _, _ string) error { return nil })
 	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
 	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
 
@@ -918,7 +918,7 @@ func TestHumanReplyReopensComment(t *testing.T) {
 func TestPostCommentFiresWebhook(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := New(s, func(_, _ string) error { return nil })
+	svc := New(s, func(_, _, _ string) error { return nil })
 	fn := newFakeNotifier()
 	svc.SetWebhook(fn)
 
@@ -958,7 +958,7 @@ func TestPostCommentSinkGate(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s, _ := store.Open(":memory:")
 			defer s.Close()
-			svc := New(s, func(_, _ string) error { return nil })
+			svc := New(s, func(_, _, _ string) error { return nil })
 			spy := &spyNotifier{enabled: tc.enabled}
 			svc.SetWebhook(spy)
 
@@ -979,7 +979,7 @@ func TestPostCommentSinkGate(t *testing.T) {
 func TestAgentActionsFireSSEEvents(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := New(s, func(_, _ string) error { return nil })
+	svc := New(s, func(_, _, _ string) error { return nil })
 	fn := newFakeNotifier()
 	svc.SetWebhook(fn)
 
@@ -1023,7 +1023,7 @@ func TestAgentActionsFireSSEEvents(t *testing.T) {
 func TestPostCommentBlockedOnApprovedWhenDisabled(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := New(s, func(_, _ string) error { return nil })
+	svc := New(s, func(_, _, _ string) error { return nil })
 	svc.SetConfig(config.Config{Agent: config.AgentConfig{BatchSize: 5}, Approval: config.ApprovalConfig{PostApprovalComments: false}})
 
 	doc, _, _ := s.CreateDocument("a.md", "hello", "human")

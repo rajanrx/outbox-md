@@ -65,6 +65,12 @@ button { font-family: inherit; cursor: pointer; }
 .crumbs .sep { opacity: .5; }
 .crumbs .leaf { color: var(--ink); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .topbar .spacer { flex: 1; }
+.project-switcher {
+  background: var(--chrome-2); color: var(--ink); border: 1px solid var(--chrome-line);
+  border-radius: 7px; padding: 4px 8px; font-size: 13px; font-weight: 500; cursor: pointer;
+  max-width: 200px;
+}
+.project-switcher:hover { filter: brightness(1.06); }
 .icon-btn {
   width: 32px; height: 28px; display: grid; place-items: center; border-radius: 7px;
   background: transparent; border: 1px solid transparent; color: var(--chrome-soft);

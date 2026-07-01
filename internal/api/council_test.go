@@ -35,7 +35,7 @@ func seedCandidate(t *testing.T, s *store.Store, svc *service.Service) (string, 
 func TestGetCandidatesEndpoint(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := service.New(s, func(_, _ string) error { return nil })
+	svc := service.New(s, func(_, _, _ string) error { return nil })
 	h := NewAPI(svc, s, sse.NewHub())
 	commentID, candID := seedCandidate(t, s, svc)
 
@@ -66,7 +66,7 @@ func TestGetCandidatesEndpoint(t *testing.T) {
 func TestPickCandidateEndpoint(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := service.New(s, func(_, _ string) error { return nil })
+	svc := service.New(s, func(_, _, _ string) error { return nil })
 	h := NewAPI(svc, s, sse.NewHub())
 	commentID, candID := seedCandidate(t, s, svc)
 

@@ -12,7 +12,7 @@ import (
 func TestHandlersDriveTheLoop(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := service.New(s, func(_, _ string) error { return nil })
+	svc := service.New(s, func(_, _, _ string) error { return nil })
 	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
 	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 6, End: 11}, "human")
 	h := &Handlers{Svc: svc, St: s}
@@ -38,7 +38,7 @@ func TestHandlersDriveTheLoop(t *testing.T) {
 func TestListOpenCommentsExposesExcerptAndThread(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := service.New(s, func(_, _ string) error { return nil })
+	svc := service.New(s, func(_, _, _ string) error { return nil })
 	h := &Handlers{Svc: svc, St: s}
 	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
 	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 6, End: 11}, "human") // anchors "world"
@@ -76,7 +76,7 @@ func TestListOpenCommentsExposesExcerptAndThread(t *testing.T) {
 func TestMCPSurfaceRespectsSourcesWhitelist(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := service.New(s, func(_, _ string) error { return nil })
+	svc := service.New(s, func(_, _, _ string) error { return nil })
 	svc.SetConfig(config.Config{Sources: []string{"docs/specs"}})
 	h := &Handlers{Svc: svc, St: s}
 
@@ -122,7 +122,7 @@ func TestMCPSurfaceRespectsSourcesWhitelist(t *testing.T) {
 func TestReadDocExposesLifecycle(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := service.New(s, func(_, _ string) error { return nil })
+	svc := service.New(s, func(_, _, _ string) error { return nil })
 	h := &Handlers{Svc: svc, St: s}
 	doc, _, _ := s.CreateDocument("a.md", "v1", "human")
 	_ = s.SetDocumentApproval(doc.ID, doc.CurrentVersionID, domain.DocApproved)

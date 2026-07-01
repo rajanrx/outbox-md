@@ -29,7 +29,9 @@ func (h *Handlers) ReadDoc(docID string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"document": doc, "content": ver.Content}, nil
+	// Surface the project so an agent can tell which project this doc belongs to
+	// (also present inside document.project; echoed at top level for convenience).
+	return map[string]any{"document": doc, "content": ver.Content, "project": doc.Project}, nil
 }
 
 // OpenComment enriches a queued comment with the context an agent needs to act
@@ -37,6 +39,7 @@ func (h *Handlers) ReadDoc(docID string) (map[string]any, error) {
 // to), and the thread (the human's feedback is stored as the first message).
 type OpenComment struct {
 	domain.Comment
+	Project string                 `json:"project"` // the project the comment's doc belongs to ("" = single-folder mode)
 	DocPath string                 `json:"docPath"`
 	Excerpt string                 `json:"excerpt"` // the anchored text the comment refers to
 	Thread  []domain.ThreadMessage `json:"thread"`  // the human's feedback (and any prior discussion)
@@ -60,6 +63,7 @@ func (h *Handlers) ListOpenComments() ([]OpenComment, error) {
 				continue
 			}
 			oc.DocPath = doc.Path
+			oc.Project = doc.Project
 		}
 		if ver, err := h.St.GetVersion(c.AgainstVersionID); err == nil {
 			oc.Excerpt = anchor.Excerpt(ver.Content, c.Anchor.Start, c.Anchor.End)

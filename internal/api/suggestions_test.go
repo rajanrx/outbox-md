@@ -15,7 +15,7 @@ import (
 func TestPendingSuggestionsEmpty(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := service.New(s, func(_, _ string) error { return nil })
+	svc := service.New(s, func(_, _, _ string) error { return nil })
 	h := NewAPI(svc, s, sse.NewHub())
 
 	rec := httptest.NewRecorder()
@@ -35,7 +35,7 @@ func TestPendingSuggestionsEmpty(t *testing.T) {
 func TestPendingSuggestionsReturnsProposed(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := service.New(s, func(_, _ string) error { return nil })
+	svc := service.New(s, func(_, _, _ string) error { return nil })
 	h := NewAPI(svc, s, sse.NewHub())
 
 	// Seed a doc with a comment and a proposed suggestion directly through the
@@ -79,7 +79,7 @@ func TestPendingSuggestionsReturnsProposed(t *testing.T) {
 func TestPendingSuggestionsExcludesResolved(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
-	svc := service.New(s, func(_, _ string) error { return nil })
+	svc := service.New(s, func(_, _, _ string) error { return nil })
 	h := NewAPI(svc, s, sse.NewHub())
 
 	doc, ver, _ := s.CreateDocument("spec.md", "current", "human")
@@ -113,7 +113,7 @@ func TestPendingSuggestionsExcludesLingeringProposedOnNonAddressed(t *testing.T)
 		t.Run(string(status), func(t *testing.T) {
 			s, _ := store.Open(":memory:")
 			defer s.Close()
-			svc := service.New(s, func(_, _ string) error { return nil })
+			svc := service.New(s, func(_, _, _ string) error { return nil })
 			h := NewAPI(svc, s, sse.NewHub())
 
 			doc, ver, _ := s.CreateDocument("spec.md", "current", "human")

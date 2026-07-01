@@ -11,11 +11,15 @@ export type Comment = {
   processingUntil?: string;
 };
 export type DocView = {
-  document: { id: string; path: string; status: "draft" | "approved" | "amending"; approvedVersionId: string };
+  document: { id: string; project: string; path: string; status: "draft" | "approved" | "amending"; approvedVersionId: string };
   content: string;
   comments: Comment[];
   baselineContent: string;
 };
+
+// Project is a registered folder outbox-md serves. In single-folder mode the
+// server returns a single project with an empty name.
+export type Project = { name: string; path: string };
 export type Suggestion = { id: string; proposedContent: string; state: string };
 
 // Row is the shape of one diff line, shared by the client-built single-file
@@ -62,8 +66,12 @@ export async function reapprove(id: string, note = ""): Promise<unknown> {
   return r.ok ? r.json() : null;
 }
 
-export async function listDocs(): Promise<{ id: string; path: string }[]> {
+export async function listDocs(): Promise<{ id: string; path: string; project: string }[]> {
   return (await fetch("/api/docs")).json();
+}
+export async function listProjects(): Promise<Project[]> {
+  const r = await fetch("/api/projects");
+  return r.ok ? r.json() : [];
 }
 export async function getDoc(id: string): Promise<DocView> {
   return (await fetch(`/api/docs/${id}`)).json();
