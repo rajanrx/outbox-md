@@ -382,7 +382,7 @@ func TestBuildServerMultiWiresPerProjectSourcesGuard(t *testing.T) {
 	_ = seed.Close()
 
 	// A single named project forces multi mode (DB at configHomeDir).
-	h, err := buildServer(projDir, []registry.Project{{Name: "proj", Path: projDir}})
+	h, err := buildServer(projDir, []registry.Project{{Name: "proj", Path: projDir}}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -418,5 +418,54 @@ func TestHealthz(t *testing.T) {
 	}
 	if rec.Body.String() != "ok" {
 		t.Fatalf("body = %q, want \"ok\"", rec.Body.String())
+	}
+}
+
+// --- auto-reply flag + wiring ---
+
+func TestResolveFlagsAutoReply(t *testing.T) {
+	var out bytes.Buffer
+	// Default: absent flag → false.
+	_, _, ar, err := resolveFlags("serve", nil, &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ar {
+		t.Fatal("auto-reply should default false when the flag is absent")
+	}
+	// Present: -auto-reply → true.
+	_, _, ar, err = resolveFlags("serve", []string{"-auto-reply"}, &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ar {
+		t.Fatal("-auto-reply should flip auto-reply on")
+	}
+}
+
+func TestAutoReplyNotifierOffByDefault(t *testing.T) {
+	// Neither flag nor config → no engine wired.
+	if n := autoReplyNotifier(t.TempDir(), config.Config{}, false); n != nil {
+		t.Fatal("autoReplyNotifier should be nil when off (no flag, no config)")
+	}
+}
+
+func TestAutoReplyNotifierFlagForcesOn(t *testing.T) {
+	n := autoReplyNotifier(t.TempDir(), config.Config{AutoReply: false}, true)
+	if n == nil {
+		t.Fatal("the -auto-reply flag should force an engine even when config is false")
+	}
+	if !n.Enabled() {
+		t.Fatal("wired engine should report Enabled() true")
+	}
+}
+
+func TestAutoReplyNotifierConfigEnables(t *testing.T) {
+	n := autoReplyNotifier(t.TempDir(), config.Config{AutoReply: true}, false)
+	if n == nil {
+		t.Fatal("auto_reply: true in config should wire an engine without the flag")
+	}
+	if !n.Enabled() {
+		t.Fatal("wired engine should report Enabled() true")
 	}
 }

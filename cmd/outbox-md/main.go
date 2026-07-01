@@ -17,6 +17,7 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/rajanrx/outbox-md/internal/api"
+	"github.com/rajanrx/outbox-md/internal/autoreply"
 	"github.com/rajanrx/outbox-md/internal/config"
 	"github.com/rajanrx/outbox-md/internal/mcp"
 	"github.com/rajanrx/outbox-md/internal/mcpclients"
@@ -322,22 +323,26 @@ Multiple projects:
 // explicit flag still wins over OUTBOX_DIR/OUTBOX_ADDR, which win over the
 // built-in defaults. The default served dir is the current directory (".") for a
 // local run; the Docker image sets OUTBOX_DIR=/data to keep serving /data.
-func resolveFlags(name string, args []string, out io.Writer) (dir, addr string, err error) {
+func resolveFlags(name string, args []string, out io.Writer) (dir, addr string, autoReply bool, err error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(out)
 	d := fs.String("dir", getenv("OUTBOX_DIR", "."), "folder of .md files to serve")
 	a := fs.String("addr", getenv("OUTBOX_ADDR", ":8181"), "listen address")
+	// -auto-reply forces the in-process agent loop ON regardless of config. The
+	// flag only turns it on (there is no force-off); when absent, the config
+	// (auto_reply yaml / OUTBOX_AUTO_REPLY env / default false) decides.
+	ar := fs.Bool("auto-reply", false, "spawn the agent CLI in-process on each human comment (opt-in)")
 	if err := fs.Parse(args); err != nil {
-		return "", "", err
+		return "", "", false, err
 	}
-	return *d, *a, nil
+	return *d, *a, *ar, nil
 }
 
 // serve builds the server for dir and listens on addr. When open is true it
 // binds the listener first, opens the browser, then serves (the `up` command),
 // so the browser only opens once the port is actually accepting connections.
 func serve(args []string, open bool) error {
-	dir, addr, err := resolveFlags("serve", args, os.Stderr)
+	dir, addr, autoReply, err := resolveFlags("serve", args, os.Stderr)
 	if err != nil {
 		return err
 	}
@@ -348,7 +353,7 @@ func serve(args []string, open bool) error {
 		maybeAutoUpdate(config.Load(dir), os.Stdout)
 	}
 	projects := resolveProjects(dir)
-	mux, err := buildServer(dir, projects)
+	mux, err := buildServer(dir, projects, autoReply)
 	if err != nil {
 		return err
 	}
@@ -398,7 +403,7 @@ func describeProjects(projects []registry.Project, dir string) string {
 // mode; two-or-more entries come from the registry. Each project keeps its OWN
 // outbox.yaml sources (loaded per project); the per-project whitelist is enforced
 // at import time (a hidden doc never enters the store).
-func buildServer(root string, projects []registry.Project) (http.Handler, error) {
+func buildServer(root string, projects []registry.Project, autoReplyFlag bool) (http.Handler, error) {
 	multi := !(len(projects) == 1 && projects[0].Name == "")
 
 	// Database location. Single-folder mode keeps its database inside the served
@@ -451,10 +456,16 @@ func buildServer(root string, projects []registry.Project) (http.Handler, error)
 	}
 	svc.SetConfig(cfg)
 	svc.SetProjects(projects)
-	// One governance event fans out to two sinks: the external HTTP runner
-	// (webhook) and every open browser stream (SSE hub).
+	// One governance event fans out to the external HTTP runner (webhook), every
+	// open browser stream (SSE hub), and — when enabled — the in-process
+	// auto-reply engine that spawns the agent CLI on each human comment.
 	hub := sse.NewHub()
-	svc.SetWebhook(webhook.Fanout(webhook.New(cfg.Webhook), hub))
+	sinks := []webhook.Notifier{webhook.New(cfg.Webhook), hub}
+	if engine := autoReplyNotifier(root, cfg, autoReplyFlag); engine != nil {
+		sinks = append(sinks, engine)
+		log.Printf("auto-reply: on (agent: %s)", cfg.AgentCmd)
+	}
+	svc.SetWebhook(webhook.Fanout(sinks...))
 	// Per-project runtime sources: each served project → its OWN loaded config, so
 	// the read guards enforce that project's Sources whitelist against its own
 	// docs. This makes the #35 runtime guard project-aware — narrowing a project's
@@ -492,6 +503,25 @@ func buildServer(root string, projects []registry.Project) (http.Handler, error)
 	sub, _ := fs.Sub(web.Dist, "dist")
 	mux.Handle("/", http.FileServer(http.FS(sub)))
 	return mux, nil
+}
+
+// autoReplyNotifier decides whether the in-process auto-reply engine should be
+// wired into the event fan-out, and builds it when so. It is a pure function
+// (no listener, no side effects) so the wiring decision is unit-testable without
+// a live server: it returns nil when auto-reply is off, and a live engine when
+// on. Precedence is flag > config: the -auto-reply flag forces it on regardless
+// of config (it only turns ON), otherwise cfg.AutoReply (auto_reply yaml /
+// OUTBOX_AUTO_REPLY env / default false) decides. root is the served dir used as
+// the spawned agent's working directory.
+func autoReplyNotifier(root string, cfg config.Config, flagOn bool) webhook.Notifier {
+	if !(flagOn || cfg.AutoReply) {
+		return nil
+	}
+	return autoreply.New(autoreply.Config{
+		Enabled:  true,
+		Dir:      root,
+		AgentCmd: cfg.AgentCmd,
+	})
 }
 
 // browseURL turns a listen address (e.g. ":8181" or "localhost:9090") into a
@@ -541,6 +571,15 @@ const starterConfig = `# outbox.yaml — configuration for outbox-md.
 # out (you can still update on demand with "outbox upgrade"). Homebrew installs
 # update via "brew upgrade"; Docker via image pull / Watchtower.
 # auto_update: true
+
+# Hands-off auto-reply (opt-in, default OFF). When on, a human comment spawns the
+# agent CLI in-process (no separate runner) to claim + propose/reply. It reacts
+# only to YOUR comments, never its own. Turn on here, with OUTBOX_AUTO_REPLY=true,
+# or per-run with "outbox up --auto-reply". agent_cmd is the spawned command;
+# {prompt} is replaced with the instruction. The default reuses your Claude
+# subscription via the CLI, so there is no API cost.
+# auto_reply: false
+# agent_cmd: claude -p {prompt} --allowedTools mcp__outbox-md__*
 `
 
 // initProject scaffolds onboarding in the target folder: it writes a starter
