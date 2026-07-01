@@ -90,6 +90,19 @@ jobs:
       - uses: actions/setup-go@v5
         with: { go-version: "1.25" }
 
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+
+      # The Go binary embeds web/dist via go:embed (web/embed.go), but the built
+      # assets are gitignored — only the placeholder index.html is committed. Build
+      # the web UI first (mirroring the Dockerfile's `web` stage) or every released
+      # binary would embed a bare index.html whose /assets/*.js 404 at runtime.
+      - name: Build the embedded web UI
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
       - name: Read released version from the manifest
         id: ver
         run: echo "version=$(jq -r '.["."]' .release-please-manifest.json)" >> "$GITHUB_OUTPUT"
