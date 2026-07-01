@@ -81,17 +81,23 @@ export function Card({ comment, currentContent, docPath = "", active = false, pi
   const stop = (e: React.MouseEvent, fn?: () => void) => { e.stopPropagation(); fn?.(); };
   const sendReply = async () => { if (!draft.trim()) return; await reply(comment.id, draft); setDraft(""); await load(); };
 
-  // When a comment is addressed it carries a proposed suggestion. Fetch it here
-  // to build the compact excerpt shown inline; the full diff + Approve/Reject
-  // live in the modal (which re-fetches via DiffPanel).
+  // A comment carries a live suggestion whenever its latest suggestion is still
+  // proposed — which can happen while its status is open/claimed/addressed/
+  // replied (e.g. an agent that both proposed a suggestion and replied leaves
+  // the comment 'replied'). Fetch it for any non-terminal comment and render the
+  // diff when the fetched suggestion is still proposed; the full diff +
+  // Approve/Reject live in the modal (which re-fetches via DiffPanel). Terminal
+  // comments (resolved/detached) can leave a stale proposed row behind, so we
+  // skip them.
   const [sg, setSg] = useState<Suggestion | null>(null);
   const [diffOpen, setDiffOpen] = useState(false);
-  const addressed = comment.status === "addressed";
+  const terminal = comment.status === "resolved" || comment.status === "detached";
   useEffect(() => {
-    if (!addressed) { setSg(null); return; }
+    if (terminal) { setSg(null); return; }
     getSuggestion(comment.id).then(setSg);
-  }, [addressed, comment.id, reloadKey]);
-  const rows = useMemo(() => (sg ? unifiedDiff(currentContent, sg.proposedContent) : []), [sg, currentContent]);
+  }, [terminal, comment.id, reloadKey]);
+  const showSuggestion = !!sg && sg.state === "proposed";
+  const rows = useMemo(() => (showSuggestion ? unifiedDiff(currentContent, sg!.proposedContent) : []), [showSuggestion, sg, currentContent]);
   const excerpt = useMemo(() => excerptRows(rows), [rows]);
   const changed = rows.some((r) => r.op === "ins" || r.op === "del");
   const c = counts(rows);
@@ -127,7 +133,7 @@ export function Card({ comment, currentContent, docPath = "", active = false, pi
         ))}
       </div>
 
-      {addressed && sg && (
+      {showSuggestion && (
         <div className="suggestion" onClick={(e) => e.stopPropagation()}>
           <div className="suggestion-head">
             Suggested change
@@ -147,7 +153,7 @@ export function Card({ comment, currentContent, docPath = "", active = false, pi
         </div>
       )}
 
-      {addressed && diffOpen && (
+      {showSuggestion && diffOpen && (
         <DiffModal
           open={diffOpen}
           commentId={comment.id}
