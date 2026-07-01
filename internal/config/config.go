@@ -17,6 +17,12 @@ type Config struct {
 	// OUTBOX_DIR) to ingest. Empty means "serve everything under OUTBOX_DIR"
 	// (the default, backward-compatible behaviour).
 	Sources []string `json:"sources" yaml:"sources"`
+	// AutoUpdate controls whether a standalone `outbox up` self-updates to the
+	// latest release on startup (throttled, best-effort). It defaults to true —
+	// an absent key stays true, so only an explicit `auto_update: false` (or
+	// OUTBOX_AUTO_UPDATE=false) opts out. Homebrew/Docker installs never
+	// self-replace regardless of this flag (they update via their own channel).
+	AutoUpdate bool `json:"autoUpdate" yaml:"auto_update"`
 }
 
 type AgentConfig struct {
@@ -40,8 +46,11 @@ type WebhookConfig struct {
 // and the floor every loaded config layers over.
 func Defaults() Config {
 	return Config{
-		Agent:    AgentConfig{BatchSize: 5},
-		Approval: ApprovalConfig{PostApprovalComments: true},
+		Agent: AgentConfig{BatchSize: 5},
+		// AutoUpdate defaults to true so an outbox.yaml that omits the key (or has
+		// no yaml at all) keeps self-update on; only an explicit false disables it.
+		AutoUpdate: true,
+		Approval:   ApprovalConfig{PostApprovalComments: true},
 		// All four governance events are enabled by default. These string
 		// literals mirror the event names emitted by internal/webhook; they are
 		// duplicated here (rather than imported) to keep config free of a webhook
@@ -87,6 +96,17 @@ func Load(dir string) Config {
 			}
 		}
 		cfg.Sources = out
+	}
+	// OUTBOX_AUTO_UPDATE overrides the file flag: false/0/no/off disables
+	// self-update, true/1/yes/on enables it. Any other value leaves the current
+	// (file or default-true) value untouched.
+	if v := os.Getenv("OUTBOX_AUTO_UPDATE"); v != "" {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "false", "0", "no", "off":
+			cfg.AutoUpdate = false
+		case "true", "1", "yes", "on":
+			cfg.AutoUpdate = true
+		}
 	}
 	return cfg
 }

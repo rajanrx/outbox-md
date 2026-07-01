@@ -20,6 +20,27 @@ func TestLoadDefaultsWhenAbsent(t *testing.T) {
 	}
 }
 
+func TestLoadAutoUpdateDefaultsTrue(t *testing.T) {
+	if !Load(t.TempDir()).AutoUpdate {
+		t.Fatal("auto_update should default to true when the key is absent")
+	}
+}
+
+func TestLoadAutoUpdateDisabledFromYAML(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "auto_update: false\n")
+	if Load(dir).AutoUpdate {
+		t.Fatal("auto_update: false should disable self-update")
+	}
+}
+
+func TestLoadAutoUpdateEnvOverride(t *testing.T) {
+	t.Setenv("OUTBOX_AUTO_UPDATE", "false")
+	if Load(t.TempDir()).AutoUpdate {
+		t.Fatal("OUTBOX_AUTO_UPDATE=false should disable self-update")
+	}
+}
+
 func TestLoadOverridesBatchSizeKeepsOtherDefaults(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "agent:\n  batch_size: 3\n")

@@ -256,6 +256,8 @@ func run(args []string, out io.Writer) error {
 		return serve(rest, true)
 	case "init":
 		return initProject(rest, out)
+	case "upgrade":
+		return upgrade(out)
 	case "version", "--version", "-v":
 		fmt.Fprintln(out, version)
 		return nil
@@ -278,6 +280,7 @@ Commands:
   serve      Serve the review UI + MCP endpoint for a folder of .md files (default)
   up         Serve, then open the browser at the review UI
   init       Scaffold outbox.yaml + register the MCP with Claude in this folder
+  upgrade    Update outbox to the latest release (self-update)
   version    Print the version
   help       Show this help
 
@@ -313,6 +316,12 @@ func serve(args []string, open bool) error {
 	dir, addr, err := resolveFlags("serve", args, os.Stderr)
 	if err != nil {
 		return err
+	}
+	if open {
+		// `up` only: a best-effort self-update BEFORE binding the port. It never
+		// blocks or fails startup; on a successful update it re-execs, so the new
+		// process (not this one) must be the one to bind the listener.
+		maybeAutoUpdate(config.Load(dir), os.Stdout)
 	}
 	mux, err := buildServer(dir)
 	if err != nil {
@@ -421,6 +430,11 @@ const starterConfig = `# outbox.yaml — configuration for outbox-md.
 #   - docs/specs        # a folder → walked recursively
 #   - rfcs              # another folder
 #   - drafts/*.md       # a glob → matched files only (non-recursive)
+
+# outbox up self-updates to the latest release by default. Set to false to opt
+# out (you can still update on demand with "outbox upgrade"). Homebrew installs
+# update via "brew upgrade"; Docker via image pull / Watchtower.
+# auto_update: true
 `
 
 // initProject scaffolds onboarding in the target folder: it writes a starter
