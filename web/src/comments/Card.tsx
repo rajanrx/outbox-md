@@ -17,12 +17,16 @@ const PinIcon = ({ filled }: { filled: boolean }) => (
 
 const initial = (who: string) => (who?.[0] || "?").toUpperCase();
 
-export function Card({ comment, currentContent, active = false, pinned = false, offscreen = false, onActivate, onJump, onTogglePin, onChange }: {
+export function Card({ comment, currentContent, active = false, pinned = false, offscreen = false, reloadKey = 0, onActivate, onJump, onTogglePin, onChange }: {
   comment: Comment;
   currentContent: string;
   active?: boolean;
   pinned?: boolean;
   offscreen?: boolean;
+  // Bumped by the parent on each SSE event for the open doc; the thread state is
+  // local to this Card and would otherwise only load on comment.id change, so an
+  // agent reply/suggestion wouldn't appear in the open thread until a refresh.
+  reloadKey?: number;
   onActivate?: () => void;
   onJump?: () => void;
   onTogglePin?: () => void;
@@ -32,7 +36,7 @@ export function Card({ comment, currentContent, active = false, pinned = false, 
   const [draft, setDraft] = useState("");
   const ref = useRef<HTMLDivElement>(null);
   const load = () => getThread(comment.id).then((t) => setThread(t ?? []));
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [comment.id]);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [comment.id, reloadKey]);
   useEffect(() => {
     if (active) ref.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [active]);

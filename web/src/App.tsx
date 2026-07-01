@@ -93,6 +93,11 @@ export default function App() {
   const docIdRef = useRef(docId);
   useEffect(() => { docIdRef.current = docId; }, [docId]);
 
+  // Open-thread live refresh: each Card fetches its own thread and only reloads
+  // on comment.id change, so bump this on every relevant SSE event (below) and
+  // thread it down to the open Card as reloadKey.
+  const [threadTick, setThreadTick] = useState(0);
+
   // Live updates: subscribe once to the server's SSE stream. Each governance
   // event refreshes the view when it concerns the open doc (or carries no docId).
   // EventSource auto-reconnects; ": connected"/": ping" comment frames are ignored.
@@ -100,11 +105,17 @@ export default function App() {
     const es = new EventSource("/api/events");
     // On (re)connect, refresh immediately — a dropped-then-restored stream may
     // have missed events, and waiting for the 15s fallback poll would lag the UI.
-    es.onopen = () => refreshRef.current?.();
+    es.onopen = () => { refreshRef.current?.(); setThreadTick((t) => t + 1); };
     const onEvent = (e: MessageEvent) => {
       try {
         const d = JSON.parse(e.data) as { docId?: string };
-        if (!d.docId || d.docId === docIdRef.current) refreshRef.current();
+        if (!d.docId || d.docId === docIdRef.current) {
+          refreshRef.current();
+          // refresh() reloads the comment LIST; each open Card keeps its own
+          // separately-fetched thread state, so also bump a key it depends on to
+          // re-fetch the OPEN thread in place (where the agent's reply lands).
+          setThreadTick((t) => t + 1);
+        }
       } catch { /* ignore malformed frames */ }
     };
     // comment.updated / suggestion.proposed are AGENT-action events: the server
@@ -234,7 +245,7 @@ export default function App() {
           {commentsOpen && <div className="resize-handle" onMouseDown={startResize} title="Drag to resize" />}
           <div className="panel-head">Comments <span className="count">{openCount}</span></div>
           <div className="panel-body">
-            {view && <Margin docId={docId} content={view.content} rootRef={rootRef} comments={view.comments ?? []} onChange={refresh} />}
+            {view && <Margin docId={docId} content={view.content} rootRef={rootRef} comments={view.comments ?? []} reloadKey={threadTick} onChange={refresh} />}
           </div>
         </aside>
       </div>
