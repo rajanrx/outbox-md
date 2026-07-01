@@ -131,3 +131,82 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.ver.outputs.version }}
         run: gh release upload "v${VERSION}" dist/outbox_* dist/checksums.txt --clobber
+
+  # Auto-bump the Homebrew tap formula (rajanrx/homebrew-tap) to the new release,
+  # so `brew upgrade outbox-md` tracks releases with no manual step. Needs a repo
+  # secret HOMEBREW_TAP_TOKEN — a PAT with contents:write on the tap repo (the
+  # default GITHUB_TOKEN can't push cross-repo). Absent token → the job no-ops.
+  homebrew:
+    needs: [release-please, binaries]
+    if: needs.release-please.outputs.created == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read released version from the manifest
+        id: ver
+        run: echo "version=$(jq -r '.["."]' .release-please-manifest.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Bump the tap formula
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TAP_TOKEN:-}" ]; then
+            echo "::warning::HOMEBREW_TAP_TOKEN not set — skipping formula bump. Add a PAT with contents:write on rajanrx/homebrew-tap."
+            exit 0
+          fi
+          gh release download "v${VERSION}" --repo "${GITHUB_REPOSITORY}" -p checksums.txt --clobber
+          sha() { awk -v f="$1" '$2==f{print $1}' checksums.txt; }
+          DARWIN_ARM=$(sha outbox_darwin_arm64); DARWIN_AMD=$(sha outbox_darwin_amd64)
+          LINUX_ARM=$(sha outbox_linux_arm64);   LINUX_AMD=$(sha outbox_linux_amd64)
+          BASE="https://github.com/rajanrx/outbox-md/releases/download/v${VERSION}"
+
+          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/rajanrx/homebrew-tap.git" tap
+          cat > tap/Formula/outbox-md.rb <<EOF
+          class OutboxMd < Formula
+            desc "Local-first, agent-agnostic review for AI-generated Markdown specs"
+            homepage "https://github.com/rajanrx/outbox-md"
+            version "${VERSION}"
+            license "MIT"
+
+            on_macos do
+              on_arm do
+                url "${BASE}/outbox_darwin_arm64"
+                sha256 "${DARWIN_ARM}"
+              end
+              on_intel do
+                url "${BASE}/outbox_darwin_amd64"
+                sha256 "${DARWIN_AMD}"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "${BASE}/outbox_linux_arm64"
+                sha256 "${LINUX_ARM}"
+              end
+              on_intel do
+                url "${BASE}/outbox_linux_amd64"
+                sha256 "${LINUX_AMD}"
+              end
+            end
+
+            def install
+              bin.install Dir["outbox_*"].first => "outbox"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/outbox version")
+            end
+          end
+          EOF
+
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/outbox-md.rb
+          git commit -m "outbox-md ${VERSION}" || { echo "formula already current"; exit 0; }
+          git push
