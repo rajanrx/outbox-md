@@ -51,6 +51,23 @@ http://localhost:8181/mcp
 
 ---
 
+## Commands
+
+| Command | What it does |
+|---|---|
+| `outbox up` | Serve the review UI + MCP, then open it in your browser (the everyday command). |
+| `outbox serve` | Same, without opening a browser (the default with no arguments; what the Docker image runs). |
+| `outbox init` | Scaffold `outbox.yaml` and register the MCP with your installed AI client(s) in this folder. |
+| `outbox add [path]` · `remove` · `projects` | Register / unregister / list projects — review several folders from one server. |
+| `outbox upgrade` | Update to the latest release (self-update). |
+| `outbox version` · `outbox help` | Print the version / usage. |
+
+`serve` and `up` take `-dir` (folder to serve, default `.`) and `-addr` (listen address, default `:8181`). Precedence is **flag > `OUTBOX_DIR` / `OUTBOX_ADDR` env > default**.
+
+Full detail — install options, connecting each client, multiple projects, `sources` scoping, automation — is in the **[Setup & Usage Guide](SETUP.md)**.
+
+---
+
 ## How it works
 
 You comment on a doc; the comment enters an **ordered outbox** instead of touching the file. The server notifies your agent (over MCP) and updates your browser live. The agent **claims** a comment and either **proposes a tracked change** or **replies**; you **accept**, and only then is the `.md` rewritten and a new version recorded. Resolving comments and approving docs stay **human-only** — an agent can't accept its own work.
