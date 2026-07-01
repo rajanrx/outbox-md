@@ -140,6 +140,12 @@ func importMarkdown(st *store.Store, dir string, sources []string) error {
 		if err != nil {
 			return err
 		}
+		if len(matches) == 0 {
+			// A mistyped folder or a glob that matches nothing would otherwise
+			// import silently — surface it so the operator knows why a source is empty.
+			log.Printf("outbox: sources entry %q matched no files under %s", src, dir)
+			continue
+		}
 		for _, m := range matches {
 			if seen[m] {
 				continue

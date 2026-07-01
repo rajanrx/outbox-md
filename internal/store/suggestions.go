@@ -57,9 +57,13 @@ type PendingSuggestion struct {
 }
 
 // ListPendingSuggestions returns every comment across all docs whose latest
-// suggestion is still proposed, paired with the doc's current version content.
-// The "latest suggestion per comment" subquery mirrors GetSuggestionByComment,
-// so a folder entry shows exactly what the inline "This change" diff would.
+// suggestion is still proposed AND whose comment is still 'addressed', paired
+// with the doc's current version content. Gating on comment status mirrors the
+// inline "This change" surface (rendered only when comment.status ===
+// "addressed"), so a comment the human has since resolved, replied to, or
+// detached — which can leave a stale 'proposed' suggestion row behind — no
+// longer lingers in the folder view. The "latest suggestion per comment"
+// subquery mirrors GetSuggestionByComment.
 func (s *Store) ListPendingSuggestions() ([]PendingSuggestion, error) {
 	rows, err := s.DB.Query(`
 		SELECT c.doc_id, d.path, s.comment_id, v.content, s.proposed_content
@@ -68,12 +72,13 @@ func (s *Store) ListPendingSuggestions() ([]PendingSuggestion, error) {
 		JOIN documents d  ON d.id = c.doc_id
 		JOIN versions v   ON v.id = d.current_version_id
 		WHERE s.state = ?
+		  AND c.status = ?
 		  AND s.id = (
 			SELECT id FROM suggestions s2
 			WHERE s2.comment_id = s.comment_id
 			ORDER BY created_at DESC LIMIT 1
 		  )
-		ORDER BY d.path`, domain.SuggestionProposed)
+		ORDER BY d.path`, domain.SuggestionProposed, domain.CommentAddressed)
 	if err != nil {
 		return nil, err
 	}
