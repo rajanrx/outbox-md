@@ -19,6 +19,7 @@ import (
 	"github.com/rajanrx/outbox-md/internal/api"
 	"github.com/rajanrx/outbox-md/internal/config"
 	"github.com/rajanrx/outbox-md/internal/mcp"
+	"github.com/rajanrx/outbox-md/internal/mcpclients"
 	"github.com/rajanrx/outbox-md/internal/registry"
 	"github.com/rajanrx/outbox-md/internal/service"
 	"github.com/rajanrx/outbox-md/internal/sse"
@@ -287,7 +288,7 @@ Usage:
 Commands:
   serve      Serve the review UI + MCP endpoint for a folder of .md files (default)
   up         Serve, then open the browser at the review UI
-  init       Scaffold outbox.yaml + register the MCP with Claude in this folder
+  init       Scaffold outbox.yaml + auto-register the MCP with detected AI clients
   add        Register a project folder (default: current directory)
   remove     Unregister a project by name or path
   projects   List registered projects
@@ -298,6 +299,13 @@ Commands:
 Flags (serve, up):
   -dir    folder of .md files to serve   (default ".",     overridden by OUTBOX_DIR)
   -addr   listen address                 (default ":8181", overridden by OUTBOX_ADDR)
+
+Flags (init):
+  -dir     folder to scaffold             (default ".",     overridden by OUTBOX_DIR)
+  -addr    listen address for the MCP URL (default ":8181", overridden by OUTBOX_ADDR)
+  -client  register only this client (repeatable): claude-code, gemini, cursor,
+           windsurf, claude-desktop, codex
+  -all     register with every supported client, even if not detected
 
 Getting started:
   outbox init && outbox up
@@ -544,6 +552,9 @@ func initProject(args []string, out io.Writer) error {
 	fs.SetOutput(out)
 	dir := fs.String("dir", getenv("OUTBOX_DIR", "."), "folder to scaffold")
 	addr := fs.String("addr", getenv("OUTBOX_ADDR", ":8181"), "listen address (for the MCP URL)")
+	all := fs.Bool("all", false, "register with every supported AI client, even if not detected")
+	var clientFlags stringSliceFlag
+	fs.Var(&clientFlags, "client", "register only this client (repeatable): "+strings.Join(mcpclients.Slugs(), ", "))
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -563,31 +574,64 @@ func initProject(args []string, out io.Writer) error {
 		return err
 	}
 
-	registerMCP(out, browseURL(*addr)+"/mcp")
+	if err := registerMCPClients(out, browseURL(*addr)+"/mcp", *all, clientFlags); err != nil {
+		return err
+	}
 
 	fmt.Fprintln(out, "\nNext: run `outbox up` to start the server and open the review UI.")
 	return nil
 }
 
-// registerMCP registers outbox-md's MCP endpoint with the Claude CLI for this
-// project. If `claude` is not on PATH, or the command fails (e.g. already
-// registered), it prints the exact command for the user to run — registration
-// is best-effort and never fatal to `init`.
-func registerMCP(out io.Writer, mcpURL string) {
-	argv := []string{"claude", "mcp", "add", "--transport", "http", "outbox-md", mcpURL}
-	printable := strings.Join(argv, " ")
-	path, err := lookPath("claude")
+// stringSliceFlag collects a repeatable string flag (e.g. -client a -client b).
+type stringSliceFlag []string
+
+func (s *stringSliceFlag) String() string { return strings.Join(*s, ",") }
+func (s *stringSliceFlag) Set(v string) error {
+	*s = append(*s, v)
+	return nil
+}
+
+// registerMCPClients detects installed AI clients and registers outbox-md's MCP
+// endpoint (mcpURL) with each. Default is auto-detect; -all forces every client;
+// -client targets specific ones. It prints a per-client summary and never fails
+// init because a single client could not be wired (only a bad -client name is
+// fatal, surfaced as a usage error).
+func registerMCPClients(out io.Writer, mcpURL string, all bool, only []string) error {
+	home, _ := os.UserHomeDir()
+	env := mcpclients.Env{
+		HomeDir:       home,
+		GOOS:          runtime.GOOS,
+		CommandExists: func(name string) bool { _, err := lookPath(name); return err == nil },
+		DirExists:     func(path string) bool { fi, err := os.Stat(path); return err == nil && fi.IsDir() },
+		ReadFile:      os.ReadFile,
+		WriteFile:     os.WriteFile,
+		MkdirAll:      os.MkdirAll,
+		RunCommand: func(name string, args []string) error {
+			cmd := exec.Command(name, args...)
+			cmd.Stdout, cmd.Stderr = out, out
+			return cmd.Run()
+		},
+	}
+
+	results, err := mcpclients.Register(env, mcpURL, mcpclients.Options{All: all, Only: only})
 	if err != nil {
-		fmt.Fprintf(out, "claude CLI not found — register the MCP yourself:\n  %s\n", printable)
-		return
+		return err
 	}
-	cmd := exec.Command(path, argv[1:]...)
-	cmd.Stdout, cmd.Stderr = out, out
-	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(out, "could not register the MCP automatically — run:\n  %s\n", printable)
-		return
+
+	fmt.Fprintln(out, "\nAI clients:")
+	for _, r := range results {
+		switch r.Action {
+		case mcpclients.ActionWired:
+			fmt.Fprintf(out, "  ✓ %s — registered (%s)\n", r.Name, r.Detail)
+		case mcpclients.ActionNoted:
+			fmt.Fprintf(out, "  ✓ %s — %s\n", r.Name, r.Note)
+		case mcpclients.ActionSkipped:
+			fmt.Fprintf(out, "  · %s — not detected (install it, then re-run `outbox init`)\n", r.Name)
+		case mcpclients.ActionFailed:
+			fmt.Fprintf(out, "  ✗ %s — could not register: %v\n", r.Name, r.Err)
+		}
 	}
-	fmt.Fprintf(out, "registered the outbox-md MCP with Claude:\n  %s\n", printable)
+	return nil
 }
 
 // configHomeDir resolves outbox-md's global config directory. It honours

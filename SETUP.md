@@ -5,6 +5,7 @@ Everything beyond the [README](README.md) quickstart: installing, connecting age
 - [Install](#install)
 - [`outbox` commands & flags](#outbox-commands--flags)
 - [Connect your agent (MCP)](#connect-your-agent-mcp)
+- [Supported clients](#supported-clients)
 - [The review loop](#the-review-loop)
 - [Multiple projects](#multiple-projects)
 - [Serving part of a repo (`sources`)](#serving-part-of-a-repo-sources)
@@ -61,7 +62,7 @@ docker run --rm -p 8181:8181 -v "$PWD/specs:/data" outbox-md
 |---|---|
 | `outbox up` | Serve the review UI + MCP, then open the browser (the everyday command). |
 | `outbox serve` | Same, without opening a browser (also the default with no arguments — this is what the Docker image runs). |
-| `outbox init` | Scaffold `outbox.yaml` and register the MCP endpoint with the Claude CLI in the current folder. |
+| `outbox init` | Scaffold `outbox.yaml` and auto-register the MCP endpoint with every detected AI client (see [Supported clients](#supported-clients)). Flags: `-client <slug>` (repeatable) to target specific clients; `-all` to write configs for every client even if not installed. |
 | `outbox upgrade` | Update to the latest release (self-update). |
 | `outbox version` | Print the CLI version. |
 | `outbox help` | Show usage. |
@@ -77,7 +78,7 @@ Precedence is **flag > `OUTBOX_DIR` / `OUTBOX_ADDR` env > default**.
 
 ## Connect your agent (MCP)
 
-outbox-md exposes a **Streamable-HTTP MCP server** at `http://localhost:8181/mcp`. No API key, no secrets to hand-edit — it just needs to be **running**. `outbox init` registers it with the Claude CLI automatically; to do it by hand or use another client:
+outbox-md exposes a **Streamable-HTTP MCP server** at `http://localhost:8181/mcp`. No API key, no secrets to hand-edit — it just needs to be **running**. `outbox init` **auto-detects your installed AI clients and registers it with each** (see [Supported clients](#supported-clients)); to do it by hand or use another client:
 
 **Claude Code**
 ```bash
@@ -105,6 +106,23 @@ claude mcp list   # should show: outbox-md ✓ connected
 }
 ```
 </details>
+
+### Supported clients
+
+`outbox init` detects each of these and registers the outbox-md MCP with the ones it finds. Registration is idempotent — it only adds or replaces the `outbox-md` entry and preserves everything else. Undetected clients are skipped (install one, then re-run `outbox init`, or force it with `-all` / `-client <slug>`).
+
+| Client | `-client` slug | Detected by | Config written | Transport |
+|---|---|---|---|---|
+| Claude Code | `claude-code` | `claude` on `PATH` | *(runs `claude mcp add`)* | HTTP |
+| Gemini CLI | `gemini` | `gemini` on `PATH` | `~/.gemini/settings.json` | HTTP (`httpUrl`) |
+| Cursor | `cursor` | `~/.cursor/` exists | `~/.cursor/mcp.json` | HTTP (`url`) |
+| Windsurf | `windsurf` | `~/.codeium/windsurf/` exists | `~/.codeium/windsurf/mcp_config.json` | HTTP (`serverUrl`) |
+| Claude Desktop | `claude-desktop` | Config dir exists (macOS `~/Library/Application Support/Claude/`, Linux `~/.config/Claude/`) | `claude_desktop_config.json` in that dir | stdio via `mcp-remote` bridge |
+| OpenAI Codex CLI | `codex` | `codex` on `PATH` | `~/.codex/config.toml` (`[mcp_servers.outbox-md]`) | HTTP (`url`) |
+
+Claude Desktop is stdio-only, so it's wired through the [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) bridge (`npx -y mcp-remote <url>`), which requires `npx` (Node.js) on `PATH` at run time. Every other client — including Codex, which speaks Streamable-HTTP MCP natively — connects to the HTTP endpoint directly.
+
+Every config is parsed and re-serialised, so all other settings are preserved but formatting and key order may change. The JSON configs (Claude Desktop, Cursor, Windsurf, Gemini) keep all other keys and servers. Codex's `~/.codex/config.toml` is parsed and re-written with a real TOML parser: every other table and key is preserved and the `outbox-md` entry is added or replaced, but TOML **comments are not preserved** (the deliberate trade for guaranteed-valid output — the previous line-based merge could corrupt spec-legal TOML). If `config.toml` is present but not valid TOML, `outbox init` leaves it untouched and prints the `[mcp_servers.outbox-md]` table for you to add by hand.
 
 Once connected, your agent gets five tools:
 
