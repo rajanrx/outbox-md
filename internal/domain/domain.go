@@ -1,5 +1,7 @@
 package domain
 
+import "time"
+
 type Anchor struct {
 	Start int `json:"start"`
 	End   int `json:"end"`
@@ -59,6 +61,19 @@ type Comment struct {
 	Status           CommentStatus `json:"status"`
 	PostApproval     bool          `json:"postApproval"`
 	ClaimToken       string        `json:"-"`
+	// ProcessingUntil is an ephemeral, self-expiring hint that an AI agent is
+	// actively working this comment. It is NOT a status: a comment is "processing"
+	// iff ProcessingUntil is set and still in the future (see IsProcessing). A dead
+	// agent never leaves it stuck — the deadline simply passes. nil means not
+	// processing.
+	ProcessingUntil *time.Time `json:"processingUntil,omitempty"`
+}
+
+// IsProcessing reports whether an agent is currently marked as processing this
+// comment, relative to now. It is purely time-based: no reaper is needed because
+// expiry is implicit.
+func (c Comment) IsProcessing(now time.Time) bool {
+	return c.ProcessingUntil != nil && c.ProcessingUntil.After(now)
 }
 
 type SuggestionState string

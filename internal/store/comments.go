@@ -1,18 +1,38 @@
 package store
 
-import "github.com/rajanrx/outbox-md/internal/domain"
+import (
+	"database/sql"
+	"time"
+
+	"github.com/rajanrx/outbox-md/internal/domain"
+)
 
 func scanComment(scan func(...any) error) (domain.Comment, error) {
 	var c domain.Comment
 	var pa int
+	var pu sql.NullString
 	err := scan(&c.ID, &c.DocID, &c.AgainstVersionID, &c.Anchor.Start, &c.Anchor.End,
-		&c.AuthorIdentity, &c.Owner, &c.Status, &c.ClaimToken, &pa)
+		&c.AuthorIdentity, &c.Owner, &c.Status, &c.ClaimToken, &pa, &pu)
 	c.PostApproval = pa != 0
+	if err == nil && pu.Valid && pu.String != "" {
+		if t, perr := time.Parse(time.RFC3339Nano, pu.String); perr == nil {
+			c.ProcessingUntil = &t
+		}
+	}
 	return c, err
 }
 
 const commentCols = `id, doc_id, against_version_id, anchor_start, anchor_end,
-	author_identity, owner, status, claim_token, post_approval`
+	author_identity, owner, status, claim_token, post_approval, processing_until`
+
+// nullTime renders a *time.Time for storage: a null column when nil, otherwise a
+// UTC RFC3339Nano string (the format scanComment parses back).
+func nullTime(t *time.Time) any {
+	if t == nil {
+		return nil
+	}
+	return t.UTC().Format(time.RFC3339Nano)
+}
 
 func (s *Store) CreateComment(c domain.Comment) (domain.Comment, error) {
 	if c.ID == "" {
@@ -22,10 +42,19 @@ func (s *Store) CreateComment(c domain.Comment) (domain.Comment, error) {
 	if c.PostApproval {
 		pa = 1
 	}
-	_, err := s.DB.Exec(`INSERT INTO comments(`+commentCols+`) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+	_, err := s.DB.Exec(`INSERT INTO comments(`+commentCols+`) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
 		c.ID, c.DocID, c.AgainstVersionID, c.Anchor.Start, c.Anchor.End,
-		c.AuthorIdentity, c.Owner, c.Status, c.ClaimToken, pa)
+		c.AuthorIdentity, c.Owner, c.Status, c.ClaimToken, pa, nullTime(c.ProcessingUntil))
 	return c, err
+}
+
+// SetProcessingUntil sets (or, with nil, clears) the ephemeral processing hint on
+// a comment. It never touches status — "processing" is a self-expiring timestamp,
+// not a lifecycle state.
+func (s *Store) SetProcessingUntil(commentID string, until *time.Time) error {
+	_, err := s.DB.Exec(`UPDATE comments SET processing_until=? WHERE id=?`,
+		nullTime(until), commentID)
+	return err
 }
 
 func (s *Store) GetComment(id string) (domain.Comment, error) {

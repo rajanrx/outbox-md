@@ -34,6 +34,7 @@ const (
 	// the agent's own reply/suggestion, only by human-action events.
 	EventCommentUpdated     = "comment.updated"     // an agent replies in a thread
 	EventSuggestionProposed = "suggestion.proposed" // an agent proposes a tracked change
+	EventCommentProcessing  = "comment.processing"  // an agent marked a comment as being worked on
 )
 
 // Event is the JSON payload POSTed to the webhook URL. Comment events carry the
