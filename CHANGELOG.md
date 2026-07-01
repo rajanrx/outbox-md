@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1](https://github.com/rajanrx/outbox-md/compare/v0.11.0...v0.11.1) (2026-07-01)
+
+
+### Bug Fixes
+
+* **ui:** diff modal width — beat .modal-card's 420px cap on specificity ([1a5b26d](https://github.com/rajanrx/outbox-md/commit/1a5b26d434cbfe9b0da97256171c00349b095e99))
+* **ui:** diff modal width (beat .modal-card 420px cap on specificity) ([e41aea1](https://github.com/rajanrx/outbox-md/commit/e41aea1aae390eaf1bbcb396c0ef2d073f903c2c))
+
 ## [0.11.0](https://github.com/rajanrx/outbox-md/compare/v0.10.1...v0.11.0) (2026-07-01)
 
 
