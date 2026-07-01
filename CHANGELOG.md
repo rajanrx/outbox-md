@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0](https://github.com/rajanrx/outbox-md/compare/outbox-md-v0.2.0...outbox-md-v0.3.0) (2026-07-01)
+
+
+### Features
+
+* **runner:** ack webhook receipt so the 'AI processing' badge appears instantly ([cd1c657](https://github.com/rajanrx/outbox-md/commit/cd1c657c710fc4fb867e798bcbf0d64e17c78a2e))
+* **runner:** ack webhook receipt to show the processing badge instantly ([9237390](https://github.com/rajanrx/outbox-md/commit/9237390b776d2d07c119f84a2e2b4218fa7140dd))
+
 ## [0.2.0](https://github.com/rajanrx/outbox-md/compare/outbox-md-v0.1.1...outbox-md-v0.2.0) (2026-07-01)
 
 
