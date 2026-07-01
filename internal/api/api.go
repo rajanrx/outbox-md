@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/rajanrx/outbox-md/internal/domain"
@@ -68,17 +70,46 @@ func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub) http.Handler {
 	// always available.
 	mux.HandleFunc("GET /api/suggestions/pending", func(w http.ResponseWriter, _ *http.Request) {
 		pending, err := st.ListPendingSuggestions()
+		if err == nil {
+			if srcs := svc.Config().Sources; len(srcs) > 0 {
+				kept := pending[:0:0]
+				for _, p := range pending {
+					if pathInSources(p.Path, srcs) {
+						kept = append(kept, p)
+					}
+				}
+				pending = kept
+			}
+		}
 		writeJSON(w, pending, err)
 	})
 
 	mux.HandleFunc("GET /api/docs", func(w http.ResponseWriter, _ *http.Request) {
 		docs, err := st.ListDocuments()
+		if err == nil {
+			if srcs := svc.Config().Sources; len(srcs) > 0 {
+				kept := docs[:0:0]
+				for _, d := range docs {
+					if pathInSources(d.Path, srcs) {
+						kept = append(kept, d)
+					}
+				}
+				docs = kept
+			}
+		}
 		writeJSON(w, docs, err)
 	})
 
 	mux.HandleFunc("GET /api/docs/{id}", func(w http.ResponseWriter, r *http.Request) {
 		doc, err := st.GetDocument(r.PathValue("id"))
 		if err != nil {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		// Enforce the sources whitelist at serve time: a doc imported under a
+		// broader earlier run but now outside the active whitelist is hidden
+		// (its data is preserved — narrowing sources is reversible).
+		if srcs := svc.Config().Sources; !pathInSources(doc.Path, srcs) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
@@ -287,6 +318,34 @@ func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub) http.Handler {
 	})
 
 	return mux
+}
+
+// pathInSources reports whether a doc path (relative to the served dir) is
+// covered by the sources whitelist, mirroring importMarkdown's semantics so the
+// served set matches the imported set: a plain entry is a folder served
+// recursively (exact match or prefix) or an exact file; an entry with glob
+// metacharacters is matched single-level via filepath.Match. An empty whitelist
+// covers everything. This enforces the whitelist at SERVE time, so docs left in
+// the DB from a broader earlier run don't reappear once sources is narrowed.
+func pathInSources(docPath string, sources []string) bool {
+	if len(sources) == 0 {
+		return true
+	}
+	docPath = filepath.ToSlash(docPath)
+	for _, src := range sources {
+		src = strings.TrimSuffix(filepath.ToSlash(strings.TrimSpace(src)), "/")
+		if src == "" {
+			continue
+		}
+		if strings.ContainsAny(src, "*?[") {
+			if ok, _ := filepath.Match(src, docPath); ok {
+				return true
+			}
+		} else if docPath == src || strings.HasPrefix(docPath, src+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func writeJSON(w http.ResponseWriter, v any, err error) {

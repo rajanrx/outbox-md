@@ -91,7 +91,9 @@ sources:
 
 Omit `sources` (or leave it empty) to serve everything — the default. Entries that
 escape `OUTBOX_DIR` are rejected. `OUTBOX_SOURCES` (comma-separated) overrides the
-file, e.g. `OUTBOX_SOURCES=docs/specs,rfcs`.
+file, e.g. `OUTBOX_SOURCES=docs/specs,rfcs`. `sources` is enforced when serving too,
+not just on import: narrowing it hides out-of-whitelist docs from the UI and API
+without deleting their comments or history — widen it again and they reappear.
 
 ---
 
