@@ -51,11 +51,14 @@ function scrollReaderToAnchor(root: HTMLElement, source: string, anchor: { start
   pane.scrollTo({ top: pane.scrollTop + (rect.top - paneRect.top) - 140, behavior: "smooth" });
 }
 
-export function Margin({ docId, content, rootRef, comments, onChange }: {
+export function Margin({ docId, content, rootRef, comments, reloadKey = 0, onChange }: {
   docId: string;
   content: string;
   rootRef: React.RefObject<HTMLDivElement | null>;
   comments: Comment[];
+  // Bumped on each SSE event for the open doc; forwarded to the open Card so its
+  // thread re-fetches in place (not just the comment list).
+  reloadKey?: number;
   onChange: () => void;
 }) {
   const [pending, setPending] = useState<{ start: number; end: number } | null>(null);
@@ -258,6 +261,7 @@ export function Margin({ docId, content, rootRef, comments, onChange }: {
           active={c.id === focused}
           pinned={pinned.has(c.id)}
           offscreen={offscreen.has(c.id)}
+          reloadKey={reloadKey}
           onActivate={() => setFocused(c.id)}
           onJump={() => jumpTo(c)}
           onTogglePin={() => togglePin(c.id)}
