@@ -134,91 +134,38 @@ func getenv(k, def string) string {
 	return def
 }
 
-// importMarkdown ingests .md files under dir. When sources is empty it walks the
-// whole dir (the default, backward-compatible behaviour). When non-empty, each
-// entry is a folder path OR a glob relative to dir: a folder is walked
-// recursively, a glob is expanded, and every matched .md is imported. Every
-// imported file is keyed by its path relative to keyBase (not dir): keyBase is
-// the project ROOT, so a doc under a docs subtree is keyed root-relative and the
-// same filename under two different subtrees never collides. In single-subtree
-// mode keyBase == dir, so keys stay project-relative exactly as before. Entries
-// that escape dir are rejected; overlapping matches are de-duped so a file is
-// never imported twice.
+// importMarkdown ingests the .md files of one docs subtree. It walks dir (a
+// project's root/docsN spec dir) recursively and keys each file by its path
+// relative to keyBase — keyBase is the project ROOT, so a doc under a docs
+// subtree is keyed root-relative and the same filename under two different
+// subtrees never collides. In single-subtree mode keyBase == dir, so keys stay
+// project-relative exactly as before.
+//
+// A file is imported iff its ROOT-RELATIVE key passes config.SourcesMatch — the
+// SAME predicate the served set gates on. Because the walk already stays within
+// a docs subtree, "under docsN" is guaranteed by construction; the sources
+// filter is evaluated against the root-relative key (never joined onto dir), so
+// the imported set is exactly the served set (no import/serve drift). An empty
+// sources list applies no filter (import every .md in the subtree).
 func importMarkdown(st *store.Store, project, keyBase, dir string, sources []string) error {
-	if len(sources) == 0 {
-		return importTree(st, project, keyBase, dir)
-	}
-	seen := map[string]bool{}
-	for _, src := range sources {
-		src = strings.TrimSpace(src)
-		if src == "" {
-			continue
-		}
-		// A plain entry names a folder served recursively (or an exact file); a
-		// glob entry matches files single-level. This mirrors config.Config.Serves
-		// exactly, so a glob like "docs/*" never imports a nested file it would
-		// then hide at serve time — use a plain folder entry to recurse.
-		isGlob := strings.ContainsAny(src, "*?[")
-		// Resolve within dir and refuse anything that escapes it. safeJoin cleans
-		// the path and rejects traversal; the glob metacharacters survive Join.
-		target, err := safeJoin(dir, src)
-		if err != nil {
-			return err
-		}
-		matches, err := filepath.Glob(target)
-		if err != nil {
-			return err
-		}
-		if len(matches) == 0 {
-			// A mistyped folder or a glob that matches nothing would otherwise
-			// import silently — surface it so the operator knows why a source is empty.
-			log.Printf("outbox: sources entry %q matched no files under %s", src, dir)
-			continue
-		}
-		for _, m := range matches {
-			if seen[m] {
-				continue
-			}
-			seen[m] = true
-			fi, err := os.Stat(m)
-			if err != nil {
-				return err
-			}
-			if fi.IsDir() {
-				if isGlob {
-					// A glob matched a directory: don't recurse (single-level
-					// semantics, matching Serves). A plain folder entry recurses.
-					continue
-				}
-				if err := importTree(st, project, keyBase, m); err != nil {
-					return err
-				}
-			} else if strings.HasSuffix(m, ".md") {
-				if err := importFile(st, project, keyBase, m); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	return nil
-}
-
-// importTree walks root recursively, importing every .md file keyed by its path
-// relative to keyBase under the given project. root may be keyBase itself or a
-// sub-folder under it (a whitelisted source, or a docs subtree of the project
-// root); keyBase is always the project root so keys stay root-relative.
-func importTree(st *store.Store, project, keyBase, root string) error {
-	return filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+	return filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.IsDir() {
-			if d.Name() == ".outbox" || (strings.HasPrefix(d.Name(), ".") && p != root) {
+			if d.Name() == ".outbox" || (strings.HasPrefix(d.Name(), ".") && p != dir) {
 				return fs.SkipDir
 			}
 			return nil
 		}
 		if !strings.HasSuffix(d.Name(), ".md") {
+			return nil
+		}
+		rel, err := filepath.Rel(keyBase, p)
+		if err != nil {
+			return err
+		}
+		if !config.SourcesMatch(sources, filepath.ToSlash(rel)) {
 			return nil
 		}
 		return importFile(st, project, keyBase, p)
@@ -473,7 +420,12 @@ func buildServer(root string, projects []registry.Project, autoReplyFlag bool) (
 	// entry keyed "" whose root is the served dir.
 	for _, p := range projects {
 		pcfg := config.Load(p.Root)
-		sources[p.Name] = pcfg
+		// The runtime coverage gates on the SAME root-relative predicate import
+		// uses: the docs union (from the registry) narrowed by the project's
+		// root-relative sources (from its outbox.yaml). Threading docs here is what
+		// hides docs OUTSIDE the current docs list (stale rows, previously-imported
+		// dirs) on every read surface — not just the sources filter.
+		sources[p.Name] = config.Coverage{Docs: p.DocRoots(), Sources: pcfg.Sources}
 		for _, specDir := range p.SpecDirs() {
 			if err := ensureDataDir(specDir); err != nil {
 				return nil, nil, err

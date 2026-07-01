@@ -63,6 +63,25 @@ func (p Project) SpecDirs() []string {
 	return dirs
 }
 
+// DocRoots returns the project's docs subpaths RELATIVE to Root, normalised the
+// same way SpecDirs normalises them (absent or "" → ["."]). These are the
+// root-relative coverage keys the served predicate gates on — the sibling of
+// SpecDirs, which joins the same list onto Root for import and file watching.
+func (p Project) DocRoots() []string {
+	docs := p.Docs
+	if len(docs) == 0 {
+		docs = []string{"."}
+	}
+	out := make([]string, 0, len(docs))
+	for _, d := range docs {
+		if strings.TrimSpace(d) == "" {
+			d = "."
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
 // UnmarshalJSON reads the current {name,root,docs:[…],agent} shape and tolerantly
 // migrates older shapes so a registry written by an older outbox keeps working:
 // legacy {name,path} → root ← path; single-string {docs:"x"} → docs ← ["x"]; an

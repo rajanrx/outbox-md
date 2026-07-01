@@ -81,7 +81,7 @@ func realSvc(t *testing.T) (*service.Service, *store.Store) {
 	t.Helper()
 	st := openStore(t)
 	svc := service.New(st, func(_, _, _ string) error { return nil })
-	svc.SetProjectSources(config.ProjectSources{"": config.Defaults()})
+	svc.SetProjectSources(config.ProjectSources{"": config.Coverage{}})
 	return svc, st
 }
 
@@ -142,9 +142,7 @@ func TestCreateOutsideWhitelistIgnored(t *testing.T) {
 	}
 	st := openStore(t)
 	svc := service.New(st, func(_, _, _ string) error { return nil })
-	narrow := config.Defaults()
-	narrow.Sources = []string{"specs"}
-	svc.SetProjectSources(config.ProjectSources{"": narrow})
+	svc.SetProjectSources(config.ProjectSources{"": config.Coverage{Sources: []string{"specs"}}})
 
 	spy := &spyNotifier{}
 	startWatcher(t, dir, svc, spy, 40*time.Millisecond)

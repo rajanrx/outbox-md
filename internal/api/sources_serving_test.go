@@ -129,7 +129,7 @@ func TestMultiProjectServeRespectsPerProjectSources(t *testing.T) {
 	// Project "web" is now narrowed to docs/specs — secret.md was imported earlier
 	// under a broader config and remains in the store.
 	svc.SetProjectSources(config.ProjectSources{
-		"web": config.Config{Sources: []string{"docs/specs"}},
+		"web": config.Coverage{Sources: []string{"docs/specs"}},
 	})
 
 	inDoc, _, _ := s.CreateDocumentInProject("web", "docs/specs/in.md", "hello", "import")
@@ -175,8 +175,8 @@ func TestMultiProjectSourcesAreIsolatedPerProject(t *testing.T) {
 	defer s.Close()
 	svc := service.New(s, func(_, _, _ string) error { return nil })
 	svc.SetProjectSources(config.ProjectSources{
-		"A": config.Config{Sources: []string{"specs"}},
-		"B": config.Config{Sources: []string{"drafts"}},
+		"A": config.Coverage{Sources: []string{"specs"}},
+		"B": config.Coverage{Sources: []string{"drafts"}},
 	})
 
 	// Same relative paths in both projects: each is served by exactly one.
@@ -223,7 +223,7 @@ func TestMultiProjectOrphanDocIsHidden(t *testing.T) {
 	defer s.Close()
 	svc := service.New(s, func(_, _, _ string) error { return nil })
 	svc.SetProjectSources(config.ProjectSources{
-		"live": config.Config{}, // serves everything under the live project
+		"live": config.Coverage{}, // serves everything under the live project
 	})
 	live, _, _ := s.CreateDocumentInProject("live", "a.md", "a", "import")
 	orphan, _, _ := s.CreateDocumentInProject("removed", "b.md", "b", "import")
@@ -240,6 +240,84 @@ func TestMultiProjectOrphanDocIsHidden(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/docs/"+orphan.ID, nil))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("GET orphaned (removed-project) doc = %d, want 404", rec.Code)
+	}
+}
+
+// P1 (docs-union leak): a project with an EMPTY sources filter still serves ONLY
+// the docs it lists — a stale/previously-imported row OUTSIDE the docs list must
+// be hidden on EVERY read surface, not just the sources-filtered ones. This is
+// the leak the sources-only predicate missed: with no sources, the old code
+// served every DB row for the project. Asserts across /api/docs, /api/docs/{id},
+// and /api/suggestions/pending; the MCP read/list surface is covered by the
+// sibling test in the mcp package.
+func TestServeGatesOnDocsUnionWithEmptySources(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := service.New(s, func(_, _, _ string) error { return nil })
+	// Project P serves docs/specs, NO sources filter. under-docs alone must gate.
+	svc.SetProjectSources(config.ProjectSources{
+		"P": config.Coverage{Docs: []string{"docs/specs"}},
+	})
+
+	// In-docs doc (served) and an out-of-docs stale row (must be hidden), each with
+	// a comment and a pending suggestion so every surface has something to filter.
+	inDoc, inVer, _ := s.CreateDocumentInProject("P", "docs/specs/a.md", "in", "import")
+	outDoc, outVer, _ := s.CreateDocumentInProject("P", "other/x.md", "stale", "import")
+	inC, _ := s.CreateComment(domain.Comment{
+		DocID: inDoc.ID, AgainstVersionID: inVer.ID, Anchor: domain.Anchor{Start: 0, End: 2},
+		AuthorIdentity: "human", Owner: "human", Status: domain.CommentOpen,
+	})
+	outC, _ := s.CreateComment(domain.Comment{
+		DocID: outDoc.ID, AgainstVersionID: outVer.ID, Anchor: domain.Anchor{Start: 0, End: 5},
+		AuthorIdentity: "human", Owner: "human", Status: domain.CommentOpen,
+	})
+	_, _ = s.CreateSuggestion(domain.Suggestion{
+		CommentID: inC.ID, AgainstVersionID: inVer.ID, ProposedContent: "in2",
+		State: domain.SuggestionProposed, CreatedBy: "agent",
+	})
+	_, _ = s.CreateSuggestion(domain.Suggestion{
+		CommentID: outC.ID, AgainstVersionID: outVer.ID, ProposedContent: "stale2",
+		State: domain.SuggestionProposed, CreatedBy: "agent",
+	})
+
+	// Unit predicate: under-docs gates even with no sources filter.
+	if svc.ProjectServes("P", "other/x.md") {
+		t.Fatal("ProjectServes(P, other/x.md) = true, want false (outside docs union)")
+	}
+	if !svc.ProjectServes("P", "docs/specs/a.md") {
+		t.Fatal("ProjectServes(P, docs/specs/a.md) = false, want true")
+	}
+
+	h := NewAPI(svc, s, sse.NewHub())
+
+	// /api/docs lists only the in-docs doc.
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/docs", nil))
+	var docs []domain.Document
+	_ = json.Unmarshal(rec.Body.Bytes(), &docs)
+	if len(docs) != 1 || docs[0].ID != inDoc.ID {
+		t.Fatalf("/api/docs = %+v, want only docs/specs/a.md", docs)
+	}
+
+	// /api/docs/{id}: out-of-docs is 404, in-docs is 200.
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/docs/"+outDoc.ID, nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET out-of-docs doc = %d, want 404", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/docs/"+inDoc.ID, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET in-docs doc = %d, want 200", rec.Code)
+	}
+
+	// /api/suggestions/pending omits the out-of-docs doc's pending suggestion.
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/suggestions/pending", nil))
+	var pending []store.PendingSuggestion
+	_ = json.Unmarshal(rec.Body.Bytes(), &pending)
+	if len(pending) != 1 || pending[0].Path != "docs/specs/a.md" {
+		t.Fatalf("/api/suggestions/pending = %+v, want only docs/specs/a.md", pending)
 	}
 }
 

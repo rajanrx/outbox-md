@@ -225,3 +225,91 @@ func TestLoadAgentCmdEmptyFallsBackToDefault(t *testing.T) {
 		t.Fatalf("empty agent_cmd = %q, want fallback to default", got)
 	}
 }
+
+// --- Coverage: the unified docs-union + root-relative-sources predicate ---
+
+// P1 core: docs gate even with an empty sources filter — a key outside the docs
+// list is not covered, a key inside is.
+func TestCoverageGatesOnDocsUnionWithEmptySources(t *testing.T) {
+	cv := Coverage{Docs: []string{"docs/specs"}}
+	if !cv.Covers("docs/specs/a.md") {
+		t.Fatal("docs/specs/a.md must be covered (under the docs union)")
+	}
+	if cv.Covers("other/x.md") {
+		t.Fatal("other/x.md must NOT be covered (outside the docs union)")
+	}
+}
+
+// sources-as-subpath: whole-root docs narrowed by a sources filter serves only
+// the sources subtree — the classic "serve part of a repo" case.
+func TestCoverageSourcesAsSubpath(t *testing.T) {
+	cv := Coverage{Docs: []string{"."}, Sources: []string{"drafts"}}
+	if !cv.Covers("drafts/x.md") {
+		t.Fatal("drafts/x.md must be covered")
+	}
+	if cv.Covers("specs/y.md") {
+		t.Fatal("specs/y.md must NOT be covered (outside the sources filter)")
+	}
+}
+
+// multi-docs union: several docs subtrees, no sources → every subtree served and
+// nothing else.
+func TestCoverageMultiDocsUnion(t *testing.T) {
+	cv := Coverage{Docs: []string{"specs", "api-specs"}}
+	for _, k := range []string{"specs/a.md", "api-specs/b.md"} {
+		if !cv.Covers(k) {
+			t.Fatalf("%s must be covered (in the docs union)", k)
+		}
+	}
+	if cv.Covers("other/c.md") {
+		t.Fatal("other/c.md must NOT be covered (outside every docs subtree)")
+	}
+}
+
+// clean-path semantics: a docs entry "docs" must not spuriously cover a sibling
+// "docsX" (no lexical off-by-one), and a trailing slash is harmless.
+func TestCoverageCleanPathBoundaries(t *testing.T) {
+	cv := Coverage{Docs: []string{"docs/"}}
+	if !cv.Covers("docs/a.md") || !cv.Covers("docs") {
+		t.Fatal("docs and docs/a.md must be covered")
+	}
+	if cv.Covers("docsX/a.md") {
+		t.Fatal("docsX/a.md must NOT be covered by a docs entry (off-by-one)")
+	}
+}
+
+// The docs union AND the sources filter both apply: a key must be under docs AND
+// pass sources.
+func TestCoverageDocsAndSourcesBothApply(t *testing.T) {
+	cv := Coverage{Docs: []string{"docs/specs"}, Sources: []string{"docs/specs/keep"}}
+	if !cv.Covers("docs/specs/keep/a.md") {
+		t.Fatal("docs/specs/keep/a.md must be covered")
+	}
+	if cv.Covers("docs/specs/drop/b.md") {
+		t.Fatal("docs/specs/drop/b.md is under docs but outside sources → not covered")
+	}
+	if cv.Covers("other/x.md") {
+		t.Fatal("other/x.md is outside docs → not covered")
+	}
+}
+
+// Restricted: single-folder whole-root with no filter is the unrestricted fast
+// path; a narrowed docs union or any sources filter makes it restricted, and
+// multi-project is always restricted.
+func TestProjectSourcesRestricted(t *testing.T) {
+	if (ProjectSources{"": Coverage{}}).Restricted() {
+		t.Fatal("single \"\" whole-root, no sources → unrestricted")
+	}
+	if (ProjectSources{"": Coverage{Docs: []string{"."}}}).Restricted() {
+		t.Fatal("single \"\" docs=[.] no sources → unrestricted")
+	}
+	if !(ProjectSources{"": Coverage{Sources: []string{"drafts"}}}).Restricted() {
+		t.Fatal("a sources filter → restricted")
+	}
+	if !(ProjectSources{"": Coverage{Docs: []string{"docs/specs"}}}).Restricted() {
+		t.Fatal("a narrowed docs union → restricted")
+	}
+	if !(ProjectSources{"a": Coverage{}, "b": Coverage{}}).Restricted() {
+		t.Fatal("multi-project → always restricted")
+	}
+}

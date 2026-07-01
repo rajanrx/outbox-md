@@ -3,6 +3,7 @@ package config
 import (
 	"log"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -145,66 +146,134 @@ func Load(dir string) Config {
 	return cfg
 }
 
-// Serves reports whether a doc path (relative to OUTBOX_DIR) is covered by the
-// Sources whitelist, mirroring importMarkdown's semantics so the served set
-// matches the imported set: a plain entry is a folder served recursively (exact
-// match or prefix) or an exact file; an entry with glob metacharacters is
-// matched single-level via filepath.Match. An empty whitelist serves everything.
-// Every read surface (HTTP API and MCP) gates on this, so narrowing Sources
-// hides docs consistently everywhere, not just in the browser.
-func (c Config) Serves(docPath string) bool {
-	if len(c.Sources) == 0 {
+// SourcesMatch reports whether the root-relative key matches the sources
+// whitelist. It is the SINGLE sources-matching predicate shared by import and
+// serve, so the imported set and the served set can never drift: a plain entry
+// is a folder served recursively (exact match or prefix) or an exact file; an
+// entry with glob metacharacters is matched single-level via filepath.Match. An
+// empty whitelist matches everything. The key is always root-relative (the same
+// base as the sources patterns and the document keys), so the pattern is never
+// joined onto a spec dir — import and serve evaluate it against identical input.
+func SourcesMatch(sources []string, key string) bool {
+	if len(sources) == 0 {
 		return true
 	}
-	docPath = filepath.ToSlash(docPath)
-	for _, src := range c.Sources {
+	key = filepath.ToSlash(key)
+	for _, src := range sources {
 		src = strings.TrimSuffix(filepath.ToSlash(strings.TrimSpace(src)), "/")
 		if src == "" {
 			continue
 		}
 		if strings.ContainsAny(src, "*?[") {
-			if ok, _ := filepath.Match(src, docPath); ok {
+			if ok, _ := filepath.Match(src, key); ok {
 				return true
 			}
-		} else if docPath == src || strings.HasPrefix(docPath, src+"/") {
+		} else if key == src || strings.HasPrefix(key, src+"/") {
 			return true
 		}
 	}
 	return false
 }
 
-// ProjectSources maps a served project's name to its loaded Config, so the
-// runtime read guards enforce each project's OWN Sources whitelist against its
-// own documents rather than a single global whitelist. The empty-string key is
-// the single-folder mode (its Config carries the real single-dir Sources). A
-// project absent from the map is treated as NOT served — orphaned documents left
-// behind by a removed project stay hidden on every surface.
-type ProjectSources map[string]Config
+// underDocs reports whether the root-relative key falls under at least one docs
+// subtree. A docs entry of "." (or "") is the whole root and covers everything;
+// an empty docs list is likewise treated as the whole root (backward-compatible
+// with a project that carries only a sources filter). Matching uses clean path
+// semantics so "docs" never spuriously covers "docsX" and a trailing slash on a
+// docs entry is harmless.
+func underDocs(docs []string, key string) bool {
+	if len(docs) == 0 {
+		return true
+	}
+	key = path.Clean(filepath.ToSlash(key))
+	for _, d := range docs {
+		d = path.Clean(filepath.ToSlash(strings.TrimSpace(d)))
+		if d == "." || d == "/" {
+			return true
+		}
+		if key == d || strings.HasPrefix(key, d+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// Serves reports whether a doc path (relative to OUTBOX_DIR) is covered by the
+// Sources whitelist. It is the single-folder / global-config view of the shared
+// SourcesMatch predicate: an empty whitelist serves everything. Every read
+// surface (HTTP API and MCP) ultimately gates on the same predicate, so
+// narrowing Sources hides docs consistently everywhere, not just in the browser.
+func (c Config) Serves(docPath string) bool {
+	return SourcesMatch(c.Sources, docPath)
+}
+
+// Coverage is a project's runtime served set: the UNION of its docs subtrees,
+// optionally narrowed by a sources filter — both root-relative, evaluated
+// against a root-relative document key. It is the ONE predicate that import and
+// serve share, so a document is served iff it would also be imported. Docs comes
+// from the registry (the subtrees a project serves); Sources comes from the
+// project's outbox.yaml. An empty Docs is treated as the whole root; an empty
+// Sources applies no filter.
+type Coverage struct {
+	// Docs is the set of root-relative docs subtrees the project serves. "." (or
+	// "") is the whole root. Empty is treated as the whole root.
+	Docs []string
+	// Sources is the optional root-relative whitelist that further narrows the
+	// docs union. Empty means "no filter" (serve every doc under the docs union).
+	Sources []string
+}
+
+// Covers reports whether the root-relative key is served by this project: the
+// key must be under at least one docs subtree AND pass the sources filter. This
+// is exactly the predicate importMarkdown applies, so the served set equals the
+// imported set (no import/serve drift).
+func (cv Coverage) Covers(key string) bool {
+	return underDocs(cv.Docs, key) && SourcesMatch(cv.Sources, key)
+}
+
+// ProjectSources maps a served project's name to its runtime Coverage, so the
+// read guards enforce each project's OWN docs union and sources whitelist
+// against its own documents rather than a single global whitelist. The
+// empty-string key is single-folder mode (Docs=["."], sources = the real
+// single-dir whitelist). A project absent from the map is treated as NOT served
+// — orphaned documents left behind by a removed project stay hidden everywhere.
+type ProjectSources map[string]Coverage
 
 // Serves reports whether docPath in the named project is inside that project's
-// active whitelist. An unknown project is not served (deny), which hides
-// orphaned docs. A known project with an empty whitelist serves everything,
-// exactly like Config.Serves.
+// coverage (docs union + sources filter). An unknown project is not served
+// (deny), which hides orphaned docs.
 func (m ProjectSources) Serves(project, docPath string) bool {
-	cfg, ok := m[project]
+	cv, ok := m[project]
 	if !ok {
 		return false
 	}
-	return cfg.Serves(docPath)
+	return cv.Covers(docPath)
 }
 
 // Restricted reports whether the sources guards must run at all. It is false
-// only in the classic single-folder mode with no whitelist (exactly one entry,
-// keyed "", with empty Sources) — the original zero-extra-lookup fast path,
-// preserved bit-for-bit. Any configured whitelist, or multi-project mode (where
-// orphaned docs must be hidden), makes it restricted.
+// only in the classic single-folder mode that serves its whole root with no
+// whitelist (exactly one entry, keyed "", whole-root docs, empty Sources) — the
+// original zero-extra-lookup fast path, preserved bit-for-bit. Any configured
+// whitelist, a narrowed docs union, or multi-project mode (where orphaned docs
+// must be hidden) makes it restricted.
 func (m ProjectSources) Restricted() bool {
 	if len(m) != 1 {
 		return true
 	}
-	cfg, ok := m[""]
+	cv, ok := m[""]
 	if !ok {
 		return true
 	}
-	return len(cfg.Sources) > 0
+	if len(cv.Sources) > 0 {
+		return true
+	}
+	// Whole-root docs (empty, or every entry "."/"/") is unrestricted; a narrowed
+	// docs union is a guard.
+	for _, d := range cv.Docs {
+		d = path.Clean(filepath.ToSlash(strings.TrimSpace(d)))
+		if d != "." && d != "/" {
+			return true
+		}
+	}
+	return false
 }

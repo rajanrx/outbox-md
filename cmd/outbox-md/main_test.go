@@ -46,6 +46,38 @@ func importedPaths(t *testing.T, st *store.Store) []string {
 	return out
 }
 
+// writeFileTree writes each rel→content under dir, creating parent folders.
+func writeFileTree(t *testing.T, dir string, files map[string]string) {
+	t.Helper()
+	for rel, content := range files {
+		p := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// sortedDocPaths returns the sorted Path of every doc /api/docs serves through h
+// — the SERVED set, which for a correctly-wired server equals the imported set.
+func sortedDocPaths(t *testing.T, h http.Handler) []string {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/docs", nil))
+	var docs []domain.Document
+	if err := json.Unmarshal(rec.Body.Bytes(), &docs); err != nil {
+		t.Fatalf("decode /api/docs: %v (body=%s)", err, rec.Body.String())
+	}
+	var out []string
+	for _, d := range docs {
+		out = append(out, d.Path)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func eq(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
@@ -113,13 +145,20 @@ func TestImportMarkdownGlobDoesNotRecurseMatchedDirs(t *testing.T) {
 	}
 }
 
-func TestImportMarkdownRejectsEscape(t *testing.T) {
+// Sources are now match-only patterns evaluated against ROOT-RELATIVE keys
+// (never joined onto the filesystem), so a pattern that "escapes" simply matches
+// no walked key: it imports nothing and can never read outside the walk root.
+// The former join-time traversal-rejection error no longer applies.
+func TestImportMarkdownEscapingSourceMatchesNothing(t *testing.T) {
 	dir := t.TempDir()
 	seedTree(t, dir)
 	st, _ := store.Open(":memory:")
 	defer st.Close()
-	if err := importMarkdown(st, "", dir, dir, []string{"../escape"}); err == nil {
-		t.Fatal("expected error for a source escaping OUTBOX_DIR")
+	if err := importMarkdown(st, "", dir, dir, []string{"../escape"}); err != nil {
+		t.Fatalf("escaping source should be a no-op, got error: %v", err)
+	}
+	if got := importedPaths(t, st); len(got) != 0 {
+		t.Fatalf("escaping source imported %v, want nothing", got)
 	}
 }
 
@@ -389,6 +428,48 @@ func TestBuildServerMultiWiresPerProjectSourcesGuard(t *testing.T) {
 	// Sanity: the served file was imported and IS visible (guard isn't hiding all).
 	if len(docs) != 1 || docs[0].Path != "docs/specs/in.md" {
 		t.Fatalf("/api/docs = %+v, want only docs/specs/in.md", docs)
+	}
+}
+
+// P2 (import drift): `add /repo docs/specs` with /repo/outbox.yaml carrying
+// `sources: [docs/specs]` must import /repo/docs/specs/*.md (root-relative
+// sources match — NO double path like docs/specs/docs/specs) and serve exactly
+// that set. A file under a DIFFERENT subtree (not in the docs list) is excluded.
+// The imported set must equal the served set — no import/serve drift.
+func TestBuildServerImportSourcesRootRelativeNoDrift(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", home)
+
+	projDir := t.TempDir()
+	// outbox.yaml sources is root-relative and equals the docs subpath — the exact
+	// shape that used to double-join to docs/specs/docs/specs and import nothing.
+	if err := os.WriteFile(filepath.Join(projDir, "outbox.yaml"),
+		[]byte("sources:\n  - docs/specs\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Two files under the served subtree (one nested) + one under a different
+	// subtree that is NOT in the docs list.
+	writeFileTree(t, projDir, map[string]string{
+		"docs/specs/a.md":        "# a\n",
+		"docs/specs/nested/c.md": "# c\n",
+		"other/b.md":             "# b\n",
+	})
+
+	// add /repo docs/specs → Docs:["docs/specs"].
+	h, stop, err := buildServer(projDir, []registry.Project{
+		{Name: "proj", Root: projDir, Docs: []string{"docs/specs"}},
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+
+	want := []string{"docs/specs/a.md", "docs/specs/nested/c.md"}
+
+	// Imported set: exactly the docs/specs subtree, no double-path, no other/b.md.
+	got := sortedDocPaths(t, h)
+	if !eq(got, want) {
+		t.Fatalf("served/import set = %v, want %v (root-relative sources, no double path, no other subtree)", got, want)
 	}
 }
 
