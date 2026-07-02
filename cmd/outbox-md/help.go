@@ -15,12 +15,14 @@ var commandUsage = map[string]string{
 	"serve": `outbox serve — serve the review UI + MCP endpoint for a folder of .md files.
 
 Usage:
-  outbox serve [-dir <folder>] [-addr <host:port>] [-auto-reply]
+  outbox serve [-dir <folder>] [-addr <host:port>] [-auto-reply] [-logs=<bool>]
 
 Flags:
   -dir          folder of .md files to serve   (default ".",     env OUTBOX_DIR)
   -addr         listen address                 (default ":8181", env OUTBOX_ADDR)
   -auto-reply   spawn the agent CLI in-process on each human comment (opt-in)
+  -logs         print the auto-reply agent's output/thinking stream
+                (default true, env OUTBOX_LOGS; -logs=false ⇒ lifecycle lines only)
 
 When any project is registered (see "outbox add"), serve ignores -dir and serves
 ALL registered projects; switch between them in the UI.
@@ -30,11 +32,12 @@ Examples:
   outbox serve -dir docs              # serve the docs/ folder
   outbox serve -addr :9090            # listen on :9090
   outbox serve -auto-reply            # also run the in-process agent loop
+  outbox serve -auto-reply -logs=false  # agent loop on, quiet (no output stream)
 `,
 	"up": `outbox up — serve, then open the browser at the review UI.
 
 Usage:
-  outbox up [-dir <folder>] [-addr <host:port>] [-auto-reply]
+  outbox up [-dir <folder>] [-addr <host:port>] [-auto-reply] [-logs=<bool>]
 
 Same flags as "outbox serve". "up" also does a best-effort self-update before
 binding the port (disable with auto_update: false / OUTBOX_AUTO_UPDATE=false).
@@ -43,6 +46,7 @@ Examples:
   outbox up                           # serve ./ and open the browser
   outbox up -dir docs -addr :9090     # serve docs/ on :9090 and open it
   outbox up -auto-reply               # open the UI with the agent loop on
+  outbox up -logs=false               # start quietly (no agent output stream)
 `,
 	"init": `outbox init — scaffold outbox.yaml + register the MCP with detected AI clients.
 
@@ -98,6 +102,24 @@ Examples:
   outbox remove                       # pick docs/projects to remove from a list
   outbox remove app                   # remove the whole project named "app"
   outbox remove ~/work/app            # remove the whole project rooted there
+`,
+	"retry": `outbox retry — re-queue stranded (claimed-but-unfinished) comments back to open.
+
+Usage:
+  outbox retry [project]
+
+Resets every 'claimed' comment back to 'open' (clearing its claim), so it
+re-enters the agent work set. A running server picks the re-queued comments up on
+its next trigger or startup sweep; a stopped server processes them on next boot.
+It operates on the review database directly, so it works whether or not the
+server is running.
+
+  (no arg)      re-queue ALL registered projects (single-folder mode: the served dir)
+  <project>     re-queue only that registered project (multi-project mode)
+
+Examples:
+  outbox retry                        # re-queue every project's stranded comments
+  outbox retry app                    # re-queue only the project named "app"
 `,
 	"list": `outbox list — list registered projects (alias: outbox projects).
 
@@ -185,6 +207,7 @@ Commands (with a one-line example each):
   add        Register a project (root + docs...)     outbox add ~/work/app docs/specs
   remove     Unregister projects/docs (multiselect)  outbox remove
   list       List registered projects (a: projects) outbox list
+  retry      Re-queue stranded claimed comments      outbox retry
   paths      Print outbox's on-disk locations        outbox paths
   settings   View/change outbox.yaml fields          outbox settings auto_reply true
   upgrade    Self-update to the latest release       outbox upgrade

@@ -242,3 +242,72 @@ func TestListOpenCommentsFreshClaimNotResurfaced(t *testing.T) {
 		t.Fatal("an aged, un-heart-beated claim must be recovered")
 	}
 }
+
+// TestRequeueClaimedCommentsForProject: the `outbox retry` primitive resets a
+// project's claimed comments to open, clearing the claim fields, and reports the
+// count. Comments in OTHER projects and non-claimed comments are untouched.
+func TestRequeueClaimedCommentsForProject(t *testing.T) {
+	s, _ := Open(":memory:")
+	defer s.Close()
+
+	docA, _, _ := s.CreateDocumentInProject("alpha", "a.md", "hello", "human")
+	docB, _, _ := s.CreateDocumentInProject("beta", "b.md", "hello", "human")
+
+	// Two claimed + one open in alpha; one claimed in beta.
+	c1, _ := s.CreateComment(domain.Comment{DocID: docA.ID, Status: domain.CommentOpen, AuthorIdentity: "h", Owner: "h"})
+	c2, _ := s.CreateComment(domain.Comment{DocID: docA.ID, Status: domain.CommentOpen, AuthorIdentity: "h", Owner: "h"})
+	cOpen, _ := s.CreateComment(domain.Comment{DocID: docA.ID, Status: domain.CommentOpen, AuthorIdentity: "h", Owner: "h"})
+	cBeta, _ := s.CreateComment(domain.Comment{DocID: docB.ID, Status: domain.CommentOpen, AuthorIdentity: "h", Owner: "h"})
+
+	// Claim c1, c2 (alpha) and cBeta (beta) — stamps claim_token + claimed_at, and
+	// give c1 a processing hint so we can confirm it is cleared.
+	if err := s.UpdateCommentStatus(c1.ID, domain.CommentClaimed, "tok-a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateCommentStatus(c2.ID, domain.CommentClaimed, "tok-a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateCommentStatus(cBeta.ID, domain.CommentClaimed, "tok-b"); err != nil {
+		t.Fatal(err)
+	}
+	until := time.Now().Add(time.Minute)
+	if err := s.SetProcessingUntil(c1.ID, &until); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := s.RequeueClaimedCommentsForProject("alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("re-queued %d in alpha, want 2", n)
+	}
+
+	// c1, c2 are back to open with the claim fully cleared.
+	for _, id := range []string{c1.ID, c2.ID} {
+		got, err := s.GetComment(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Status != domain.CommentOpen {
+			t.Fatalf("comment %s status = %q, want open", id, got.Status)
+		}
+		if got.ClaimToken != "" || got.ProcessingUntil != nil || got.ClaimedAt != nil {
+			t.Fatalf("comment %s claim not cleared: token=%q processing=%v claimedAt=%v",
+				id, got.ClaimToken, got.ProcessingUntil, got.ClaimedAt)
+		}
+	}
+
+	// The already-open comment is unaffected; beta's claimed comment is untouched.
+	if got, _ := s.GetComment(cOpen.ID); got.Status != domain.CommentOpen {
+		t.Fatalf("pre-open comment status = %q, want open", got.Status)
+	}
+	if got, _ := s.GetComment(cBeta.ID); got.Status != domain.CommentClaimed || got.ClaimToken != "tok-b" {
+		t.Fatalf("beta comment = %q token=%q, want claimed tok-b (untouched)", got.Status, got.ClaimToken)
+	}
+
+	// Re-queuing a project with no claimed comments reports 0.
+	if n, err := s.RequeueClaimedCommentsForProject("alpha"); err != nil || n != 0 {
+		t.Fatalf("second retry = %d, %v; want 0, nil", n, err)
+	}
+}

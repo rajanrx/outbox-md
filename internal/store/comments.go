@@ -143,6 +143,26 @@ func (s *Store) UpdateCommentStatus(id string, status domain.CommentStatus, clai
 	return err
 }
 
+// RequeueClaimedCommentsForProject resets every 'claimed' comment in project
+// back to 'open', clearing the claim (token, processing hint, claimed_at) so the
+// comment re-enters the agent work set immediately. It is the store primitive
+// behind `outbox retry`: a claimed-but-unfinished comment is by definition not
+// done, so re-queuing all claims for a project is safe. It returns how many rows
+// were re-queued. claim_token is cleared to ” (not NULL) because scanComment
+// reads it as a plain string; the timestamps are nulled so a fresh claim
+// re-stamps them. The empty project name targets single-folder-mode comments.
+func (s *Store) RequeueClaimedCommentsForProject(project string) (int, error) {
+	res, err := s.DB.Exec(
+		`UPDATE comments SET status=?, claim_token='', processing_until=NULL, claimed_at=NULL
+		 WHERE status=? AND doc_id IN (SELECT id FROM documents WHERE project=?)`,
+		domain.CommentOpen, domain.CommentClaimed, project)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
+}
+
 func (s *Store) UpdateCommentAnchor(id string, a domain.Anchor, status domain.CommentStatus) error {
 	_, err := s.DB.Exec(`UPDATE comments SET anchor_start=?, anchor_end=?, status=? WHERE id=?`,
 		a.Start, a.End, status, id)
