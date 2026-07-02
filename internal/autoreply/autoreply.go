@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"log"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -107,6 +108,48 @@ type CommentRef struct {
 	// Thread is the human's feedback, pre-formatted (author: body per line), since
 	// members cannot fetch it themselves from a claimed comment.
 	Thread string
+}
+
+// CouncilTurn is one recorded council candidate as the engine sees it — the
+// autoreply-package view of a domain.Candidate (kept domain-free so this package
+// never imports the service/domain candidate shape). It is the position the
+// discussion loop injects into a member's prompt and diffs across rounds.
+type CouncilTurn struct {
+	// ID is the candidate id (used for citations if a member references it).
+	ID string
+	// AgentIdentity is the member that recorded this candidate (member-N).
+	AgentIdentity string
+	// Round is the pass the candidate belongs to: 0 = blind take, >=1 = a revision.
+	Round int
+	// Lens is the review lens the member judged through.
+	Lens string
+	// Verdict is the member's stance: edit | reply | reject_comment.
+	Verdict string
+	// Content is the full replacement content (set iff verdict == edit).
+	Content string
+	// Rationale is the member's reasoning.
+	Rationale string
+}
+
+// CouncilMessage is one recorded discussion-transcript message as the engine sees
+// it — the autoreply-package view of a domain.DiscussionMessage.
+type CouncilMessage struct {
+	// Round is the discussion round the message belongs to (>=1).
+	Round int
+	// AgentIdentity is the member that posted the message.
+	AgentIdentity string
+	// Body is the message text (concur / dissent / revise).
+	Body string
+}
+
+// CouncilSnapshot is the transcript the engine reads between rounds: every
+// recorded candidate (round-by-round) plus every discussion message. The engine
+// injects it into each member's next-round prompt and diffs consecutive snapshots
+// to decide the mechanical early-exit. Config.CouncilState fills it (a thin
+// wrapper over the service's ListCandidates), keeping this package domain-free.
+type CouncilSnapshot struct {
+	Candidates []CouncilTurn
+	Discussion []CouncilMessage
 }
 
 // Target is a project's auto-reply destination: the cwd the agent is spawned in
@@ -226,6 +269,33 @@ type Config struct {
 	// HeartbeatInterval is the council heartbeat period. Zero ⇒
 	// DefaultHeartbeatInterval (60s), which is < the 180s TTL.
 	HeartbeatInterval time.Duration
+
+	// CouncilState reads the council transcript for a comment right now — every
+	// recorded candidate (round-by-round) plus the discussion messages. It is the
+	// seam the discussion loop drives: the engine injects the returned snapshot into
+	// each member's next-round prompt and diffs consecutive snapshots for the
+	// mechanical early-exit. Wraps svc.ListCandidates, mapping the domain view to the
+	// package-local CouncilSnapshot. Nil ⇒ the discussion rounds are DISABLED and a
+	// council runs exactly as before (round-0 blind reviews → chair), so a Config
+	// that wires the other council seams but not this one keeps today's behaviour.
+	CouncilState func(commentID string) (CouncilSnapshot, error)
+	// CouncilRounds is the max number of discussion rounds after the blind round 0
+	// (early-exit may stop sooner). <=1 clamps to 1 when CouncilState is wired, so a
+	// wired council always pays at most round-1 cost even on a zero value. Populated
+	// from config.ResolveCouncilRounds() in buildServer.
+	CouncilRounds int
+	// CouncilBudget is the per-council token budget guardrail. The engine cannot see
+	// a spawned CLI's real token use, so it approximates the budget as a bounded
+	// member-spawn cap (budget / an approx per-spawn cost); once starting a round
+	// would exceed it the round is skipped and logged (never a silent truncation).
+	// <=0 ⇒ no budget cap (CouncilRounds is then the only bound). Populated from
+	// config.ResolveCouncilBudget().
+	CouncilBudget int
+	// CouncilDeadlockThreshold is the confidence percentage (0..100) below which the
+	// chair should flag the verdict as low-confidence. It is passed into the chair
+	// prompt only; the deadlock/no-consensus ranked-options flow is a later slice
+	// (2B). Populated from config.ResolveCouncilDeadlockThreshold().
+	CouncilDeadlockThreshold int
 }
 
 // Engine implements webhook.Notifier. It routes each triggering event to a
@@ -256,6 +326,13 @@ type Engine struct {
 	openComments      func(project string) ([]CommentRef, error)
 	heartbeat         func(commentID, token string) error
 	heartbeatInterval time.Duration
+	// councilState reads the transcript between rounds (nil ⇒ discussion disabled).
+	councilState func(commentID string) (CouncilSnapshot, error)
+	// councilRounds/Budget/Deadlock configure the discussion loop; copied into each
+	// council project's councilConfig in runnerFor.
+	councilRounds   int
+	councilBudget   int
+	councilDeadlock int
 
 	// ctx is the engine-wide lifecycle context; cancel (via Close) stops in-flight
 	// retry backoff and prevents a retry loop from spanning a shutdown.
@@ -293,6 +370,10 @@ func New(cfg Config) *Engine {
 		openComments:      cfg.OpenComments,
 		heartbeat:         cfg.Heartbeat,
 		heartbeatInterval: cfg.HeartbeatInterval,
+		councilState:      cfg.CouncilState,
+		councilRounds:     cfg.CouncilRounds,
+		councilBudget:     cfg.CouncilBudget,
+		councilDeadlock:   cfg.CouncilDeadlockThreshold,
 		ctx:               ctx,
 		cancel:            cancel,
 		runners:           make(map[string]*runner),
@@ -465,11 +546,20 @@ func (e *Engine) runnerFor(project string) *runner {
 	// wired, runs the council instead of the single-agent spawn. Otherwise the
 	// runner keeps the single-agent path bit-for-bit.
 	if t, ok := e.targets[project]; ok && t.isCouncil() && e.councilEnabled() {
-		r.council = &councilConfig{members: t.Members, chair: strings.TrimSpace(t.Chair)}
+		r.council = &councilConfig{
+			members:  t.Members,
+			chair:    strings.TrimSpace(t.Chair),
+			rounds:   e.councilRounds,
+			budget:   e.councilBudget,
+			deadlock: e.councilDeadlock,
+		}
 		r.claim = e.claim
 		r.heartbeat = e.heartbeat
 		r.heartbeatInterval = e.heartbeatInterval
 		r.openComments = func() ([]CommentRef, error) { return e.openComments(project) }
+		// councilState is comment-scoped (not project-bound), so it forwards directly.
+		// Nil ⇒ the discussion loop is skipped and the council runs as before.
+		r.councilState = e.councilState
 	}
 	e.runners[project] = r
 	return r
@@ -509,6 +599,9 @@ type runner struct {
 	openComments      func() ([]CommentRef, error)
 	heartbeat         func(commentID, token string) error
 	heartbeatInterval time.Duration
+	// councilState reads the transcript between discussion rounds. Nil ⇒ the
+	// discussion loop is skipped (round-0 blind reviews → chair, exactly as before).
+	councilState func(commentID string) (CouncilSnapshot, error)
 
 	mu      sync.Mutex
 	timer   *time.Timer
@@ -517,10 +610,18 @@ type runner struct {
 }
 
 // councilConfig holds a project's council members and chair (immutable for the
-// runner's lifetime).
+// runner's lifetime), plus the discussion-loop knobs (rounds/budget/deadlock)
+// copied from the engine config.
 type councilConfig struct {
 	members []string
 	chair   string
+	// rounds is the max discussion rounds after round 0 (early-exit may stop sooner).
+	rounds int
+	// budget is the per-council token budget guardrail, approximated as a member-spawn
+	// cap in the loop. <=0 ⇒ no budget cap.
+	budget int
+	// deadlock is the confidence threshold passed into the chair prompt (0..100).
+	deadlock int
 }
 
 // pending work count for this runner's project; 0 when no counter is wired (the
@@ -691,31 +792,56 @@ func (r *runner) councilPass() {
 
 // runCouncilForComment runs the full council over one claimed comment: it keeps
 // the comment marked processing for the WHOLE run (heartbeat), fans the members
-// out concurrently (bounded by concurrency) and JOINS them, then spawns the chair.
-// The heartbeat spanning members AND the chair is the double-council guard — a run
-// of N members then a chair, sequential, can exceed the processing TTL, so the
-// engine (not the members) heartbeats on a ticker for the entire duration.
+// out concurrently (bounded by concurrency) for the blind round 0, JOINS them,
+// then drives the bounded discussion rounds (each a fresh joined fan-out with the
+// transcript injected), and finally spawns the chair. The heartbeat spanning every
+// round AND the chair is the double-council guard — a multi-round run then a chair,
+// sequential, can far exceed the processing TTL, so the engine (not the members)
+// heartbeats on a ticker for the entire duration (the loop stays inside the
+// defer stopHeartbeat() scope, so a long run never goes stale).
 func (r *runner) runCouncilForComment(cr CommentRef, token string) {
 	commentID := cr.ID
 	stopHeartbeat := r.startHeartbeat(commentID, token)
 	defer stopHeartbeat()
 
-	members := r.council.members
-	n := len(members)
+	n := len(r.council.members)
 
-	// Fan the members out concurrently, bounded by the pool size. A semaphore caps
-	// in-flight spawns at concurrency (1 ⇒ serial); the WaitGroup joins ALL members
-	// before the chair runs.
+	// Round 0: independent, BLIND reviews (round omitted ⇒ 0). Each member sees only
+	// the comment context, not the others — exactly as before.
+	r.spawnMemberWave(func(i int) string {
+		return councilMemberPrompt(cr, token, councilMemberIdentity(i), councilLens(i, n))
+	})
+	spawns := n
+
+	// Bounded discussion rounds — only when the transcript seam is wired. Without
+	// CouncilState the engine cannot inject the other members' positions, so the
+	// council degrades to the pre-2A-2 behaviour (blind round → chair). This gate is
+	// what keeps the existing (non-CouncilState) council runs bit-for-bit unchanged.
+	if r.councilState != nil {
+		r.runDiscussionRounds(cr, token, n, &spawns)
+	}
+
+	// Chair after the loop: it reads the full round-by-round transcript (list_candidates
+	// now carries every round) and records the single verdict, flagging low confidence
+	// below the deadlock threshold. The ranked-options deadlock flow is a later slice.
+	r.spawnCouncil(r.council.chair, councilChairPrompt(cr, token, councilChairIdentity, r.council.deadlock))
+}
+
+// spawnMemberWave fans the council members out concurrently for ONE round and
+// joins them. promptFor(i) builds member i's prompt (round 0 blind take, or a
+// discussion-round prompt with the transcript). A semaphore caps in-flight spawns
+// at the pool size (concurrency; 1 ⇒ serial); the WaitGroup joins ALL members
+// before it returns, so the next round — or the chair — only starts after the
+// whole wave has finished.
+func (r *runner) spawnMemberWave(promptFor func(i int) string) {
 	limit := r.concurrency
 	if limit < 1 {
 		limit = 1
 	}
 	sem := make(chan struct{}, limit)
 	var wg sync.WaitGroup
-	for i, memberCmd := range members {
-		lens := councilLens(i, n)
-		identity := councilMemberIdentity(i)
-		prompt := councilMemberPrompt(cr, token, identity, lens)
+	for i, memberCmd := range r.council.members {
+		prompt := promptFor(i)
 		wg.Add(1)
 		sem <- struct{}{}
 		go func(cmd, p string) {
@@ -725,9 +851,75 @@ func (r *runner) runCouncilForComment(cr CommentRef, token string) {
 		}(memberCmd, prompt)
 	}
 	wg.Wait()
+}
 
-	// Chair after the join: it reads the candidates and records the single verdict.
-	r.spawnCouncil(r.council.chair, councilChairPrompt(cr, token, councilChairIdentity))
+// runDiscussionRounds drives the bounded, mechanical discussion loop between round
+// 0 and the chair. Each round re-spawns every member (joined) with a NEW prompt
+// embedding the transcript — the OTHER members' latest positions, the prior
+// discussion, and the member's own prior take — instructing them to respond via
+// submit_discussion and, if they change their mind, re-submit_review with round=r.
+//
+// It stops early the moment a round produces no change (no member changed its
+// verdict or its edit-content vs the previous snapshot) — so a unanimous case pays
+// exactly one discussion round while a contested one uses the full allowance. It is
+// hard-bounded by rounds (>=1 when wired) and by a budget-derived spawn cap: token
+// budgets aren't visible from spawned CLIs, so the budget is approximated as a
+// member-spawn cap and a round skipped for budget is LOGGED (never silent). spawns
+// accumulates the member spawns for this comment (starting at the round-0 n).
+func (r *runner) runDiscussionRounds(cr CommentRef, token string, n int, spawns *int) {
+	commentID := cr.ID
+	rounds := r.council.rounds
+	if rounds < 1 {
+		rounds = 1 // a wired council always pays at least round-1 cost
+	}
+	budgetCap := r.councilSpawnBudget()
+
+	// prev holds the positions the next round reacts to — after round 0 to start.
+	prev, err := r.councilState(commentID)
+	if err != nil {
+		log.Printf("auto-reply: council transcript read for %s failed, skipping discussion: %v", commentID, err)
+		return
+	}
+	for round := 1; round <= rounds; round++ {
+		if budgetCap > 0 && *spawns+n > budgetCap {
+			log.Printf("auto-reply: council budget cap reached for %s (%d member spawns, cap %d) — skipping round %d and proceeding to chair",
+				commentID, *spawns, budgetCap, round)
+			return
+		}
+		snapshot := prev
+		r.spawnMemberWave(func(i int) string {
+			identity := councilMemberIdentity(i)
+			transcript := formatCouncilTranscript(snapshot, identity)
+			return councilDiscussionPrompt(cr, token, identity, councilLens(i, n), round, transcript)
+		})
+		*spawns += n
+
+		cur, err := r.councilState(commentID)
+		if err != nil {
+			log.Printf("auto-reply: council transcript read for %s failed after round %d, ending discussion: %v", commentID, round, err)
+			return
+		}
+		if !councilPositionsChanged(prev, cur) {
+			return // stable/consensus — no member moved, so further rounds are wasted
+		}
+		prev = cur
+	}
+}
+
+// councilSpawnBudget converts the per-council token budget into a bounded member-
+// spawn cap (budget / an approximate per-spawn cost). A spawned CLI's real token
+// use is invisible to the engine, so this is a deliberate approximation, floored at
+// 1 so a positive budget always permits at least one spawn. <=0 budget ⇒ 0, meaning
+// no budget cap (rounds is then the only bound).
+func (r *runner) councilSpawnBudget() int {
+	if r.council == nil || r.council.budget <= 0 {
+		return 0
+	}
+	cap := r.council.budget / councilApproxTokensPerSpawn
+	if cap < 1 {
+		cap = 1
+	}
+	return cap
 }
 
 // startHeartbeat fires one immediate mark_processing (svc.Claim sets claimed_at but
@@ -798,6 +990,13 @@ func (r *runner) spawnCouncil(agentCmd, prompt string) {
 	}
 }
 
+// councilApproxTokensPerSpawn is the engine's rough estimate of the token cost of
+// one member spawn, used ONLY to turn the configured token budget into a bounded
+// member-spawn cap (a spawned CLI's real usage is invisible to the engine). It is
+// intentionally coarse: the hard bound on cost is the rounds count; the budget cap
+// is a secondary guardrail that logs when it trips.
+const councilApproxTokensPerSpawn = 8000
+
 // councilLenses cycles the six §4 review lenses in a stable order. Member i is
 // assigned councilLenses[i % 6], EXCEPT the last member, which is forced to the
 // skeptic lens so every council always covers the skeptic (see councilLens).
@@ -850,14 +1049,48 @@ Do exactly this, in order:
 Do NOT claim, propose_suggestion, reply_in_thread, resolve, accept, or approve — the chair synthesises and the human decides. Submit exactly one review, then stop.`
 
 // councilChairGuidance is the chair prompt template. [1]=commentId, [2]=token,
-// [3]=identity, [4]=docId.
+// [3]=identity, [4]=docId, [5]=deadlockThreshold. list_candidates now carries the
+// full round-by-round transcript (blind round 0 + every discussion revision), so
+// the chair weighs how positions MOVED, not just the first takes.
 const councilChairGuidance = `You are the council chair (identity "%[3]s") for outbox comment %[1]s on document %[4]s.
 Do exactly this, in order:
-1. list_candidates(commentId="%[1]s") — read every member's verdict, rationale, and proposed content for this comment. (Optionally read_doc(docId="%[4]s") for the surrounding text.)
-2. Synthesise STRICTLY from the candidates list_candidates returned — nothing else. A member that recorded no candidate did NOT participate: do NOT invent, quote, count, or attribute a position to it, and do NOT claim unanimity or "no dissent" when only some members reported. If N members were expected but fewer recorded, base the verdict on those present and say so. Weigh agreement against dissent, name where the recorded members AGREE and where they DIVERGE, and decide the single best outcome. Anti-sycophancy: the majority is not automatically right.
+1. list_candidates(commentId="%[1]s") — read every member's verdict, rationale, and proposed content for this comment, ACROSS ALL ROUNDS (round 0 is the blind take; round >=1 is a revised position from the discussion), plus the discussion transcript. (Optionally read_doc(docId="%[4]s") for the surrounding text.)
+2. Synthesise STRICTLY from what list_candidates returned — nothing else. Use each member's LATEST-round candidate as its final position, and note where the discussion moved a member. A member that recorded no candidate did NOT participate: do NOT invent, quote, count, or attribute a position to it, and do NOT claim unanimity or "no dissent" when only some members reported. If N members were expected but fewer recorded, base the verdict on those present and say so. Weigh agreement against dissent, name where the recorded members AGREE and where they DIVERGE, and decide the single best outcome. Anti-sycophancy: the majority is not automatically right.
 3. Record the verdict with ONE call:
    record_synthesis(commentId="%[1]s", token="%[2]s", content="the synthesised FULL replacement content — set iff the verdict is an edit, EMPTY for a no-edit (reply/reject) outcome", dissent="the strongest dissenting view, or empty", agreementScore=<0..1>, confidence=<0..100>, agentIdentity="%[3]s")
+   Set confidence honestly: if it is below %[5]d (the deadlock threshold) the verdict is low-confidence — say so plainly in dissent rather than overstating agreement. (Do NOT attempt a ranked-options / no-consensus pick here; just flag it.)
 record_synthesis is single-shot: it emits the human-facing suggestion (edit) or a chair reply (no edit). Do NOT resolve, accept, or approve. Record exactly one synthesis, then stop.`
+
+// councilDiscussionGuidance is the discussion-round member prompt template. Explicit
+// argument indices (%[n]) keep substitution order-independent: [1]=commentId,
+// [2]=lens, [3]=token, [4]=identity, [5]=docId, [6]=excerpt, [7]=thread, [8]=round,
+// [9]=transcript. The transcript (other members' latest positions + prior discussion
+// + this member's own prior take) is embedded because a claimed comment is hidden
+// from the MCP list tools AND members cannot read each other's candidates via MCP —
+// the engine injects it, exactly like the doc-context fix.
+const councilDiscussionGuidance = `You are council member "%[4]s" in discussion round %[8]d for outbox comment %[1]s on document %[5]s, judging through the "%[2]s" lens.
+
+The human flagged this excerpt:
+"""
+%[6]s
+"""
+Their feedback (the thread):
+"""
+%[7]s
+"""
+The council so far — the other members' latest positions, your own prior position, and the discussion up to now:
+"""
+%[9]s
+"""
+Do exactly this, in order:
+1. read_doc(docId="%[5]s") — re-read the current document if you need the surrounding context.
+2. Weigh the OTHER members' positions against your own, through the %[2]s lens. Anti-sycophancy: concur only where the evidence warrants; hold your ground when it does. Do not cave to the majority for its own sake.
+3. Record your response with ONE call, naming who you respond to:
+   submit_discussion(commentId="%[1]s", token="%[3]s", round=%[8]d, body="concur / dissent / revise — say which member(s) you address and why", refs=[{"kind":"member","targetId":"<the member identity or candidate id you respond to>"}], agentIdentity="%[4]s")
+4. ONLY if the discussion changed your mind, ALSO revise your candidate for THIS round:
+   submit_review(commentId="%[1]s", token="%[3]s", round=%[8]d, lens="%[2]s", verdict="edit|reply|reject_comment", rationale="your updated reasoning", content="the FULL replacement document content — REQUIRED iff verdict=edit, EMPTY otherwise", agentIdentity="%[4]s")
+   If your position is unchanged, do NOT call submit_review — your round-%[8]d discussion message alone stands (that is how the council reaches an early consensus).
+Do NOT claim, propose_suggestion, reply_in_thread, resolve, accept, or approve — the chair synthesises and the human decides. Post exactly one discussion message (and at most one revised review), then stop.`
 
 // councilMemberPrompt builds member i's prompt for one comment/run, embedding the
 // doc id + flagged excerpt + thread so the member has full context without MCP.
@@ -865,9 +1098,151 @@ func councilMemberPrompt(cr CommentRef, token, identity, lens string) string {
 	return fmt.Sprintf(councilMemberGuidance, cr.ID, lens, token, identity, cr.DocID, cr.Excerpt, cr.Thread)
 }
 
-// councilChairPrompt builds the chair's prompt for one comment/run.
-func councilChairPrompt(cr CommentRef, token, identity string) string {
-	return fmt.Sprintf(councilChairGuidance, cr.ID, token, identity, cr.DocID)
+// councilChairPrompt builds the chair's prompt for one comment/run, embedding the
+// deadlock threshold so the chair flags a low-confidence verdict (the ranked-options
+// pick flow is a later slice, so only the flag is threaded here).
+func councilChairPrompt(cr CommentRef, token, identity string, deadlock int) string {
+	return fmt.Sprintf(councilChairGuidance, cr.ID, token, identity, cr.DocID, deadlock)
+}
+
+// councilDiscussionPrompt builds member i's discussion-round prompt for one comment,
+// embedding the doc context AND the injected transcript (other members' latest
+// positions + prior discussion + this member's own prior take).
+func councilDiscussionPrompt(cr CommentRef, token, identity, lens string, round int, transcript string) string {
+	return fmt.Sprintf(councilDiscussionGuidance, cr.ID, lens, token, identity, cr.DocID, cr.Excerpt, cr.Thread, round, transcript)
+}
+
+// latestPositions reduces a snapshot's candidates to each member's LATEST position
+// (highest round; ties resolve to the last recorded), keyed by agent identity. It
+// is the basis for both the transcript ("other members' latest positions") and the
+// early-exit diff ("did any member's verdict/content change this round").
+func latestPositions(snap CouncilSnapshot) map[string]CouncilTurn {
+	latest := make(map[string]CouncilTurn, len(snap.Candidates))
+	for _, c := range snap.Candidates {
+		if cur, ok := latest[c.AgentIdentity]; !ok || c.Round >= cur.Round {
+			latest[c.AgentIdentity] = c
+		}
+	}
+	return latest
+}
+
+// councilPositionsChanged reports whether any member's LATEST position moved from
+// prev to cur — a new/dropped member, or a changed verdict or edit-content. It is
+// the mechanical (non-LLM) early-exit signal: a round that leaves every member's
+// verdict AND edit-content unchanged (a member may post a discussion message
+// without re-submitting a review) means the council has stabilised.
+func councilPositionsChanged(prev, cur CouncilSnapshot) bool {
+	p := latestPositions(prev)
+	c := latestPositions(cur)
+	if len(p) != len(c) {
+		return true
+	}
+	for id, cc := range c {
+		pp, ok := p[id]
+		if !ok {
+			return true
+		}
+		if pp.Verdict != cc.Verdict || pp.Content != cc.Content {
+			return true
+		}
+	}
+	return false
+}
+
+// formatCouncilTranscript renders the snapshot into the block injected into member
+// `self`'s next-round prompt: its own prior position, the other members' latest
+// positions, and the discussion so far. Identities are sorted for a stable prompt
+// (prompt-cache friendly and deterministic in tests).
+func formatCouncilTranscript(snap CouncilSnapshot, self string) string {
+	latest := latestPositions(snap)
+	var b strings.Builder
+
+	if p, ok := latest[self]; ok {
+		fmt.Fprintf(&b, "Your prior position (round %d, %s lens): verdict=%s — %s\n", p.Round, p.Lens, p.Verdict, oneLine(p.Rationale))
+		if p.Verdict == domain.VerdictEdit {
+			fmt.Fprintf(&b, "  your proposed edit [candidate %s]:\n%s\n", p.ID, indentBlock(councilEditExcerpt(p.Content)))
+		}
+	} else {
+		b.WriteString("Your prior position: (none recorded)\n")
+	}
+
+	b.WriteString("\nOther members' latest positions:\n")
+	others := 0
+	for _, id := range sortedIdentities(latest) {
+		if id == self {
+			continue
+		}
+		p := latest[id]
+		fmt.Fprintf(&b, "- %s (%s lens): verdict=%s — %s\n", id, p.Lens, p.Verdict, oneLine(p.Rationale))
+		if p.Verdict == domain.VerdictEdit {
+			// Show the ACTUAL proposed replacement (bounded), not a placeholder —
+			// members cannot call list_candidates, so without this they would
+			// concur/dissent on an edit they cannot see. The candidate id lets them
+			// cite it in submit_discussion.
+			fmt.Fprintf(&b, "    proposed edit [candidate %s]:\n%s\n", p.ID, indentBlock(councilEditExcerpt(p.Content)))
+		}
+		others++
+	}
+	if others == 0 {
+		b.WriteString("- (no other members recorded a position yet)\n")
+	}
+
+	if len(snap.Discussion) > 0 {
+		b.WriteString("\nDiscussion so far:\n")
+		for _, m := range snap.Discussion {
+			fmt.Fprintf(&b, "- [round %d] %s: %s\n", m.Round, m.AgentIdentity, oneLine(m.Body))
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// sortedIdentities returns the map's identities in a stable (lexical) order.
+func sortedIdentities(m map[string]CouncilTurn) []string {
+	ids := make([]string, 0, len(m))
+	for id := range m {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// oneLine collapses whitespace and bounds a rationale/body to a short single line so
+// the injected transcript stays compact (the full content lives in the store; the
+// prompt only needs a legible summary of each position).
+func oneLine(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	const max = 240
+	// Truncate on a rune boundary — LLM free-text is UTF-8 and a byte slice could
+	// cut mid-rune, emitting a broken character into the prompt.
+	if r := []rune(s); len(r) > max {
+		return string(r[:max]) + "…"
+	}
+	return s
+}
+
+// councilEditExcerpt renders a member's proposed edit content for the discussion
+// transcript. Unlike oneLine it PRESERVES line structure (an edit is a document, so
+// its shape matters to a reviewer), and bounds the size so a large document doesn't
+// blow the prompt — rune-safe, with a truncation marker naming the full length.
+func councilEditExcerpt(content string) string {
+	const max = 800
+	if content == "" {
+		return "(empty)"
+	}
+	if r := []rune(content); len(r) > max {
+		return string(r[:max]) + fmt.Sprintf("\n…(truncated; %d chars total)", len(r))
+	}
+	return content
+}
+
+// indentBlock indents every line of s by four spaces so an embedded block (e.g. a
+// proposed edit) reads as a distinct, quoted section inside the transcript.
+func indentBlock(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		lines[i] = "    " + l
+	}
+	return strings.Join(lines, "\n")
 }
 
 // waveSize is how many agent runs to launch in one wave. It is bounded by the

@@ -605,6 +605,22 @@ func autoReplyNotifier(root string, projects []registry.Project, cfg config.Conf
 			_, err := svc.MarkProcessing(commentID, token, 0)
 			return err
 		},
+		// Discussion-round knobs (roadmap §3 2A-2): bounded discussion rounds between
+		// the blind round 0 and the chair. CouncilState reads the transcript the engine
+		// injects into each next-round member prompt and diffs for the mechanical
+		// early-exit; rounds/budget/deadlock come from the resolved config. CouncilState
+		// being wired is what turns the discussion loop ON — without it the council runs
+		// the pre-2A-2 blind-round→chair path unchanged.
+		CouncilState: func(commentID string) (autoreply.CouncilSnapshot, error) {
+			view, err := svc.ListCandidates(commentID)
+			if err != nil {
+				return autoreply.CouncilSnapshot{}, err
+			}
+			return councilSnapshotFromView(view), nil
+		},
+		CouncilRounds:            cfg.ResolveCouncilRounds(),
+		CouncilBudget:            cfg.ResolveCouncilBudget(),
+		CouncilDeadlockThreshold: cfg.ResolveCouncilDeadlockThreshold(),
 	})
 }
 
@@ -612,6 +628,36 @@ func autoReplyNotifier(root string, projects []registry.Project, cfg config.Conf
 // under (one council-run per comment; distinct member/chair identities travel in
 // the prompts, not the claim).
 const councilAgentID = "council"
+
+// councilSnapshotFromView maps the service's CouncilView (domain candidates +
+// discussion messages) onto the autoreply package's domain-free CouncilSnapshot —
+// the transcript the discussion loop injects and diffs. It carries every recorded
+// candidate (round-by-round) and every discussion message, in submission order.
+func councilSnapshotFromView(view service.CouncilView) autoreply.CouncilSnapshot {
+	snap := autoreply.CouncilSnapshot{
+		Candidates: make([]autoreply.CouncilTurn, 0, len(view.Candidates)),
+		Discussion: make([]autoreply.CouncilMessage, 0, len(view.Discussion)),
+	}
+	for _, c := range view.Candidates {
+		snap.Candidates = append(snap.Candidates, autoreply.CouncilTurn{
+			ID:            c.ID,
+			AgentIdentity: c.AgentIdentity,
+			Round:         c.Round,
+			Lens:          c.Lens,
+			Verdict:       c.Verdict,
+			Content:       c.Content,
+			Rationale:     c.Rationale,
+		})
+	}
+	for _, m := range view.Discussion {
+		snap.Discussion = append(snap.Discussion, autoreply.CouncilMessage{
+			Round:         m.Round,
+			AgentIdentity: m.AgentIdentity,
+			Body:          m.Body,
+		})
+	}
+	return snap
+}
 
 // formatCouncilThread renders a comment's thread as "author: body" lines for the
 // council member prompt (members can't fetch the thread from a claimed comment).

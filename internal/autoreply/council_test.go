@@ -427,8 +427,11 @@ func TestCouncilPromptsCarryDocContext(t *testing.T) {
 			t.Fatalf("member prompt missing %q:\n%s", want, member)
 		}
 	}
-	chair := councilChairPrompt(cr, "tok", councilChairIdentity)
+	chair := councilChairPrompt(cr, "tok", councilChairIdentity, 50)
 	if !strings.Contains(chair, "doc-42") {
 		t.Fatalf("chair prompt missing docId:\n%s", chair)
+	}
+	if !strings.Contains(chair, "50") {
+		t.Fatalf("chair prompt missing deadlock threshold:\n%s", chair)
 	}
 }
