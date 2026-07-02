@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func write(t *testing.T, dir, body string) {
@@ -311,5 +312,55 @@ func TestProjectSourcesRestricted(t *testing.T) {
 	}
 	if !(ProjectSources{"a": Coverage{}, "b": Coverage{}}).Restricted() {
 		t.Fatal("multi-project → always restricted")
+	}
+}
+
+func TestDefaultsSeedAgentRetriesAndTimeout(t *testing.T) {
+	cfg := Load(t.TempDir())
+	if got := cfg.Agent.ResolveRetries(); got != DefaultAgentRetries {
+		t.Fatalf("default retries = %d, want %d", got, DefaultAgentRetries)
+	}
+	if got := cfg.Agent.ResolveTimeout(); got != DefaultAgentTimeout {
+		t.Fatalf("default timeout = %v, want %v (15m)", got, DefaultAgentTimeout)
+	}
+}
+
+func TestAgentRetriesFromYAML(t *testing.T) {
+	dir := t.TempDir()
+	// An explicit 0 must be honoured as "no retry", not reset to the default.
+	write(t, dir, "agent:\n  retries: 0\n")
+	if got := Load(dir).Agent.ResolveRetries(); got != 0 {
+		t.Fatalf("retries: 0 resolved to %d, want 0 (no retry)", got)
+	}
+	write(t, dir, "agent:\n  retries: 8\n")
+	if got := Load(dir).Agent.ResolveRetries(); got != 8 {
+		t.Fatalf("retries: 8 resolved to %d, want 8", got)
+	}
+	// Negative clamps to 0.
+	if got := (AgentConfig{Retries: -3}).ResolveRetries(); got != 0 {
+		t.Fatalf("negative retries resolved to %d, want 0", got)
+	}
+}
+
+func TestAgentTimeoutParsing(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "agent:\n  timeout: 20m\n")
+	if got := Load(dir).Agent.ResolveTimeout(); got != 20*time.Minute {
+		t.Fatalf("timeout 20m = %v, want 20m", got)
+	}
+	// Bare integer → minutes.
+	if got := (AgentConfig{Timeout: "3"}).ResolveTimeout(); got != 3*time.Minute {
+		t.Fatalf("bare int timeout = %v, want 3m", got)
+	}
+	// Seconds duration.
+	if got := (AgentConfig{Timeout: "90s"}).ResolveTimeout(); got != 90*time.Second {
+		t.Fatalf("90s timeout = %v, want 90s", got)
+	}
+	// Empty/invalid → default.
+	if got := (AgentConfig{Timeout: ""}).ResolveTimeout(); got != DefaultAgentTimeout {
+		t.Fatalf("empty timeout = %v, want default", got)
+	}
+	if got := (AgentConfig{Timeout: "garbage"}).ResolveTimeout(); got != DefaultAgentTimeout {
+		t.Fatalf("invalid timeout = %v, want default", got)
 	}
 }
