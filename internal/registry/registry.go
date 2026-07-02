@@ -60,6 +60,11 @@ var (
 	ErrBadDocs = errors.New("invalid docs path")
 	// ErrChairRequired is returned when a council (>=2 members) has no chair.
 	ErrChairRequired = errors.New("council mode (>=2 members) requires a chair")
+
+	// ErrBadModel is returned when a member/chair model is not a single safe token
+	// (agentpreset.ValidModel) — rejected at input so it can never be spliced into a
+	// spawn command as extra argv.
+	ErrBadModel = errors.New("invalid model (must be a single token, e.g. gpt-5.5)")
 	// ErrProjectNotFound is returned by Update for an unknown project name.
 	ErrProjectNotFound = errors.New("no such project")
 )
@@ -361,12 +366,19 @@ func normalizeMembers(members []Member, chair Member) ([]Member, *Member, error)
 	for _, m := range members {
 		m.Agent = strings.TrimSpace(m.Agent)
 		m.Model = strings.TrimSpace(m.Model)
-		if m.Agent != "" {
-			clean = append(clean, m)
+		if m.Agent == "" {
+			continue
 		}
+		if !agentpreset.ValidModel(m.Model) {
+			return nil, nil, fmt.Errorf("%w: %q", ErrBadModel, m.Model)
+		}
+		clean = append(clean, m)
 	}
 	chair.Agent = strings.TrimSpace(chair.Agent)
 	chair.Model = strings.TrimSpace(chair.Model)
+	if chair.Agent != "" && !agentpreset.ValidModel(chair.Model) {
+		return nil, nil, fmt.Errorf("%w: %q", ErrBadModel, chair.Model)
+	}
 	var chairPtr *Member
 	if chair.Agent != "" {
 		c := chair
@@ -405,6 +417,14 @@ func validateDocs(absRoot string, docs []string) ([]string, error) {
 		d = filepath.Clean(d)
 		if filepath.IsAbs(d) {
 			return nil, fmt.Errorf("%w: %q must be relative to the project root", ErrBadDocs, d)
+		}
+		// Reject a traversal BEFORE any os.Stat: filepath.Clean keeps a leading
+		// "..", so "../escape" passes the IsAbs check and would otherwise be stat'd
+		// OUTSIDE root — a request-controlled path-injection probe. The resolved-
+		// symlink containment check below is the deeper guard; this lexical one
+		// keeps the stat itself inside root (and closes CodeQL go/path-injection).
+		if d == ".." || strings.HasPrefix(d, ".."+string(os.PathSeparator)) {
+			return nil, fmt.Errorf("%w: %q escapes the project root", ErrBadDocs, d)
 		}
 		specDir := filepath.Join(absRoot, d)
 		sfi, err := os.Stat(specDir)

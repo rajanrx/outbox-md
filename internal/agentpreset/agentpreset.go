@@ -7,9 +7,24 @@ package agentpreset
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 )
+
+// modelPattern accepts a single safe token — real model IDs like gpt-5.5,
+// claude-opus-4-8, o3, voyage-3.5-lite. It has NO whitespace or shell
+// metacharacters, so a model spliced into a preset command template (which the
+// engine later tokenizes with strings.Fields) stays exactly ONE argv element: a
+// value like "o3 --cd /tmp" cannot smuggle extra arguments to the agent CLI.
+var modelPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]*$`)
+
+// ValidModel reports whether model is safe to splice into a preset command. Empty
+// is valid (no flag is injected). A non-empty model must be a single safe token.
+func ValidModel(model string) bool {
+	model = strings.TrimSpace(model)
+	return model == "" || modelPattern.MatchString(model)
+}
 
 // presets maps a preset name to its command template.
 //
@@ -66,6 +81,12 @@ func Resolve(preset string) (string, bool) {
 func ResolveModel(preset, model string) (string, bool) {
 	if strings.TrimSpace(model) == "" {
 		return Resolve(preset)
+	}
+	// Never splice an unsafe model into the command — it would tokenize into extra
+	// argv. Callers validate at input (registry.normalizeMembers); this is the last
+	// line of defence at the splice point itself.
+	if !ValidModel(model) {
+		return "", false
 	}
 	tmpl, ok := modelTemplates[preset]
 	if !ok {
