@@ -1,4 +1,6 @@
 import { type Row, type Segment } from "./diff";
+import { type LineRef } from "./refine";
+import { AddCommentButton, LineCommentZone, type LineCommentApi } from "./LineComments";
 
 const SIGN = { eq: " ", ins: "+", del: "−", gap: "" } as const;
 
@@ -22,21 +24,39 @@ export function DiffSegs({ segs, fallback }: { segs?: Segment[]; fallback?: stri
   );
 }
 
+// lineRefFor derives the inline row's comment anchor: an added line refers to the
+// new side, everything else (equal/removed) to the old side — matching the
+// split view's keys so a draft stays attached when the view is toggled. Gap rows
+// and rows without a line number are not commentable.
+function lineRefFor(r: Row): LineRef | null {
+  if (r.op === "gap" || r.num == null) return null;
+  return { side: r.op === "ins" ? "new" : "old", lineNo: r.num, snippet: r.text };
+}
+
 // DiffRows renders the inline (unified, single-column) view: one row per line
 // with a +/−/space sign gutter and word-level highlights inside changed lines.
 // It is shared by the inline suggestion excerpt in the comment card and the
-// modal's inline mode.
-export function DiffRows({ rows }: { rows: Row[] }) {
+// modal's inline mode. When `lineComments` is supplied (the modal's live proposed
+// suggestion), each commentable row gains a hover "＋" affordance and renders its
+// drafts + editor beneath it; without it the diff is unchanged.
+export function DiffRows({ rows, lineComments }: { rows: Row[]; lineComments?: LineCommentApi }) {
   return (
     <div className="diff diff-inline">
-      {rows.map((r, i) => (
-        <div key={i} className={`drow ${r.op}`}>
-          <span className="sign">{SIGN[r.op]}</span>
-          <span className="text">
-            {r.op === "gap" ? r.text : <DiffSegs segs={r.segs} fallback={r.text} />}
-          </span>
-        </div>
-      ))}
+      {rows.map((r, i) => {
+        const ref = lineComments ? lineRefFor(r) : null;
+        return (
+          <div key={i} className="drow-line">
+            <div className={`drow ${r.op}` + (ref ? " commentable" : "")}>
+              {ref && lineComments && <AddCommentButton api={lineComments} lineRef={ref} />}
+              <span className="sign">{SIGN[r.op]}</span>
+              <span className="text">
+                {r.op === "gap" ? r.text : <DiffSegs segs={r.segs} fallback={r.text} />}
+              </span>
+            </div>
+            {ref && lineComments && <LineCommentZone api={lineComments} lineRef={ref} />}
+          </div>
+        );
+      })}
     </div>
   );
 }

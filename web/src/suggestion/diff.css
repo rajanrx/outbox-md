@@ -72,6 +72,60 @@
   background: var(--chrome); padding: 2px 8px; user-select: none;
 }
 
+/* ── inline line comments (Refine loop) ── hover "＋" per line + inline drafts/
+      editor. Only rendered when the modal passes a lineComments API; the compact
+      card excerpt and folder/historical diffs pass none, so nothing changes. ── */
+/* Inline view wraps each row + its comment zone in a block so the zone stacks
+   directly under its line. commentable rows get room for the leading "＋". */
+.drow-line { position: relative; }
+.drow.commentable { position: relative; }
+.line-comment-add {
+  position: absolute; z-index: 1;
+  width: 16px; height: 16px; padding: 0; line-height: 14px; text-align: center;
+  border: 1px solid transparent; border-radius: 4px;
+  background: var(--agent); color: #fff; font-weight: 700; font-size: 12px;
+  cursor: pointer; opacity: 0; transition: opacity .1s;
+}
+/* inline: sit the button over the sign gutter at the row's leading edge */
+.drow.commentable .line-comment-add { left: 0; top: 1px; }
+/* split: sit the button inside the number gutter */
+.dnum { position: relative; }
+.dnum .line-comment-add { left: 2px; top: 1px; }
+.drow.commentable:hover .line-comment-add,
+.dnum:hover .line-comment-add,
+.line-comment-add:focus-visible { opacity: 1; }
+
+/* split: full-width comment row beneath a line, mirroring the gap row's span */
+.drow-split-zone { grid-column: 1 / -1; }
+.line-comment-cell { padding: 0; }
+
+.line-comment-zone {
+  padding: 6px 10px 8px 26px;
+  background: var(--chrome); border-top: 1px solid var(--chrome-line);
+  display: flex; flex-direction: column; gap: 6px;
+}
+.line-comment {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
+  font-size: 12.5px; line-height: 1.45;
+}
+.line-comment-body { color: var(--ink); white-space: pre-wrap; min-width: 0; word-break: break-word; }
+.line-comment-tools { flex: none; display: flex; gap: 8px; }
+.line-comment-link {
+  border: 0; background: none; padding: 0; cursor: pointer;
+  color: var(--chrome-soft); font-size: 11.5px; font-weight: 600;
+}
+.line-comment-link:hover:not(:disabled) { color: var(--ink); }
+.line-comment-link.primary { color: var(--agent); }
+.line-comment-link:disabled { opacity: .5; cursor: default; }
+.line-comment-editor { display: flex; flex-direction: column; gap: 6px; }
+.line-comment-editor textarea {
+  width: 100%; min-height: 52px; resize: vertical; box-sizing: border-box;
+  padding: 6px 8px; border: 1px solid var(--chrome-line); border-radius: 6px;
+  background: var(--chrome-2); color: var(--ink);
+  font-family: inherit; font-size: 12.5px; line-height: 1.45;
+}
+.line-comment-editor-actions { display: flex; gap: 12px; justify-content: flex-end; }
+
 .diff-empty { padding: 14px; text-align: center; color: var(--chrome-soft); font-size: 12.5px; }
 
 .diff-actions { display: flex; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--chrome-line); }
@@ -163,6 +217,10 @@
 .diff-modal-foot button:disabled { opacity: .5; cursor: default; }
 .diff-modal-foot .primary { background: var(--agent); color: #fff; border-color: transparent; }
 .diff-modal-foot .primary:hover:not(:disabled) { filter: brightness(1.06); }
+/* Refine sits left of Reject/Approve; accented outline until at least one draft. */
+.diff-modal-foot .refine { border-color: var(--agent); color: var(--agent); background: var(--chrome-2); }
+.diff-modal-foot .refine:hover:not(:disabled) { background: var(--chrome-3); }
+.refine-sent { font-size: 12.5px; color: var(--diff-add-ink); font-weight: 600; }
 
 /* ── folder changes: GitHub-PR-style per-file collapsible sections ── */
 .folder-file {

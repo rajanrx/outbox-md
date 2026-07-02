@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { alignedDiff, unifiedDiff } from "./diff";
 import { DiffRows } from "./DiffRows";
 import { DiffSplit } from "./DiffSplit";
+import { type LineCommentApi } from "./LineComments";
 
 export type DiffViewMode = "split" | "inline";
 
@@ -55,9 +56,26 @@ export function DiffToggle({ mode, onChange }: { mode: DiffViewMode; onChange: (
 }
 
 // DiffView renders a single before→after diff in the requested mode, computing
-// only the model the active view needs (memoised per content + mode).
-export function DiffView({ before, after, mode }: { before: string; after: string; mode: DiffViewMode }) {
+// only the model the active view needs (memoised per content + mode). When
+// `lineComments` is passed the diff becomes annotatable (hover "＋" + inline
+// drafts); it is threaded to whichever view is active so a draft anchored in one
+// mode still shows after toggling.
+export function DiffView({
+  before,
+  after,
+  mode,
+  lineComments,
+}: {
+  before: string;
+  after: string;
+  mode: DiffViewMode;
+  lineComments?: LineCommentApi;
+}) {
   const split = useMemo(() => (mode === "split" ? alignedDiff(before, after) : null), [before, after, mode]);
   const inline = useMemo(() => (mode === "inline" ? unifiedDiff(before, after) : null), [before, after, mode]);
-  return mode === "split" ? <DiffSplit rows={split!} /> : <DiffRows rows={inline!} />;
+  return mode === "split" ? (
+    <DiffSplit rows={split!} lineComments={lineComments} />
+  ) : (
+    <DiffRows rows={inline!} lineComments={lineComments} />
+  );
 }
