@@ -132,9 +132,6 @@ export function Card({ comment, currentContent, docPath = "", active = false, pi
         {comment.postApproval && (
           <span className="post-approval-tag" title="Feedback added after approval">post-approval</span>
         )}
-        {processing && (
-          <span className="processing-tag" title="An AI agent is working on this comment">⋯ AI processing</span>
-        )}
         <span className="card-tools">
           {offscreen && (
             <button className="ic-btn" title="Scroll to text" aria-label="Scroll to text" onClick={(e) => stop(e, onJump)}><LocateIcon /></button>
@@ -154,6 +151,17 @@ export function Card({ comment, currentContent, docPath = "", active = false, pi
             </div>
           </div>
         ))}
+        {/* Pending-reply hint at the BOTTOM of the thread (under the latest human
+            message being processed), so it's visible on long threads — not lost
+            in the card header. */}
+        {processing && (
+          <div className="post processing-post" aria-live="polite">
+            <span className="avatar who-agent">⋯</span>
+            <div className="post-main">
+              <div className="processing-tag" title="An AI agent is working on this comment">⋯ AI processing</div>
+            </div>
+          </div>
+        )}
       </div>
 
       {showSuggestion && (
