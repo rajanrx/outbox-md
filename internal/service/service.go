@@ -40,6 +40,9 @@ type Service struct {
 	cfg       config.Config
 	notify    webhook.Notifier
 	projects  []registry.Project
+	// version is the CLI/server version string surfaced at /api/config so the UI
+	// can show a build badge. "dev" for local builds; set once at startup.
+	version string
 	// projectSources, when non-nil, is the per-project runtime sources map built
 	// by the server at startup (single-folder mode is a single "" entry carrying
 	// the real cfg). It drives the read guards so each project's Sources whitelist
@@ -50,8 +53,15 @@ type Service struct {
 }
 
 func New(st *store.Store, writeFile func(project, path, content string) error) *Service {
-	return &Service{store: st, writeFile: writeFile, cfg: config.Defaults(), notify: webhook.Nop{}}
+	return &Service{store: st, writeFile: writeFile, cfg: config.Defaults(), notify: webhook.Nop{}, version: "dev"}
 }
+
+// SetVersion records the build version surfaced at /api/config (set once at
+// startup from the injected main.version).
+func (s *Service) SetVersion(v string) { s.version = v }
+
+// Version returns the build version (defaults to "dev").
+func (s *Service) Version() string { return s.version }
 
 // SetConfig replaces the effective configuration (called once at startup with
 // the loaded outbox.yaml).

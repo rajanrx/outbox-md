@@ -392,6 +392,7 @@ func buildServer(root string, projects []registry.Project, autoReplyFlag bool) (
 	}
 	svc.SetConfig(cfg)
 	svc.SetProjects(projects)
+	svc.SetVersion(version)
 	// One governance event fans out to the external HTTP runner (webhook), every
 	// open browser stream (SSE hub), and — when enabled — the in-process
 	// auto-reply engine that spawns the agent CLI on each human comment.
