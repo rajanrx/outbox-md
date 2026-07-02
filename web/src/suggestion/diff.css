@@ -200,6 +200,21 @@
   border: 1px solid var(--chrome-line); border-radius: 8px; overflow: hidden; background: var(--chrome-2);
 }
 .diff-frame .diff-inline, .diff-frame .diff-split { max-height: none; }
+/* Rendered mode: preview the proposed doc as markdown. Reuse the reader's
+   typography (.reader) but tame its pane-sized padding + animation for the
+   bordered modal frame, and let it scroll on its own. */
+.diff-frame.rendered-view {
+  padding: 22px 26px;
+  max-height: 62vh;
+  overflow: auto;
+  font-size: 15px;
+  line-height: 1.65;
+  animation: none;
+  background: var(--chrome);
+}
+.diff-frame.rendered-view h1 { font-size: 1.9rem; }
+.diff-frame.rendered-view h2 { font-size: 1.4rem; }
+.diff-frame.rendered-view > :first-child { margin-top: 0; }
 
 /* pinned footer with Approve/Reject */
 .diff-modal-foot {

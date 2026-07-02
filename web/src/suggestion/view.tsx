@@ -4,7 +4,7 @@ import { DiffRows } from "./DiffRows";
 import { DiffSplit } from "./DiffSplit";
 import { type LineCommentApi } from "./LineComments";
 
-export type DiffViewMode = "split" | "inline";
+export type DiffViewMode = "split" | "inline" | "rendered";
 
 const LS_KEY = "outbox-diff-view";
 const DEFAULT: DiffViewMode = "split"; // GitHub-style side-by-side by default
@@ -15,7 +15,7 @@ export function useDiffView(): [DiffViewMode, (m: DiffViewMode) => void] {
   const [mode, setMode] = useState<DiffViewMode>(() => {
     try {
       const v = localStorage.getItem(LS_KEY);
-      return v === "inline" || v === "split" ? v : DEFAULT;
+      return v === "inline" || v === "split" || v === "rendered" ? v : DEFAULT;
     } catch {
       return DEFAULT;
     }
@@ -50,6 +50,15 @@ export function DiffToggle({ mode, onChange }: { mode: DiffViewMode; onChange: (
         onClick={() => onChange("inline")}
       >
         Inline
+      </button>
+      <button
+        role="tab"
+        aria-selected={mode === "rendered"}
+        className={mode === "rendered" ? "on" : ""}
+        onClick={() => onChange("rendered")}
+        title="Preview the proposed doc rendered as Markdown (incl. mermaid)"
+      >
+        Rendered
       </button>
     </div>
   );

@@ -5,6 +5,7 @@ import "highlight.js/styles/github.css";
 import { rehypeSourcePos } from "./rehypeSourcePos";
 import { rehypeHeadingIds } from "./rehypeHeadingIds";
 import { MermaidBlock } from "./mermaid";
+import "./reader.css";
 
 // MarkdownView is the single markdown renderer shared by the reading pane and the
 // diff modal's "Rendered" view. It bundles the remark/rehype pipeline (GFM,

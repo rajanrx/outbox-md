@@ -9,6 +9,7 @@ import {
   type PendingSuggestion,
   type Suggestion,
 } from "../api";
+import { MarkdownView } from "../reader/MarkdownView";
 import { counts } from "./DiffRows";
 import { unifiedDiff } from "./diff";
 import { type LineCommentApi } from "./LineComments";
@@ -171,6 +172,14 @@ export function DiffModal({ open, commentId, currentContent, title, onClose, onC
             <div className="diff-section-title">This change</div>
             {sg === null ? (
               <div className="diff-empty">Loading change…</div>
+            ) : mode === "rendered" ? (
+              // Rendered mode is a PREVIEW of the accepted doc — the proposed
+              // content run through the shared MarkdownView (incl. mermaid), not a
+              // text diff. Inline line-comment / Refine affordances are diff-only;
+              // toggle back to Side-by-side or Inline to comment on specific lines.
+              <div className="diff-frame rendered-view reader">
+                <MarkdownView content={sg.proposedContent} />
+              </div>
             ) : changed ? (
               <div className="diff-frame">
                 <DiffView
@@ -202,8 +211,12 @@ export function DiffModal({ open, commentId, currentContent, title, onClose, onC
                         <span className="ins">+{c.ins}</span> <span className="del">−{c.del}</span>
                       </span>
                     </summary>
-                    <div className="diff-frame">
-                      <DiffView before={p.current} after={p.proposed} mode={mode} />
+                    <div className={mode === "rendered" ? "diff-frame rendered-view reader" : "diff-frame"}>
+                      {mode === "rendered" ? (
+                        <MarkdownView content={p.proposed} />
+                      ) : (
+                        <DiffView before={p.current} after={p.proposed} mode={mode} />
+                      )}
                     </div>
                   </details>
                 );
