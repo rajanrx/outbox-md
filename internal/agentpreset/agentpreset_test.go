@@ -5,7 +5,7 @@ import "testing"
 func TestResolveKnownPresets(t *testing.T) {
 	cases := map[string]string{
 		"claude":  "claude -p {prompt} --allowedTools mcp__outbox-md__*",
-		"codex":   "codex exec {prompt}",
+		"codex":   "codex exec --dangerously-bypass-approvals-and-sandbox {prompt}",
 		"copilot": "copilot -p {prompt}",
 	}
 	for name, want := range cases {

@@ -14,14 +14,19 @@ import (
 //
 //   - claude  — VERIFIED: this is outbox-md's built-in default; the Claude Code
 //     CLI reads outbox-md's MCP over --allowedTools.
-//   - codex   — ASSUMED: OpenAI Codex CLI reads its own ~/.codex/config.toml for
-//     MCP servers, so no --allowedTools flag; adjust with --agent-cmd if your
-//     Codex invocation differs.
+//   - codex   — OpenAI Codex CLI reads its own ~/.codex/config.toml for MCP
+//     servers. `exec` (non-interactive) with the default workspace-write sandbox
+//     CANCELS MCP tool calls — there is no human to approve them — so the council
+//     member/chair can't reach outbox's MCP. --dangerously-bypass-approvals-and-
+//     sandbox runs it fully autonomous so the MCP calls complete. This is scoped
+//     to council-spawned codex (not the user's interactive codex) and is safe for
+//     a trusted local repo where agents only PROPOSE (never write files); adjust
+//     with --agent-cmd if you want a narrower sandbox.
 //   - copilot — ASSUMED: GitHub Copilot CLI headless prompt; adjust with
 //     --agent-cmd if your Copilot invocation differs.
 var presets = map[string]string{
 	"claude":  "claude -p {prompt} --allowedTools mcp__outbox-md__*",
-	"codex":   "codex exec {prompt}",
+	"codex":   "codex exec --dangerously-bypass-approvals-and-sandbox {prompt}",
 	"copilot": "copilot -p {prompt}",
 }
 
