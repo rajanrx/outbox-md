@@ -47,7 +47,7 @@ type OpenComment struct {
 }
 
 func (h *Handlers) ListOpenComments() ([]OpenComment, error) {
-	comments, err := h.St.ListOpenComments()
+	comments, err := h.St.ListOpenComments(time.Now().UTC())
 	if err != nil {
 		return nil, err
 	}

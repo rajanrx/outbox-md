@@ -397,7 +397,7 @@ func buildServer(root string, projects []registry.Project, autoReplyFlag bool) (
 	// auto-reply engine that spawns the agent CLI on each human comment.
 	hub := sse.NewHub()
 	sinks := []webhook.Notifier{webhook.New(cfg.Webhook), hub}
-	if engine := autoReplyNotifier(root, projects, cfg, autoReplyFlag); engine != nil {
+	if engine := autoReplyNotifier(root, projects, cfg, autoReplyFlag, svc); engine != nil {
 		sinks = append(sinks, engine)
 		log.Printf("auto-reply: on (default agent: %s; per-project roots + agents from the registry)", cfg.AgentCmd)
 	}
@@ -481,7 +481,7 @@ func buildServer(root string, projects []registry.Project, autoReplyFlag bool) (
 // OUTBOX_AUTO_REPLY env / default false) decides. root is the served dir used as
 // the default (fallback) working directory; each project overrides it with its
 // own root + agent command (see the Targets map).
-func autoReplyNotifier(root string, projects []registry.Project, cfg config.Config, flagOn bool) webhook.Notifier {
+func autoReplyNotifier(root string, projects []registry.Project, cfg config.Config, flagOn bool, svc *service.Service) webhook.Notifier {
 	if !(flagOn || cfg.AutoReply) {
 		return nil
 	}
@@ -499,6 +499,12 @@ func autoReplyNotifier(root string, projects []registry.Project, cfg config.Conf
 		Dir:      root,
 		AgentCmd: cfg.AgentCmd,
 		Targets:  targets,
+		// Drain a partly-cleared burst: after each run the engine re-checks how
+		// much work remains for the project and runs again while it keeps making
+		// progress, so a burst one run only partly handled is not stranded. Nil svc
+		// is impossible here (main always builds one), but the engine also tolerates
+		// a nil counter by disabling the drain.
+		PendingCount: func(project string) (int, error) { return svc.PendingCommentCount(project) },
 	})
 }
 

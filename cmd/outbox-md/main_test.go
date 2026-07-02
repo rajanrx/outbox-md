@@ -509,13 +509,13 @@ func TestResolveFlagsAutoReply(t *testing.T) {
 
 func TestAutoReplyNotifierOffByDefault(t *testing.T) {
 	// Neither flag nor config → no engine wired.
-	if n := autoReplyNotifier(t.TempDir(), nil, config.Config{}, false); n != nil {
+	if n := autoReplyNotifier(t.TempDir(), nil, config.Config{}, false, nil); n != nil {
 		t.Fatal("autoReplyNotifier should be nil when off (no flag, no config)")
 	}
 }
 
 func TestAutoReplyNotifierFlagForcesOn(t *testing.T) {
-	n := autoReplyNotifier(t.TempDir(), nil, config.Config{AutoReply: false}, true)
+	n := autoReplyNotifier(t.TempDir(), nil, config.Config{AutoReply: false}, true, nil)
 	if n == nil {
 		t.Fatal("the -auto-reply flag should force an engine even when config is false")
 	}
@@ -525,7 +525,7 @@ func TestAutoReplyNotifierFlagForcesOn(t *testing.T) {
 }
 
 func TestAutoReplyNotifierConfigEnables(t *testing.T) {
-	n := autoReplyNotifier(t.TempDir(), nil, config.Config{AutoReply: true}, false)
+	n := autoReplyNotifier(t.TempDir(), nil, config.Config{AutoReply: true}, false, nil)
 	if n == nil {
 		t.Fatal("auto_reply: true in config should wire an engine without the flag")
 	}

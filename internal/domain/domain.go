@@ -71,6 +71,12 @@ type Comment struct {
 	// agent never leaves it stuck — the deadline simply passes. nil means not
 	// processing.
 	ProcessingUntil *time.Time `json:"processingUntil,omitempty"`
+	// ClaimedAt is the wall-clock instant this comment last entered 'claimed'
+	// status. It is the fresh-claim guard for stale-claim recovery: a just-made
+	// claim must not be re-surfaced in the tiny window before the agent calls
+	// mark_processing (see IsStaleClaim). nil means never claimed (or a legacy
+	// row predating the column — treated as an abandoned claim, i.e. stale).
+	ClaimedAt *time.Time `json:"claimedAt,omitempty"`
 }
 
 // IsProcessing reports whether an agent is currently marked as processing this
@@ -78,6 +84,24 @@ type Comment struct {
 // expiry is implicit.
 func (c Comment) IsProcessing(now time.Time) bool {
 	return c.ProcessingUntil != nil && c.ProcessingUntil.After(now)
+}
+
+// IsStaleClaim reports whether a claimed comment has been ABANDONED and should
+// re-enter the work set. A claim is stale when it is not being actively
+// heart-beated (no live mark_processing, i.e. !IsProcessing) AND it is older
+// than grace — so a claim just made (before the claiming agent's first
+// mark_processing) is NOT resurfaced, but one whose agent died mid-run is. A nil
+// ClaimedAt (legacy row) is treated as stale so already-stranded comments
+// recover on the next run. It only makes sense for status == claimed; callers
+// gate on that.
+func (c Comment) IsStaleClaim(now time.Time, grace time.Duration) bool {
+	if c.IsProcessing(now) {
+		return false
+	}
+	if c.ClaimedAt == nil {
+		return true
+	}
+	return c.ClaimedAt.Before(now.Add(-grace))
 }
 
 type SuggestionState string

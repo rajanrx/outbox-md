@@ -20,7 +20,7 @@ func TestCommentAndSuggestionRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	open, _ := s.ListOpenComments()
+	open, _ := s.ListOpenComments(time.Now())
 	if len(open) != 1 || open[0].ID != c.ID {
 		t.Fatalf("open comments = %+v", open)
 	}
@@ -126,4 +126,119 @@ func TestReopenExistingDBIsIdempotent(t *testing.T) {
 		t.Fatalf("second Open (already migrated): %v", err)
 	}
 	s2.Close()
+}
+
+func hasComment(cs []domain.Comment, id string) bool {
+	for _, c := range cs {
+		if c.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// TestListOpenCommentsRecoversStaleClaims is the core stale-claim recovery:
+// list_open_comments must return 'open' comments AND any 'claimed' comment whose
+// claim has been abandoned (no live heartbeat, older than the grace), while
+// keeping a live-heartbeated claim out (so it is never double-worked) and every
+// terminal/other status excluded. This is what un-strands a burst the agent only
+// partly finished.
+func TestListOpenCommentsRecoversStaleClaims(t *testing.T) {
+	s, _ := Open(":memory:")
+	defer s.Close()
+	doc, v1, _ := s.CreateDocument("spec.md", "hello world", "human")
+
+	mk := func(status domain.CommentStatus) domain.Comment {
+		c, err := s.CreateComment(domain.Comment{
+			DocID: doc.ID, AgainstVersionID: v1.ID,
+			Anchor:         domain.Anchor{Start: 0, End: 1},
+			AuthorIdentity: "human", Owner: "human", Status: domain.CommentOpen,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status != domain.CommentOpen {
+			if err := s.UpdateCommentStatus(c.ID, status, "tok"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return c
+	}
+
+	openC := mk(domain.CommentOpen)
+	staleClaim := mk(domain.CommentClaimed)   // no heartbeat set → abandoned
+	nullClaim := mk(domain.CommentClaimed)    // processing_until stays NULL → abandoned
+	liveClaim := mk(domain.CommentClaimed)    // future heartbeat → actively worked
+	expiredClaim := mk(domain.CommentClaimed) // past heartbeat → abandoned
+	resolved := mk(domain.CommentResolved)
+	replied := mk(domain.CommentReplied)
+	addressed := mk(domain.CommentAddressed)
+
+	// A live heartbeat sits well beyond the evaluation `now`.
+	future := time.Now().Add(StaleClaimGrace + 10*time.Minute)
+	if err := s.SetProcessingUntil(liveClaim.ID, &future); err != nil {
+		t.Fatal(err)
+	}
+	// An expired heartbeat is in the past.
+	past := time.Now().Add(-time.Hour)
+	if err := s.SetProcessingUntil(expiredClaim.ID, &past); err != nil {
+		t.Fatal(err)
+	}
+
+	// Evaluate the work set at a `now` past the grace, so the claims (stamped at
+	// ~real-now) read as aged. `future` is still ahead of this now (live).
+	now := time.Now().Add(StaleClaimGrace + time.Minute)
+	got, err := s.ListOpenComments(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !hasComment(got, openC.ID) {
+		t.Error("open comment must be in the work set")
+	}
+	for _, c := range []domain.Comment{staleClaim, nullClaim, expiredClaim} {
+		if !hasComment(got, c.ID) {
+			t.Errorf("abandoned claim %s must be recovered into the work set", c.ID)
+		}
+	}
+	if hasComment(got, liveClaim.ID) {
+		t.Error("a live-heartbeated claim must NOT be returned (no double-work)")
+	}
+	for _, c := range []domain.Comment{resolved, replied, addressed} {
+		if hasComment(got, c.ID) {
+			t.Errorf("status %s must stay excluded from the work set", c.Status)
+		}
+	}
+}
+
+// TestListOpenCommentsFreshClaimNotResurfaced is the claim→mark_processing race
+// guard: a claim just made (within the grace, before the agent's first
+// mark_processing) must NOT be resurfaced, or a concurrent list would hand the
+// same comment to a second worker. Once aged with an expired hint it is recovered.
+func TestListOpenCommentsFreshClaimNotResurfaced(t *testing.T) {
+	s, _ := Open(":memory:")
+	defer s.Close()
+	doc, v1, _ := s.CreateDocument("spec.md", "hi there", "human")
+	c, err := s.CreateComment(domain.Comment{
+		DocID: doc.ID, AgainstVersionID: v1.ID,
+		Anchor:         domain.Anchor{Start: 0, End: 1},
+		AuthorIdentity: "human", Owner: "human", Status: domain.CommentOpen,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateCommentStatus(c.ID, domain.CommentClaimed, "tok"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Right now the claim is inside the grace window → not yet our work.
+	if got, _ := s.ListOpenComments(time.Now()); hasComment(got, c.ID) {
+		t.Fatal("a claim just made (within grace) must not be resurfaced")
+	}
+
+	// Aged past the grace with an expired hint → recovered.
+	now := time.Now().Add(StaleClaimGrace + time.Minute)
+	if got, _ := s.ListOpenComments(now); !hasComment(got, c.ID) {
+		t.Fatal("an aged, un-heart-beated claim must be recovered")
+	}
 }

@@ -358,3 +358,132 @@ func TestPerProjectNoSelfRetrigger(t *testing.T) {
 		t.Fatalf("agent-action events spawned %d times, want 0", got)
 	}
 }
+
+// TestDrainClearsPartialBurst: one human trigger, an agent that clears only ONE
+// comment per run, and a PendingCount that reflects the shrinking backlog. The
+// engine must drain the queue — running again while each run makes progress —
+// until nothing remains, without any further human events.
+func TestDrainClearsPartialBurst(t *testing.T) {
+	var remaining int64 = 3
+	var spawns int64
+	e := New(Config{
+		Enabled:    true,
+		Debounce:   testDebounce,
+		DrainDelay: time.Millisecond,
+		Spawn: func(context.Context, string, string, string) error {
+			atomic.AddInt64(&spawns, 1)
+			// Simulate an agent that finishes exactly one comment this run.
+			for {
+				n := atomic.LoadInt64(&remaining)
+				if n == 0 {
+					return nil
+				}
+				if atomic.CompareAndSwapInt64(&remaining, n, n-1) {
+					return nil
+				}
+			}
+		},
+		PendingCount: func(string) (int, error) { return int(atomic.LoadInt64(&remaining)), nil },
+	})
+	e.Fire(webhook.EventCommentCreated, webhook.Event{})
+	waitFor(t, func() bool { return atomic.LoadInt64(&remaining) == 0 })
+	// Exactly one run per comment: the drain kept going while progress was made.
+	if got := atomic.LoadInt64(&spawns); got != 3 {
+		t.Fatalf("spawns = %d, want 3 (one drain run per backlog comment)", got)
+	}
+	// Give any erroneous extra drain run a chance to appear, then confirm none did.
+	time.Sleep(50 * time.Millisecond)
+	if got := atomic.LoadInt64(&spawns); got != 3 {
+		t.Fatalf("spawns = %d after settle, want 3 (drain must stop at zero backlog)", got)
+	}
+}
+
+// TestDrainStopsWhenNoProgress: a run that does not reduce the backlog must NOT
+// loop — the progress guard stops a comment the agent genuinely cannot advance
+// from spinning forever. Exactly one run happens per human trigger.
+func TestDrainStopsWhenNoProgress(t *testing.T) {
+	var spawns int64
+	e := New(Config{
+		Enabled:    true,
+		Debounce:   testDebounce,
+		DrainDelay: time.Millisecond,
+		Spawn: func(context.Context, string, string, string) error {
+			atomic.AddInt64(&spawns, 1)
+			return nil
+		},
+		// Backlog never shrinks → after >= before every run → no drain.
+		PendingCount: func(string) (int, error) { return 5, nil },
+	})
+	e.Fire(webhook.EventCommentCreated, webhook.Event{})
+	waitFor(t, func() bool { return atomic.LoadInt64(&spawns) >= 1 })
+	time.Sleep(80 * time.Millisecond) // a drain loop, if any, would spawn more here
+	if got := atomic.LoadInt64(&spawns); got != 1 {
+		t.Fatalf("spawns = %d, want 1 (no progress ⇒ no drain loop)", got)
+	}
+}
+
+// TestDrainDisabledWithoutCounter: with no PendingCount wired the drain is off —
+// a single human trigger yields exactly one run (the pre-drain behaviour), even
+// though a backlog conceptually remains.
+func TestDrainDisabledWithoutCounter(t *testing.T) {
+	var spawns int64
+	e := New(Config{
+		Enabled:    true,
+		Debounce:   testDebounce,
+		DrainDelay: time.Millisecond,
+		Spawn: func(context.Context, string, string, string) error {
+			atomic.AddInt64(&spawns, 1)
+			return nil
+		},
+	})
+	e.Fire(webhook.EventCommentCreated, webhook.Event{})
+	waitFor(t, func() bool { return atomic.LoadInt64(&spawns) >= 1 })
+	time.Sleep(80 * time.Millisecond)
+	if got := atomic.LoadInt64(&spawns); got != 1 {
+		t.Fatalf("spawns = %d, want 1 (drain disabled when PendingCount is nil)", got)
+	}
+}
+
+// TestDrainPerProjectIsolation: a backlog on project A must not cause the engine
+// to run project B's agent. Each project's runner drains its OWN queue.
+func TestDrainPerProjectIsolation(t *testing.T) {
+	var aRuns, bRuns int64
+	var aRemaining int64 = 2
+	e := New(Config{
+		Enabled:    true,
+		Debounce:   testDebounce,
+		DrainDelay: time.Millisecond,
+		Targets: map[string]Target{
+			"alpha": {Root: "/repos/alpha", AgentCmd: "a {prompt}"},
+			"beta":  {Root: "/repos/beta", AgentCmd: "b {prompt}"},
+		},
+		Spawn: func(_ context.Context, dir, _, _ string) error {
+			if dir == "/repos/alpha" {
+				atomic.AddInt64(&aRuns, 1)
+				for {
+					n := atomic.LoadInt64(&aRemaining)
+					if n == 0 || atomic.CompareAndSwapInt64(&aRemaining, n, n-1) {
+						return nil
+					}
+				}
+			}
+			atomic.AddInt64(&bRuns, 1)
+			return nil
+		},
+		PendingCount: func(project string) (int, error) {
+			if project == "alpha" {
+				return int(atomic.LoadInt64(&aRemaining)), nil
+			}
+			return 0, nil
+		},
+	})
+	e.Fire(webhook.EventCommentCreated, webhook.Event{Project: "alpha"})
+	waitFor(t, func() bool { return atomic.LoadInt64(&aRemaining) == 0 })
+	time.Sleep(50 * time.Millisecond)
+	if got := atomic.LoadInt64(&aRuns); got != 2 {
+		t.Fatalf("alpha runs = %d, want 2 (drained its own backlog)", got)
+	}
+	if got := atomic.LoadInt64(&bRuns); got != 0 {
+		t.Fatalf("beta runs = %d, want 0 (a burst on alpha must not run beta)", got)
+	}
+}

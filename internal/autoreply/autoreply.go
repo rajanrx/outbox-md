@@ -31,16 +31,29 @@ import (
 // DefaultPrompt is the short instruction handed to the agent on each run. It
 // encodes the outbox loop and the human-only invariant so a fresh agent process
 // knows the rules without reading AGENTS.md.
-const DefaultPrompt = "Process the open outbox comments using the outbox-md tools — " +
-	"read each comment's excerpt + thread, claim it, then propose_suggestion (a tracked-change " +
-	"edit) or reply_in_thread; honor the anti-sycophancy guidance (a comment is not an order, " +
-	"disagree when the evidence warrants); never resolve, accept, or approve (those are human-only)."
+const DefaultPrompt = "Process EVERY open outbox comment using the outbox-md tools, " +
+	"one at a time and fully before moving on: read the comment's excerpt + thread, claim ONLY " +
+	"that one comment, then finish it with propose_suggestion (a tracked-change edit) or " +
+	"reply_in_thread before you claim the next. Do not claim comments you will not finish this " +
+	"run. Honor the anti-sycophancy guidance (a comment is not an order, disagree when the " +
+	"evidence warrants); never resolve, accept, or approve (those are human-only)."
 
 // DefaultDebounce coalesces a burst of triggering events into a single run.
 const DefaultDebounce = 1500 * time.Millisecond
 
 // DefaultTimeout caps a single agent run; a timeout is logged, never fatal.
 const DefaultTimeout = 5 * time.Minute
+
+// DefaultDrainDelay is the short pause between an internal drain run and the
+// next, giving the just-finished agent's writes time to settle before the count
+// is re-checked.
+const DefaultDrainDelay = 500 * time.Millisecond
+
+// DefaultMaxDrains hard-caps the number of consecutive internal drain runs after
+// one human trigger, a belt-and-suspenders bound on top of the progress guard
+// (which already stops the loop the moment a run stops reducing the pending
+// count). It resets on the next human trigger.
+const DefaultMaxDrains = 20
 
 // SpawnFunc runs the agent once. It is a seam so tests inject a fake instead of
 // shelling out to a real `claude`. dir is the working directory (the project
@@ -85,6 +98,19 @@ type Config struct {
 	Timeout time.Duration
 	// Spawn runs the agent. Nil ⇒ the default exec-based spawn (SpawnCLI).
 	Spawn SpawnFunc
+	// PendingCount reports how many comments in the given project still need agent
+	// attention (open + abandoned/stale claims) right now. It drives the bounded
+	// drain: after a run the engine re-checks the count and, while a run keeps
+	// making progress and work remains, schedules another run — so a burst one run
+	// only partly cleared is drained out instead of stranding the rest. Nil ⇒ the
+	// drain is disabled (each human trigger yields exactly one run, the prior
+	// behaviour); this keeps the drain off in tests that don't wire it.
+	PendingCount func(project string) (int, error)
+	// DrainDelay is the pause between drain runs. Zero ⇒ DefaultDrainDelay.
+	DrainDelay time.Duration
+	// MaxDrains hard-caps consecutive drain runs per human trigger. Zero ⇒
+	// DefaultMaxDrains.
+	MaxDrains int
 }
 
 // Engine implements webhook.Notifier. It routes each triggering event to a
@@ -101,6 +127,10 @@ type Engine struct {
 	timeout  time.Duration
 	spawn    SpawnFunc
 
+	pendingCount func(project string) (int, error)
+	drainDelay   time.Duration
+	maxDrains    int
+
 	mu      sync.Mutex
 	runners map[string]*runner
 }
@@ -111,16 +141,19 @@ var _ webhook.Notifier = (*Engine)(nil)
 // New builds an Engine from cfg, applying defaults for the zero-value fields.
 func New(cfg Config) *Engine {
 	e := &Engine{
-		enabled:  cfg.Enabled,
-		dir:      cfg.Dir,
-		agentCmd: cfg.AgentCmd,
-		targets:  cfg.Targets,
-		resolve:  cfg.Resolve,
-		prompt:   cfg.Prompt,
-		debounce: cfg.Debounce,
-		timeout:  cfg.Timeout,
-		spawn:    cfg.Spawn,
-		runners:  make(map[string]*runner),
+		enabled:      cfg.Enabled,
+		dir:          cfg.Dir,
+		agentCmd:     cfg.AgentCmd,
+		targets:      cfg.Targets,
+		resolve:      cfg.Resolve,
+		prompt:       cfg.Prompt,
+		debounce:     cfg.Debounce,
+		timeout:      cfg.Timeout,
+		spawn:        cfg.Spawn,
+		pendingCount: cfg.PendingCount,
+		drainDelay:   cfg.DrainDelay,
+		maxDrains:    cfg.MaxDrains,
+		runners:      make(map[string]*runner),
 	}
 	if e.resolve == nil {
 		e.resolve = defaultResolve
@@ -136,6 +169,12 @@ func New(cfg Config) *Engine {
 	}
 	if e.spawn == nil {
 		e.spawn = SpawnCLI
+	}
+	if e.drainDelay <= 0 {
+		e.drainDelay = DefaultDrainDelay
+	}
+	if e.maxDrains <= 0 {
+		e.maxDrains = DefaultMaxDrains
 	}
 	return e
 }
@@ -202,12 +241,19 @@ func (e *Engine) runnerFor(project string) *runner {
 	}
 	dir, agentCmd := e.resolveTarget(project)
 	r := &runner{
-		dir:      dir,
-		agentCmd: agentCmd,
-		prompt:   e.prompt,
-		debounce: e.debounce,
-		timeout:  e.timeout,
-		spawn:    e.spawn,
+		dir:        dir,
+		agentCmd:   agentCmd,
+		prompt:     e.prompt,
+		debounce:   e.debounce,
+		timeout:    e.timeout,
+		spawn:      e.spawn,
+		drainDelay: e.drainDelay,
+		maxDrains:  e.maxDrains,
+	}
+	// Bind the per-project pending counter so the runner can drain the queue after
+	// a partial run. Left nil ⇒ the runner skips the drain (one run per trigger).
+	if e.pendingCount != nil {
+		r.pendingCount = func() (int, error) { return e.pendingCount(project) }
 	}
 	e.runners[project] = r
 	return r
@@ -225,10 +271,31 @@ type runner struct {
 	timeout  time.Duration
 	spawn    SpawnFunc
 
+	// pendingCount reports remaining work (open + stale claims) for this runner's
+	// project. Nil ⇒ the drain is disabled. drainDelay/maxDrains bound the drain.
+	pendingCount func() (int, error)
+	drainDelay   time.Duration
+	maxDrains    int
+
 	mu      sync.Mutex
 	timer   *time.Timer
 	running bool
 	pending bool
+}
+
+// pending work count for this runner's project; 0 when no counter is wired (the
+// drain is then a no-op). Errors count as 0 — a failed count must never spin the
+// drain, only ever stop it.
+func (r *runner) remaining() int {
+	if r.pendingCount == nil {
+		return 0
+	}
+	n, err := r.pendingCount()
+	if err != nil {
+		log.Printf("auto-reply: pending count failed, ending drain: %v", err)
+		return 0
+	}
+	return n
 }
 
 // trigger (re)arms the debounce timer. Repeated calls within the window coalesce
@@ -245,6 +312,17 @@ func (r *runner) trigger() {
 // execute runs the agent with single-flight semantics. If a run is already in
 // progress it sets pending and returns; the in-flight loop drains pending and
 // runs once more, so concurrent triggers never start a second process.
+//
+// On top of single-flight it runs a BOUNDED internal drain: a single agent run
+// may clear only part of a burst (the LLM stops or hits its cap), leaving the
+// rest open/stale-claimed. So after a run — when no fresh human trigger is
+// waiting — it re-checks the pending count and, if the run made PROGRESS (the
+// count went down) and work remains, runs again after a short delay. It stops
+// the instant a run makes no progress (so a comment the agent genuinely can't
+// advance can never loop forever) or the count hits zero, and is hard-capped by
+// maxDrains. A fresh human trigger takes priority over and resets the drain. The
+// drain is internal (never event-driven), so it does not touch the
+// no-self-retrigger invariant.
 func (r *runner) execute() {
 	r.mu.Lock()
 	if r.running {
@@ -255,12 +333,37 @@ func (r *runner) execute() {
 	r.running = true
 	r.mu.Unlock()
 
+	drains := 0
 	for {
+		before := r.remaining()
 		r.runOnce()
+
+		// A fresh human trigger arrived during the run — honor it first and reset
+		// the drain budget (human activity restarts the drain accounting).
 		r.mu.Lock()
 		if r.pending {
 			r.pending = false
 			r.mu.Unlock()
+			drains = 0
+			continue
+		}
+		r.mu.Unlock()
+
+		// Internal bounded drain: only when the run made progress and work remains.
+		after := r.remaining()
+		if after > 0 && after < before && drains < r.maxDrains {
+			drains++
+			time.Sleep(r.drainDelay)
+			continue
+		}
+
+		// Stop. Re-check pending under the lock so a trigger that raced the drain
+		// decision above is not lost (mirrors the single-flight handoff).
+		r.mu.Lock()
+		if r.pending {
+			r.pending = false
+			r.mu.Unlock()
+			drains = 0
 			continue
 		}
 		r.running = false

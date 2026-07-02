@@ -43,6 +43,11 @@ func migrate(db *sql.DB) error {
 		`ALTER TABLE documents ADD COLUMN approved_version_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE comments ADD COLUMN post_approval INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE comments ADD COLUMN processing_until TEXT`,
+		// Stale-claim recovery: the instant a comment last entered 'claimed'
+		// status. A legacy claimed row has NULL here → treated as a stale claim
+		// (re-surfaced), which is exactly the recovery we want for comments
+		// stranded before this column existed.
+		`ALTER TABLE comments ADD COLUMN claimed_at TEXT`,
 		// Multi-project: docs are keyed by (project, path). A pre-existing database
 		// gets the column here; fresh databases already have it from schema.sql.
 		`ALTER TABLE documents ADD COLUMN project TEXT NOT NULL DEFAULT ''`,
