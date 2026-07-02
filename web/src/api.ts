@@ -24,7 +24,16 @@ export type DocView = {
 // server; a bare string (older single-docs server) and path (oldest server) stay
 // accepted for back-compat.
 export type Project = { name: string; root?: string; docs?: string[] | string; path?: string };
-export type Suggestion = { id: string; proposedContent: string; state: string };
+export type Suggestion = {
+  id: string;
+  proposedContent: string;
+  state: string;
+  // The content of the version the suggestion was proposed AGAINST. Used to
+  // render a read-only historical diff (againstContent → proposedContent) once a
+  // suggestion is accepted/rejected — post-accept the current content already
+  // equals proposedContent, so a current-vs-proposed diff would show nothing.
+  againstContent?: string;
+};
 
 // Row is the shape of one diff line, shared by the client-built single-file
 // diff (suggestion/diff.ts) and the folder view (built from pending suggestions).
@@ -108,4 +117,36 @@ export async function resolve(commentId: string): Promise<unknown> {
 export async function rejectSuggestion(commentId: string): Promise<unknown> {
   const r = await fetch(`/api/comments/${commentId}/reject`, { method: "POST" });
   return r.ok ? r.json().catch(() => null) : null;
+}
+
+// AppConfig is the subset of /api/config the UI reads directly. version is "dev"
+// for local builds and the release tag otherwise.
+export type AppConfig = { version: string };
+export async function getConfig(): Promise<AppConfig | null> {
+  const r = await fetch("/api/config");
+  return r.ok ? r.json() : null;
+}
+
+// Settings is the editable subset of a project's outbox.yaml, keyed by the
+// outbox.yaml field names (the same keys the PUT endpoint accepts).
+export type Settings = { auto_update: boolean; auto_reply: boolean; agent_cmd: string };
+
+// getSettings reads the current project's editable outbox.yaml fields. In
+// multi-project mode pass the selected project name; single-folder mode ignores it.
+export async function getSettings(project = ""): Promise<Settings | null> {
+  const q = project ? `?project=${encodeURIComponent(project)}` : "";
+  const r = await fetch(`/api/settings${q}`);
+  return r.ok ? r.json() : null;
+}
+
+// putSettings writes the given editable fields to the project's outbox.yaml,
+// preserving comments + unmanaged keys. Throws with the server message on error.
+export async function putSettings(values: Partial<Settings>, project = ""): Promise<Settings> {
+  const q = project ? `?project=${encodeURIComponent(project)}` : "";
+  const r = await fetch(`/api/settings${q}`, { method: "PUT", body: JSON.stringify(values) });
+  if (!r.ok) {
+    const msg = await r.json().then((j) => j?.error).catch(() => null);
+    throw new Error(msg || `save failed (${r.status})`);
+  }
+  return r.json();
 }
