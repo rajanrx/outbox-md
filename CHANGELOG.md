@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.1](https://github.com/rajanrx/outbox-md/compare/v0.13.0...v0.13.1) (2026-07-02)
+
+
+### Bug Fixes
+
+* **ui:** stop fallback-poll flicker (diff before render + gate poll on SSE health) ([9ddbbfb](https://github.com/rajanrx/outbox-md/commit/9ddbbfb360ed662e76925a9d44af4740a49e8965))
+* **ui:** stop fallback-poll flicker (diff-before-render + SSE-gated poll) ([74cb460](https://github.com/rajanrx/outbox-md/commit/74cb460411f6ea4ea633c26be15b347a9127aaca))
+
 ## [0.13.0](https://github.com/rajanrx/outbox-md/compare/v0.12.0...v0.13.0) (2026-07-01)
 
 
