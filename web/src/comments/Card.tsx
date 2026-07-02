@@ -79,7 +79,16 @@ export function Card({ comment, currentContent, docPath = "", active = false, pi
   }, [active]);
 
   const stop = (e: React.MouseEvent, fn?: () => void) => { e.stopPropagation(); fn?.(); };
-  const sendReply = async () => { if (!draft.trim()) return; await reply(comment.id, draft); setDraft(""); await load(); };
+  const sendReply = async () => {
+    if (!draft.trim()) return;
+    try {
+      await reply(comment.id, draft);
+      setDraft("");
+      await load();
+    } catch {
+      // reply() throws on a non-OK POST; keep the draft so the comment isn't lost.
+    }
+  };
 
   // A comment carries a suggestion in one of two viewable shapes:
   //  • INTERACTIVE — the latest suggestion is still 'proposed' (excerpt + See diff

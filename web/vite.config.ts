@@ -16,5 +16,5 @@ export default defineConfig({
     },
   },
   build: { outDir: "dist" },
-  test: { environment: "node" },
+  test: { environment: "node", setupFiles: ["./vitest.setup.ts"] },
 });

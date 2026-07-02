@@ -69,7 +69,47 @@
 
 /* diagrams float on the page — no heavy frame */
 .mermaid-block {
+  position: relative;
   margin: 2em 0; padding: 8px 0; overflow: auto; text-align: center;
 }
 .mermaid-block svg { display: block; margin: 0 auto; width: 100%; height: auto; max-width: 760px; }
 .mermaid-block.wide svg { max-width: 100%; }
+
+/* per-diagram hover toolbar (Show code / Fullscreen) */
+.mermaid-toolbar {
+  position: absolute; top: 6px; right: 6px; z-index: 2;
+  display: flex; gap: 4px;
+  opacity: 0; transition: opacity .12s var(--ease, ease);
+}
+.mermaid-block:hover .mermaid-toolbar,
+.mermaid-toolbar:focus-within { opacity: 1; }
+.mermaid-tool {
+  font-family: var(--font-mono, monospace); font-size: 12px; line-height: 1;
+  padding: 4px 7px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--paper, #fff); color: var(--ink); cursor: pointer;
+}
+.mermaid-tool:hover:not(:disabled) { background: var(--paper-2); color: var(--accent, #B27613); }
+.mermaid-tool.on { color: var(--accent, #B27613); border-color: var(--accent, #B27613); }
+.mermaid-tool:disabled { opacity: .4; cursor: default; }
+/* mermaid SOURCE view — selectable, left-aligned code */
+.mermaid-source {
+  text-align: left; margin: 0; padding: 12px 14px;
+  background: var(--paper-2); border: 1px solid var(--line); border-radius: 8px;
+  overflow: auto; white-space: pre; font-family: var(--font-mono, monospace); font-size: 13px;
+}
+.mermaid-source code { background: none; border: 0; padding: 0; color: inherit; }
+.mermaid-error { text-align: left; color: #b3261e; margin: 0; }
+
+/* fullscreen overlay — the same rendered SVG, blown up */
+.mermaid-fs-backdrop {
+  position: fixed; inset: 0; z-index: 1000;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(20, 18, 14, .62); padding: 4vmin;
+}
+.mermaid-fs {
+  position: relative; background: #fff; border-radius: 12px;
+  max-width: 96vw; max-height: 92vh; overflow: auto; padding: 40px 28px 28px;
+  box-shadow: 0 24px 60px rgba(0,0,0,.35);
+}
+.mermaid-fs-close { position: absolute; top: 10px; right: 10px; }
+.mermaid-fs-body svg { display: block; width: 100%; height: auto; max-width: min(92vw, 1600px); }
