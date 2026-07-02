@@ -723,11 +723,11 @@ func registryPath() string { return filepath.Join(configHomeDir(), "projects.jso
 // (<OUTBOX_DIR>/.outbox/outbox.db). Keeping this in lock-step with buildServer is
 // essential — a drifting path would open a fresh empty DB and make `outbox retry`
 // silently re-queue nothing.
-func dbPath(multi bool) string {
+func dbPath(multi bool, dir string) string {
 	if multi {
 		return filepath.Join(configHomeDir(), "outbox.db")
 	}
-	return filepath.Join(getenv("OUTBOX_DIR", "."), ".outbox", "outbox.db")
+	return filepath.Join(dir, ".outbox", "outbox.db")
 }
 
 // retryCmd re-queues stranded (claimed-but-unfinished) comments back to open so a
@@ -741,6 +741,10 @@ func retryCmd(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("retry", flag.ContinueOnError)
 	fs.SetOutput(out)
 	fs.Usage = func() { usageFor(out, "retry") }
+	// -dir resolves the single-folder DB the same way serve/up does (flag >
+	// OUTBOX_DIR > "."), so `outbox retry -dir docs` finds docs/.outbox/outbox.db
+	// rather than looking under the cwd.
+	dir := fs.String("dir", getenv("OUTBOX_DIR", "."), "single-folder served dir (to locate its .outbox DB)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -777,7 +781,7 @@ func retryCmd(args []string, out io.Writer) error {
 		targets = []registry.Project{{Name: ""}}
 	}
 
-	file := dbPath(multi)
+	file := dbPath(multi, *dir)
 	if _, err := os.Stat(file); os.IsNotExist(err) {
 		fmt.Fprintf(out, "no review database at %s — nothing to re-queue\n", file)
 		return nil
