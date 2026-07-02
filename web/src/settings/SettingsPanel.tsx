@@ -89,11 +89,15 @@ export function SettingsPanel({ project, projectLabel, onClose }: {
                 onChange={(e) => set("agent_cmd", e.target.value)}
               />
             </label>
+            <p className="settings-note">
+              These settings are read when outbox starts. <b>Restart</b> <code>outbox up</code>
+              {" "}for a change (auto-reply, agent command, auto-update) to take effect on the running server.
+            </p>
           </div>
         )}
         {error && <p className="settings-error" role="alert">{error}</p>}
         <div className="modal-actions">
-          {saved && <span className="settings-saved">Saved ✓</span>}
+          {saved && <span className="settings-saved">Saved ✓ · restart to apply</span>}
           <button className="gov-btn ghost" onClick={onClose}>Close</button>
           <button className="gov-btn" disabled={busy || values === null} onClick={save}>
             {busy ? "Saving…" : "Save"}

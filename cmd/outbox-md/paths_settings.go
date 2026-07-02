@@ -249,4 +249,3 @@ func validateField(f settingsField, raw string) (string, error) {
 		return "", fmt.Errorf("unsupported field kind %q", f.kind)
 	}
 }
-
