@@ -3,21 +3,28 @@
 // a parameter (the CLI resolves that path from the user config dir), so the core
 // is trivially unit-testable against a temp file and never touches global state.
 //
-// A registry entry is a {name, root, docs, agent} record. name is a short label
-// (the project root's basename, disambiguated on collision); root is the absolute
-// project repo root on disk; docs is a LIST of spec subpaths relative to root
-// (each "." = the whole root) — a project serves the UNION of its docs subtrees;
-// agent is an optional per-project agent command (empty ⇒ use the global
-// default). name is what the server routes disk writes by, so names MUST be
-// unique — Add enforces that. agent is the command the auto-reply engine spawns
-// for THIS project (in root), letting different projects use different AIs.
+// A registry entry is a {name, root, docs, agents, chair} record. name is a short
+// label (the project root's basename, disambiguated on collision); root is the
+// absolute project repo root on disk; docs is a LIST of spec subpaths relative to
+// root (each "." = the whole root) — a project serves the UNION of its docs
+// subtrees; agents is the LIST of per-project agent commands (the council members)
+// and chair is the command that synthesises the verdict. name is what the server
+// routes disk writes by, so names MUST be unique — Add enforces that. The members
+// are the commands the auto-reply engine spawns for THIS project (in root), letting
+// different projects use different AIs.
+//
+// Council vs single-agent: a project with len(agents) <= 1 is single-agent mode
+// exactly as today (the lone member — or, when empty, the global default — is the
+// auto-reply agent; no chair). len(agents) >= 2 is council mode and REQUIRES a
+// non-empty chair (Add enforces this at registration time).
 //
 // Back-compat: Load migrates older shapes so existing registries keep working;
-// the new list shape is written on the next Save. Tolerated on read:
+// the new shape is written on the next Save. Tolerated on read:
 //   - legacy {name, path}            → {name, root: path, docs: ["."]}
 //   - single-string {docs: "x"}      → {docs: ["x"]}
 //   - list          {docs:["a","b"]} → as-is
 //   - a migration/legacy entry with no docs → {docs: ["."]}
+//   - legacy single-string {agent: "x"} → {agents: ["x"]}
 package registry
 
 import (
@@ -41,9 +48,43 @@ type Project struct {
 	// keyed relative to Root, so the same filename under two subpaths never
 	// collides. An empty list is normalised to ["."].
 	Docs []string `json:"docs"`
-	// Agent is the optional per-project agent command template ({prompt} token).
-	// Empty ⇒ the auto-reply engine falls back to the global default command.
-	Agent string `json:"agent,omitempty"`
+	// Agents is the list of per-project agent command templates ({prompt} token) —
+	// the council members. An empty list ⇒ the auto-reply engine falls back to the
+	// global default command; a single entry is single-agent mode (that lone member
+	// is the auto-reply agent); two or more entries is council mode, which requires
+	// a non-empty Chair.
+	Agents []string `json:"agents,omitempty"`
+	// Chair is the command template ({prompt} token) that synthesises the council
+	// verdict. Required (non-empty) when len(Agents) >= 2; unused (and empty) in
+	// single-agent mode.
+	Chair string `json:"chair,omitempty"`
+}
+
+// IsCouncil reports whether the project runs in council mode: two or more members,
+// which (per Add's validation) always carries a chair.
+func (p Project) IsCouncil() bool { return len(p.Members()) >= 2 }
+
+// Members returns the project's agent commands (the council members), trimmed of
+// empty entries. It is the normalised view the orchestration path iterates.
+func (p Project) Members() []string {
+	out := make([]string, 0, len(p.Agents))
+	for _, a := range p.Agents {
+		if strings.TrimSpace(a) != "" {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// AgentCmd returns the single-agent auto-reply command: the lone member (the first
+// member if several are configured), or "" when no members are set (the project
+// inherits the global default). This is what the existing single-agent auto-reply
+// path consumes; council orchestration over Members() is wired separately.
+func (p Project) AgentCmd() string {
+	if m := p.Members(); len(m) > 0 {
+		return m[0]
+	}
+	return ""
 }
 
 // SpecDirs is the set of directories whose .md files are served: Root joined
@@ -83,25 +124,45 @@ func (p Project) DocRoots() []string {
 	return out
 }
 
-// UnmarshalJSON reads the current {name,root,docs:[…],agent} shape and tolerantly
-// migrates older shapes so a registry written by an older outbox keeps working:
-// legacy {name,path} → root ← path; single-string {docs:"x"} → docs ← ["x"]; an
-// absent docs (legacy or migrated) → ["."]. Empty entries within the list are
-// normalised to ".".
+// UnmarshalJSON reads the current {name,root,docs:[…],agents:[…],chair} shape and
+// tolerantly migrates older shapes so a registry written by an older outbox keeps
+// working: legacy {name,path} → root ← path; single-string {docs:"x"} → docs ←
+// ["x"]; an absent docs (legacy or migrated) → ["."]; legacy single-string
+// {agent:"x"} → agents ← ["x"]. Empty docs entries within the list are normalised
+// to ".". No council validation happens on read — Add owns that at registration.
 func (p *Project) UnmarshalJSON(b []byte) error {
 	var raw struct {
-		Name  string          `json:"name"`
-		Root  string          `json:"root"`
-		Path  string          `json:"path"` // legacy field
-		Docs  json.RawMessage `json:"docs"` // string OR []string OR absent
-		Agent string          `json:"agent"`
+		Name   string          `json:"name"`
+		Root   string          `json:"root"`
+		Path   string          `json:"path"`  // legacy field
+		Docs   json.RawMessage `json:"docs"`  // string OR []string OR absent
+		Agent  string          `json:"agent"` // legacy single-agent field
+		Agents []string        `json:"agents"`
+		Chair  string          `json:"chair"`
 	}
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
 	}
 	p.Name = raw.Name
 	p.Root = raw.Root
-	p.Agent = raw.Agent
+	p.Chair = raw.Chair
+	// Agents: prefer the new list; fall back to the legacy single-string `agent`
+	// (migrated to a one-element list). Empty members are dropped.
+	agents := raw.Agents
+	if len(agents) == 0 && strings.TrimSpace(raw.Agent) != "" {
+		agents = []string{raw.Agent}
+	}
+	cleanedAgents := make([]string, 0, len(agents))
+	for _, a := range agents {
+		if strings.TrimSpace(a) != "" {
+			cleanedAgents = append(cleanedAgents, a)
+		}
+	}
+	if len(cleanedAgents) > 0 {
+		p.Agents = cleanedAgents
+	} else {
+		p.Agents = nil
+	}
 	// Legacy {name,path}: adopt path as the root when no root was recorded.
 	if p.Root == "" && raw.Path != "" {
 		p.Root = raw.Path
@@ -166,7 +227,7 @@ func Load(file string) ([]Project, error) {
 
 // Save writes projects to file (pretty-printed, trailing newline), creating the
 // parent directory if needed. It replaces the file wholesale, always in the new
-// {name,root,docs,agent} shape.
+// {name,root,docs,agents,chair} shape.
 func Save(file string, projects []Project) error {
 	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
 		return err
@@ -188,13 +249,16 @@ func Save(file string, projects []Project) error {
 // counts, but the list may not be empty. Each docs entry must resolve to an
 // existing directory UNDER root (traversal is rejected, on the symlink-resolved
 // paths per entry); a single bad entry fails the whole add. Entries are cleaned
-// and de-duplicated. agentCmd, when non-empty, is stored as this project's
-// per-project agent command. Registration is idempotent by (root, docs-set):
-// re-adding the same pair returns the existing entry unchanged. The entry's name
-// is basename(root), disambiguated ("outbox-md", "outbox-md-2", …) when a
-// DIFFERENT entry already holds that name, because the server routes disk writes
-// by name.
-func Add(file, root string, docs []string, agentCmd string) (Project, error) {
+// and de-duplicated. agents are the per-project agent commands (the council
+// members); chair is the verdict-synthesising command. Empty member entries are
+// dropped. Council rule: with two or more members a non-empty chair is REQUIRED
+// (an empty chair is a clear error); zero or one member is single-agent mode and
+// needs no chair (zero members ⇒ the project inherits the global default at
+// auto-reply time). Registration is idempotent by (root, docs-set): re-adding the
+// same pair returns the existing entry unchanged. The entry's name is
+// basename(root), disambiguated ("outbox-md", "outbox-md-2", …) when a DIFFERENT
+// entry already holds that name, because the server routes disk writes by name.
+func Add(file, root string, docs []string, agents []string, chair string) (Project, error) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return Project{}, err
@@ -212,6 +276,20 @@ func Add(file, root string, docs []string, agentCmd string) (Project, error) {
 
 	if len(docs) == 0 {
 		return Project{}, fmt.Errorf("cannot add %q: at least one docs path is required (use \".\" for the whole repo)", root)
+	}
+
+	// Members + chair: drop empty member entries, then enforce the council rule.
+	// Two or more members is council mode and requires a chair; zero or one member
+	// is single-agent mode (zero ⇒ inherit the global default) and needs none.
+	members := make([]string, 0, len(agents))
+	for _, a := range agents {
+		if strings.TrimSpace(a) != "" {
+			members = append(members, a)
+		}
+	}
+	chair = strings.TrimSpace(chair)
+	if len(members) >= 2 && chair == "" {
+		return Project{}, fmt.Errorf("cannot add %q: council mode (%d members) requires a chair — pass --chair <preset> or --chair-cmd \"<cmd>\"", root, len(members))
 	}
 	// Resolve root's symlinks ONCE; each docs entry is checked against it.
 	resolvedRoot, err := filepath.EvalSymlinks(absRoot)
@@ -273,7 +351,11 @@ func Add(file, root string, docs []string, agentCmd string) (Project, error) {
 	}
 
 	name := uniqueName(filepath.Base(absRoot), projects)
-	p := Project{Name: name, Root: absRoot, Docs: cleaned, Agent: agentCmd}
+	var storedAgents []string
+	if len(members) > 0 {
+		storedAgents = members
+	}
+	p := Project{Name: name, Root: absRoot, Docs: cleaned, Agents: storedAgents, Chair: chair}
 	projects = append(projects, p)
 	if err := Save(file, projects); err != nil {
 		return Project{}, err

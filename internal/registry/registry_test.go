@@ -34,7 +34,7 @@ func TestAddRootDocsAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	p, err := Add(file, root, []string{"docs/specs"}, "codex exec {prompt}")
+	p, err := Add(file, root, []string{"docs/specs"}, []string{"codex exec {prompt}"}, "")
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}
@@ -47,8 +47,14 @@ func TestAddRootDocsAgent(t *testing.T) {
 	if len(p.Docs) != 1 || p.Docs[0] != "docs/specs" {
 		t.Fatalf("docs = %v, want [docs/specs]", p.Docs)
 	}
-	if p.Agent != "codex exec {prompt}" {
-		t.Fatalf("agent = %q, want the codex command", p.Agent)
+	if len(p.Agents) != 1 || p.Agents[0] != "codex exec {prompt}" {
+		t.Fatalf("agents = %v, want the codex command", p.Agents)
+	}
+	if p.AgentCmd() != "codex exec {prompt}" {
+		t.Fatalf("AgentCmd = %q, want the codex command", p.AgentCmd())
+	}
+	if p.IsCouncil() {
+		t.Fatalf("IsCouncil = true, want false for a single member")
 	}
 	if dirs := p.SpecDirs(); len(dirs) != 1 || dirs[0] != spec {
 		t.Fatalf("SpecDirs = %v, want [%q]", dirs, spec)
@@ -69,15 +75,15 @@ func TestAddRootDocsAgent(t *testing.T) {
 func TestAddExplicitDotServesRoot(t *testing.T) {
 	file := regFile(t)
 	root := t.TempDir()
-	p, err := Add(file, root, []string{"."}, "")
+	p, err := Add(file, root, []string{"."}, nil, "")
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 	if len(p.Docs) != 1 || p.Docs[0] != "." {
 		t.Fatalf("docs = %v, want [.]", p.Docs)
 	}
-	if p.Agent != "" {
-		t.Fatalf("agent = %q, want empty", p.Agent)
+	if len(p.Agents) != 0 || p.AgentCmd() != "" {
+		t.Fatalf("agents = %v / AgentCmd = %q, want empty (inherit global default)", p.Agents, p.AgentCmd())
 	}
 	if dirs := p.SpecDirs(); len(dirs) != 1 || dirs[0] != p.Root {
 		t.Fatalf("SpecDirs = %v, want [root %q]", dirs, p.Root)
@@ -89,10 +95,10 @@ func TestAddExplicitDotServesRoot(t *testing.T) {
 func TestAddZeroDocsRejected(t *testing.T) {
 	file := regFile(t)
 	root := t.TempDir()
-	if _, err := Add(file, root, nil, ""); err == nil {
+	if _, err := Add(file, root, nil, nil, ""); err == nil {
 		t.Fatal("expected error adding with a nil docs list")
 	}
-	if _, err := Add(file, root, []string{}, ""); err == nil {
+	if _, err := Add(file, root, []string{}, nil, ""); err == nil {
 		t.Fatal("expected error adding with an empty docs list")
 	}
 	if list, _ := List(file); len(list) != 0 {
@@ -111,7 +117,7 @@ func TestAddMultipleDocsStoresAll(t *testing.T) {
 		}
 	}
 	// A duplicate entry is deduped, not stored twice.
-	p, err := Add(file, root, []string{"specs", "api-specs", "specs"}, "")
+	p, err := Add(file, root, []string{"specs", "api-specs", "specs"}, nil, "")
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}
@@ -134,7 +140,7 @@ func TestAddBadDocsAmongGoodRejected(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "specs"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Add(file, root, []string{"specs", "nope"}, ""); err == nil {
+	if _, err := Add(file, root, []string{"specs", "nope"}, nil, ""); err == nil {
 		t.Fatal("expected error: a missing docs entry among good ones must fail the add")
 	}
 	if list, _ := List(file); len(list) != 0 {
@@ -145,11 +151,11 @@ func TestAddBadDocsAmongGoodRejected(t *testing.T) {
 func TestAddIsIdempotentByRootAndDocs(t *testing.T) {
 	file := regFile(t)
 	root := t.TempDir()
-	if _, err := Add(file, root, []string{"."}, ""); err != nil {
+	if _, err := Add(file, root, []string{"."}, nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	// Adding the same (root, docs) again must not duplicate it.
-	if _, err := Add(file, root, []string{"."}, ""); err != nil {
+	if _, err := Add(file, root, []string{"."}, nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	list, _ := List(file)
@@ -169,10 +175,10 @@ func TestAddIdempotentRegardlessOfDocsOrder(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := Add(file, root, []string{"specs", "api-specs"}, ""); err != nil {
+	if _, err := Add(file, root, []string{"specs", "api-specs"}, nil, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Add(file, root, []string{"api-specs", "specs"}, ""); err != nil {
+	if _, err := Add(file, root, []string{"api-specs", "specs"}, nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	if list, _ := List(file); len(list) != 1 {
@@ -182,7 +188,7 @@ func TestAddIdempotentRegardlessOfDocsOrder(t *testing.T) {
 
 func TestAddMissingRootErrors(t *testing.T) {
 	file := regFile(t)
-	if _, err := Add(file, filepath.Join(t.TempDir(), "does-not-exist"), []string{"."}, ""); err == nil {
+	if _, err := Add(file, filepath.Join(t.TempDir(), "does-not-exist"), []string{"."}, nil, ""); err == nil {
 		t.Fatal("expected error adding a missing directory")
 	}
 }
@@ -193,7 +199,7 @@ func TestAddFileNotDirErrors(t *testing.T) {
 	if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Add(file, f, []string{"."}, ""); err == nil {
+	if _, err := Add(file, f, []string{"."}, nil, ""); err == nil {
 		t.Fatal("expected error adding a file (not a directory)")
 	}
 }
@@ -205,12 +211,12 @@ func TestAddDocsTraversalRejected(t *testing.T) {
 	file := regFile(t)
 	root := t.TempDir()
 	for _, docs := range []string{"../evil", "../../etc", "/etc"} {
-		if _, err := Add(file, root, []string{docs}, ""); err == nil {
+		if _, err := Add(file, root, []string{docs}, nil, ""); err == nil {
 			t.Fatalf("docs %q should be rejected as traversal", docs)
 		}
 	}
 	// A docs pointing at a non-existent (but non-escaping) dir is also rejected.
-	if _, err := Add(file, root, []string{"nope"}, ""); err == nil {
+	if _, err := Add(file, root, []string{"nope"}, nil, ""); err == nil {
 		t.Fatal("docs pointing at a missing dir should be rejected")
 	}
 }
@@ -225,14 +231,14 @@ func TestAddRejectsSymlinkedDocsEscapingRoot(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(root, "link")); err != nil {
 		t.Skip("symlinks unsupported here: " + err.Error())
 	}
-	if _, err := Add(file, root, []string{"link"}, ""); err == nil {
+	if _, err := Add(file, root, []string{"link"}, nil, ""); err == nil {
 		t.Fatal("docs symlink escaping root should be rejected")
 	}
 	// A real subdir under root is still accepted (fix doesn't over-reject).
 	if err := os.Mkdir(filepath.Join(root, "docs"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Add(file, root, []string{"docs"}, ""); err != nil {
+	if _, err := Add(file, root, []string{"docs"}, nil, ""); err != nil {
 		t.Fatalf("legit docs subdir wrongly rejected: %v", err)
 	}
 }
@@ -249,11 +255,11 @@ func TestAddDisambiguatesNameCollision(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	pa, err := Add(file, a, []string{"."}, "")
+	pa, err := Add(file, a, []string{"."}, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	pb, err := Add(file, b, []string{"."}, "")
+	pb, err := Add(file, b, []string{"."}, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,8 +274,8 @@ func TestAddDisambiguatesNameCollision(t *testing.T) {
 func TestRemoveByNameAndRoot(t *testing.T) {
 	file := regFile(t)
 	d1, d2 := t.TempDir(), t.TempDir()
-	p1, _ := Add(file, d1, []string{"."}, "")
-	p2, _ := Add(file, d2, []string{"."}, "")
+	p1, _ := Add(file, d1, []string{"."}, nil, "")
+	p2, _ := Add(file, d2, []string{"."}, nil, "")
 
 	// Remove by name.
 	removed, err := Remove(file, p1.Name)
@@ -408,8 +414,8 @@ func TestMigrateLegacyPathEntry(t *testing.T) {
 	if len(p.Docs) != 1 || p.Docs[0] != "." {
 		t.Fatalf("docs = %v, want [.]", p.Docs)
 	}
-	if p.Agent != "" {
-		t.Fatalf("agent = %q, want empty", p.Agent)
+	if len(p.Agents) != 0 {
+		t.Fatalf("agents = %v, want empty", p.Agents)
 	}
 	if dirs := p.SpecDirs(); len(dirs) != 1 || dirs[0] != "/work/app/docs" {
 		t.Fatalf("SpecDirs = %v, want [the legacy path]", dirs)
@@ -463,12 +469,13 @@ func TestLoadMixedAndMalformed(t *testing.T) {
 	}
 }
 
-// TestSaveWritesNewShape verifies Save persists the {name,root,docs,agent} shape
-// (and never the legacy path key), so a migrated registry is rewritten forward.
+// TestSaveWritesNewShape verifies Save persists the {name,root,docs,agents} shape
+// (and never the legacy path/agent keys), so a migrated registry is rewritten
+// forward.
 func TestSaveWritesNewShape(t *testing.T) {
 	file := regFile(t)
 	root := t.TempDir()
-	if _, err := Add(file, root, []string{"."}, "claude -p {prompt}"); err != nil {
+	if _, err := Add(file, root, []string{"."}, []string{"claude -p {prompt}"}, ""); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(file)
@@ -476,7 +483,7 @@ func TestSaveWritesNewShape(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(b)
-	for _, want := range []string{`"name"`, `"root"`, `"docs"`, `"agent"`} {
+	for _, want := range []string{`"name"`, `"root"`, `"docs"`, `"agents"`} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("saved registry missing %s:\n%s", want, s)
 		}
@@ -520,5 +527,91 @@ func TestLoadDocsShapes(t *testing.T) {
 	}
 	if got := list[3].Docs; len(got) != 1 || got[0] != "." {
 		t.Errorf("missing docs = %v, want [.]", got)
+	}
+}
+
+// TestAddCouncilMembersAndChair registers a council (two members + a chair) and
+// verifies every field round-trips through Save/Load, IsCouncil is true, and the
+// persisted file carries the new agents/chair shape.
+func TestAddCouncilMembersAndChair(t *testing.T) {
+	file := regFile(t)
+	root := t.TempDir()
+
+	members := []string{"claude -p {prompt} --allowedTools mcp__outbox-md__*", "codex exec {prompt}"}
+	chair := "claude -p {prompt} --allowedTools mcp__outbox-md__*"
+	p, err := Add(file, root, []string{"."}, members, chair)
+	if err != nil {
+		t.Fatalf("Add council: %v", err)
+	}
+	if !p.IsCouncil() {
+		t.Fatalf("IsCouncil = false, want true for two members")
+	}
+	if got := p.Members(); len(got) != 2 || got[0] != members[0] || got[1] != members[1] {
+		t.Fatalf("Members = %v, want %v", got, members)
+	}
+	if p.Chair != chair {
+		t.Fatalf("Chair = %q, want %q", p.Chair, chair)
+	}
+	if p.AgentCmd() != members[0] {
+		t.Fatalf("AgentCmd = %q, want the first member %q", p.AgentCmd(), members[0])
+	}
+
+	// Round-trip through disk: the council survives Load, and Save wrote the new
+	// agents/chair keys.
+	list, err := List(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || !list[0].IsCouncil() || len(list[0].Agents) != 2 || list[0].Chair != chair {
+		t.Fatalf("reloaded council = %+v, want 2 members + chair", list)
+	}
+	b, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	if !strings.Contains(s, `"agents"`) || !strings.Contains(s, `"chair"`) {
+		t.Fatalf("saved council missing agents/chair keys:\n%s", s)
+	}
+}
+
+// TestAddCouncilRequiresChair verifies the council rule: two or more members with
+// no chair is rejected at registration.
+func TestAddCouncilRequiresChair(t *testing.T) {
+	file := regFile(t)
+	root := t.TempDir()
+	if _, err := Add(file, root, []string{"."}, []string{"claude -p {prompt}", "codex exec {prompt}"}, ""); err == nil {
+		t.Fatal("expected error adding a council (>=2 members) without a chair")
+	}
+	// A single member with no chair is fine (single-agent mode).
+	if _, err := Add(file, root, []string{"."}, []string{"claude -p {prompt}"}, ""); err != nil {
+		t.Fatalf("single member without a chair should succeed: %v", err)
+	}
+}
+
+// TestMigrateLegacyAgentToAgents verifies a legacy single-string {agent:"x"} entry
+// migrates to Agents:["x"] on read, staying single-agent (no chair).
+func TestMigrateLegacyAgentToAgents(t *testing.T) {
+	file := regFile(t)
+	legacy := `[{"name":"app","root":"/work/app","docs":["."],"agent":"codex exec {prompt}"}]`
+	if err := os.WriteFile(file, []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	list, err := Load(file)
+	if err != nil {
+		t.Fatalf("Load legacy agent: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("legacy load = %d entries, want 1", len(list))
+	}
+	p := list[0]
+	if len(p.Agents) != 1 || p.Agents[0] != "codex exec {prompt}" {
+		t.Fatalf("agents = %v, want [codex exec {prompt}]", p.Agents)
+	}
+	if p.AgentCmd() != "codex exec {prompt}" {
+		t.Fatalf("AgentCmd = %q, want the migrated command", p.AgentCmd())
+	}
+	if p.IsCouncil() {
+		t.Fatalf("IsCouncil = true, want false for a migrated single agent")
 	}
 }

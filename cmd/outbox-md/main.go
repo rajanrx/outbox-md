@@ -526,7 +526,7 @@ func autoReplyNotifier(root string, projects []registry.Project, cfg config.Conf
 	// whose root is the served dir — preserving the original single-cwd behaviour.
 	targets := make(map[string]autoreply.Target, len(projects))
 	for _, p := range projects {
-		targets[p.Name] = autoreply.Target{Root: p.Root, AgentCmd: p.Agent}
+		targets[p.Name] = autoreply.Target{Root: p.Root, AgentCmd: p.AgentCmd()}
 	}
 	return autoreply.New(autoreply.Config{
 		Enabled:  true,
@@ -866,13 +866,17 @@ func addProject(args []string, out io.Writer) error {
 		}
 		agent = resolved
 	}
-	p, err := registry.Add(registryPath(), root, docs, agent)
+	var agents []string
+	if agent != "" {
+		agents = []string{agent}
+	}
+	p, err := registry.Add(registryPath(), root, docs, agents, "")
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "registered project %q → %s (docs: %s)", p.Name, p.Root, strings.Join(p.Docs, ", "))
-	if p.Agent != "" {
-		fmt.Fprintf(out, " [agent: %s]", p.Agent)
+	if cmd := p.AgentCmd(); cmd != "" {
+		fmt.Fprintf(out, " [agent: %s]", cmd)
 	}
 	fmt.Fprintln(out)
 	return nil
@@ -927,8 +931,8 @@ func listProjectsCmd(out io.Writer) error {
 	}
 	for _, p := range projects {
 		line := fmt.Sprintf("%s\t%s", p.Name, projectLocations(p))
-		if p.Agent != "" {
-			line += "\t[" + p.Agent + "]"
+		if cmd := p.AgentCmd(); cmd != "" {
+			line += "\t[" + cmd + "]"
 		}
 		fmt.Fprintln(out, line)
 	}

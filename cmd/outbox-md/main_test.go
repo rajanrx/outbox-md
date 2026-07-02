@@ -612,7 +612,7 @@ func TestAddAgentCmdOverridesPreset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list) != 1 || list[0].Agent != "custom {prompt}" {
+	if len(list) != 1 || list[0].AgentCmd() != "custom {prompt}" {
 		t.Fatalf("stored agent = %+v, want custom {prompt}", list)
 	}
 }
@@ -671,7 +671,7 @@ func TestRemoveWholeProjectByName(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := registry.Add(filepath.Join(home, ".config", "outbox", "projects.json"), root, []string{"specs", "api-specs"}, ""); err != nil {
+	if _, err := registry.Add(filepath.Join(home, ".config", "outbox", "projects.json"), root, []string{"specs", "api-specs"}, nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	name := filepath.Base(root)
@@ -787,7 +787,7 @@ func TestPathsCmd(t *testing.T) {
 
 	// Register a project → multi-project mode.
 	root := t.TempDir()
-	if _, err := registry.Add(filepath.Join(home, ".config", "outbox", "projects.json"), root, []string{"."}, ""); err != nil {
+	if _, err := registry.Add(filepath.Join(home, ".config", "outbox", "projects.json"), root, []string{"."}, nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	var multi bytes.Buffer
@@ -911,7 +911,7 @@ func TestRetryCmdMultiProject(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", home)
 
 	projDir := t.TempDir()
-	p, err := registry.Add(registryPath(), projDir, []string{"."}, "")
+	p, err := registry.Add(registryPath(), projDir, []string{"."}, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -951,7 +951,7 @@ func TestRetryCmdNamedProject(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", home)
 	projDir := t.TempDir()
-	p, err := registry.Add(registryPath(), projDir, []string{"."}, "")
+	p, err := registry.Add(registryPath(), projDir, []string{"."}, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -979,7 +979,7 @@ func TestRetryCmdUnknownProjectErrors(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", home)
 	projDir := t.TempDir()
-	if _, err := registry.Add(registryPath(), projDir, []string{"."}, ""); err != nil {
+	if _, err := registry.Add(registryPath(), projDir, []string{"."}, nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
