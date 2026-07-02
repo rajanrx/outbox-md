@@ -11,7 +11,7 @@ import (
 	"github.com/mattn/go-isatty"
 	"github.com/rajanrx/outbox-md/internal/config"
 	"github.com/rajanrx/outbox-md/internal/registry"
-	"gopkg.in/yaml.v3"
+	"github.com/rajanrx/outbox-md/internal/settings"
 )
 
 // pathsCmd prints the resolved on-disk locations outbox uses, labelled and one
@@ -79,19 +79,6 @@ func boolStr(b bool) string {
 		return "true"
 	}
 	return "false"
-}
-
-// parseBoolLoose accepts the forms the settings command allows for a bool field:
-// true/false, 1/0, yes/no (and on/off). It returns the parsed value and whether
-// the input was recognised.
-func parseBoolLoose(s string) (bool, bool) {
-	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "true", "1", "yes", "on":
-		return true, true
-	case "false", "0", "no", "off":
-		return false, true
-	}
-	return false, false
 }
 
 // settingsCmd tunes the structured fields of ./outbox.yaml. With no args it runs
@@ -175,7 +162,7 @@ func settingsSet(path, key, value string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := writeYAMLKey(path, key, norm); err != nil {
+	if err := settings.WriteKey(path, key, norm, settings.KindBool); err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "✓ %s = %s\n", key, norm)
@@ -219,7 +206,7 @@ done:
 	fmt.Fprintf(out, "sources    [%s]  (read-only — edit in outbox.yaml)\n", trunc(strings.Join(cfg.Sources, ", "), 50))
 
 	for k, v := range updates {
-		if err := writeYAMLKey(path, k, v); err != nil {
+		if err := settings.WriteKey(path, k, v, settings.KindBool); err != nil {
 			return err
 		}
 	}
@@ -253,7 +240,7 @@ func structuredKeys() []string {
 func validateField(f settingsField, raw string) (string, error) {
 	switch f.kind {
 	case "bool":
-		b, ok := parseBoolLoose(raw)
+		b, ok := settings.ParseBoolLoose(raw)
 		if !ok {
 			return "", fmt.Errorf("%s expects a boolean (true/false, 1/0, yes/no)", f.key)
 		}
@@ -261,93 +248,4 @@ func validateField(f settingsField, raw string) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported field kind %q", f.kind)
 	}
-}
-
-// writeYAMLKey sets key=value in the root mapping of the YAML file at path,
-// preserving every other key (and, where yaml.v3 allows, surrounding comments) by
-// editing the parsed node tree in place rather than re-serialising a struct. A
-// missing key is appended; an existing scalar value is updated. The value is
-// written as a bool node (unquoted true/false).
-func writeYAMLKey(path, key, value string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return fmt.Errorf("outbox.yaml: %w", err)
-	}
-	root := documentRoot(&doc)
-	// A brand-new `outbox init` file is ALL comments — it unmarshals to an empty
-	// document or a null scalar, not a mapping (yaml.v3 doesn't surface the
-	// standalone comments on a re-marshallable node, so rebuilding the tree would
-	// wipe the starter guidance). For that nullish case, APPEND the key to the raw
-	// bytes: every original comment is preserved verbatim and the key is added.
-	// Only a genuinely non-mapping top level (e.g. a top-level list) is an error.
-	if !isMapping(root) {
-		if root != nil && !isNullish(root) {
-			return fmt.Errorf("outbox.yaml: top-level YAML is not a mapping")
-		}
-		out := data
-		if len(out) > 0 && out[len(out)-1] != '\n' {
-			out = append(out, '\n')
-		}
-		out = append(out, []byte(fmt.Sprintf("%s: %s\n", key, value))...)
-		return os.WriteFile(path, out, 0o644)
-	}
-	setScalarBool(root, key, value)
-
-	b, err := yaml.Marshal(&doc)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, b, 0o644)
-}
-
-// documentRoot returns the root node of a parsed YAML document (the first content
-// node of a DocumentNode), or nil when the document has no content.
-func documentRoot(doc *yaml.Node) *yaml.Node {
-	if doc.Kind == yaml.DocumentNode {
-		if len(doc.Content) == 0 {
-			return nil
-		}
-		return doc.Content[0]
-	}
-	return doc
-}
-
-// isMapping reports whether n is a usable mapping node.
-func isMapping(n *yaml.Node) bool { return n != nil && n.Kind == yaml.MappingNode }
-
-// isNullish reports whether n represents "no content" — a zero node or a null /
-// empty scalar (what a comment-only outbox.yaml unmarshals to). Such a root is
-// safe to replace/append to rather than erroring.
-func isNullish(n *yaml.Node) bool {
-	if n == nil || n.Kind == 0 {
-		return true
-	}
-	if n.Kind == yaml.ScalarNode {
-		v := strings.TrimSpace(n.Value)
-		return n.Tag == "!!null" || v == "" || v == "null" || v == "~"
-	}
-	return false
-}
-
-// setScalarBool sets key to a bool scalar (value must be "true"/"false") in the
-// mapping node, updating an existing entry or appending a new key/value pair.
-func setScalarBool(mapping *yaml.Node, key, value string) {
-	for i := 0; i+1 < len(mapping.Content); i += 2 {
-		if mapping.Content[i].Value == key {
-			v := mapping.Content[i+1]
-			v.Kind = yaml.ScalarNode
-			v.Tag = "!!bool"
-			v.Value = value
-			v.Style = 0
-			return
-		}
-	}
-	mapping.Content = append(mapping.Content,
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key},
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: value},
-	)
 }

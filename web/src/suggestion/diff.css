@@ -88,6 +88,8 @@
 .suggestion-state {
   font-size: 12px; color: var(--chrome-soft); text-transform: capitalize;
 }
+.suggestion-state.state-accepted { color: var(--diff-add-ink); }
+.suggestion-state.state-rejected { color: var(--diff-del-ink); }
 
 /* ── inline suggestion excerpt (compact preview in the comment card) ── */
 .suggestion-head { display: flex; align-items: center; justify-content: space-between; }

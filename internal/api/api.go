@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/rajanrx/outbox-md/internal/config"
 	"github.com/rajanrx/outbox-md/internal/domain"
 	"github.com/rajanrx/outbox-md/internal/service"
+	"github.com/rajanrx/outbox-md/internal/settings"
 	"github.com/rajanrx/outbox-md/internal/sse"
 	"github.com/rajanrx/outbox-md/internal/store"
 )
@@ -60,7 +63,12 @@ func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub) http.Handler {
 	})
 
 	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, svc.Config(), nil)
+		// Embed the Config (its fields promote to the top level) and add the build
+		// version so the UI can show a version badge without a second request.
+		writeJSON(w, struct {
+			config.Config
+			Version string `json:"version"`
+		}{Config: svc.Config(), Version: svc.Version()}, nil)
 	})
 
 	// The projects being served: [{name, root, docs}]. Single-folder mode returns
@@ -199,7 +207,19 @@ func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub) http.Handler {
 			http.Error(w, "no suggestion", http.StatusNotFound)
 			return
 		}
-		writeJSON(w, sg, nil)
+		// Include the against-version content so the UI can render a read-only
+		// HISTORICAL diff (against-version → proposed) once a suggestion is accepted
+		// or rejected — post-accept the current content already equals the proposed
+		// content, so a current-vs-proposed diff would show nothing. Best-effort: a
+		// missing version just leaves againstContent empty.
+		against := ""
+		if ver, err := st.GetVersion(sg.AgainstVersionID); err == nil {
+			against = ver.Content
+		}
+		writeJSON(w, struct {
+			domain.Suggestion
+			AgainstContent string `json:"againstContent"`
+		}{Suggestion: sg, AgainstContent: against}, nil)
 	})
 
 	// Council read model (roadmap §3): the candidate set + candidates + synthesis.
@@ -344,6 +364,73 @@ func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub) http.Handler {
 		writeJSON(w, map[string]any{"ok": true}, nil)
 	})
 
+	// Settings: read/write the EDITABLE structured fields of a project's
+	// outbox.yaml. GET returns the per-project values (unlike /api/config, which
+	// carries only the root/global config in multi-project mode); PUT writes them
+	// back through the shared comment-preserving write path (internal/settings), so
+	// unmanaged keys (sources, webhook, …) and comments are never clobbered. The
+	// project is identified by ?project=<name>; single-folder mode serves the one
+	// dir regardless of the param.
+	mux.HandleFunc("GET /api/settings", func(w http.ResponseWriter, r *http.Request) {
+		root, ok := resolveProjectRoot(svc, r.URL.Query().Get("project"))
+		if !ok {
+			writeJSONError(w, http.StatusNotFound, fmt.Errorf("unknown project"))
+			return
+		}
+		writeJSON(w, settingsView(config.Load(root)), nil)
+	})
+
+	mux.HandleFunc("PUT /api/settings", func(w http.ResponseWriter, r *http.Request) {
+		root, ok := resolveProjectRoot(svc, r.URL.Query().Get("project"))
+		if !ok {
+			writeJSONError(w, http.StatusNotFound, fmt.Errorf("unknown project"))
+			return
+		}
+		var raw map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+			writeJSONError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err))
+			return
+		}
+		// Validate EVERY field up front (reject unknown keys / bad types) before
+		// writing anything, so a bad field can't leave a half-applied file.
+		type pending struct {
+			key, value string
+			kind       settings.Kind
+		}
+		writes := make([]pending, 0, len(raw))
+		for key, rawVal := range raw {
+			f, ok := settings.FieldByKey(key)
+			if !ok {
+				writeJSONError(w, http.StatusBadRequest,
+					fmt.Errorf("unknown setting %q — valid keys: %s", key, strings.Join(settings.Keys(), ", ")))
+				return
+			}
+			norm, err := normalizeSetting(f, rawVal)
+			if err != nil {
+				writeJSONError(w, http.StatusBadRequest, err)
+				return
+			}
+			writes = append(writes, pending{key: key, value: norm, kind: f.Kind})
+		}
+		path := filepath.Join(root, "outbox.yaml")
+		// A registered project should already carry an outbox.yaml; create an empty
+		// one if it is absent so a first save from the UI still works (WriteKey's
+		// nullish branch then appends the key).
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+			if err := os.WriteFile(path, []byte{}, 0o644); err != nil {
+				writeJSONError(w, http.StatusInternalServerError, err)
+				return
+			}
+		}
+		for _, wr := range writes {
+			if err := settings.WriteKey(path, wr.key, wr.value, wr.kind); err != nil {
+				writeJSONError(w, http.StatusInternalServerError, err)
+				return
+			}
+		}
+		writeJSON(w, settingsView(config.Load(root)), nil)
+	})
+
 	// Enforce the sources whitelist uniformly across every doc- and
 	// comment-scoped route (GET/POST /api/docs/{id}/…, /api/comments/{id}/…),
 	// so a stale hidden-doc id can't read or mutate through any single endpoint.
@@ -413,6 +500,60 @@ func commentDocServed(svc *service.Service, st *store.Store, commentID string) b
 		return false
 	}
 	return svc.ProjectServes(doc.Project, doc.Path)
+}
+
+// resolveProjectRoot maps a ?project=<name> to its on-disk root via the served
+// projects. Single-folder mode (one project with an empty name) returns that one
+// root regardless of the param; multi-project mode requires an exact name match.
+// An unknown project returns ok=false so the handler can 404.
+func resolveProjectRoot(svc *service.Service, name string) (string, bool) {
+	projects := svc.Projects()
+	if len(projects) == 1 && projects[0].Name == "" {
+		return projects[0].Root, true
+	}
+	for _, p := range projects {
+		if p.Name == name {
+			return p.Root, true
+		}
+	}
+	return "", false
+}
+
+// settingsView is the editable subset of a project's config, keyed by the
+// outbox.yaml field names (the same keys PUT /api/settings accepts).
+func settingsView(cfg config.Config) map[string]any {
+	return map[string]any{
+		"auto_update": cfg.AutoUpdate,
+		"auto_reply":  cfg.AutoReply,
+		"agent_cmd":   cfg.AgentCmd,
+	}
+}
+
+// normalizeSetting decodes a JSON value for an editable field to its canonical
+// string form (validated by kind), rejecting a value of the wrong JSON type.
+func normalizeSetting(f settings.Field, rawVal json.RawMessage) (string, error) {
+	switch f.Kind {
+	case settings.KindBool:
+		var b bool
+		if err := json.Unmarshal(rawVal, &b); err != nil {
+			return "", fmt.Errorf("%s expects a boolean", f.Key)
+		}
+		return settings.Validate(f.Kind, f.Key, fmt.Sprintf("%t", b))
+	case settings.KindInt:
+		var n int
+		if err := json.Unmarshal(rawVal, &n); err != nil {
+			return "", fmt.Errorf("%s expects an integer", f.Key)
+		}
+		return settings.Validate(f.Kind, f.Key, fmt.Sprintf("%d", n))
+	case settings.KindString:
+		var s string
+		if err := json.Unmarshal(rawVal, &s); err != nil {
+			return "", fmt.Errorf("%s expects a string", f.Key)
+		}
+		return settings.Validate(f.Kind, f.Key, s)
+	default:
+		return "", fmt.Errorf("unsupported field kind %q", f.Kind)
+	}
 }
 
 func writeJSON(w http.ResponseWriter, v any, err error) {

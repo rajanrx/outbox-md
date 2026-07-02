@@ -61,6 +61,11 @@ button { font-family: inherit; cursor: pointer; }
 }
 .brand b { font-weight: 650; }
 .brand span { color: var(--chrome-soft); font-weight: 450; }
+.version-badge {
+  font-size: 11px; font-weight: 500; color: var(--chrome-soft);
+  background: var(--chrome-2); border: 1px solid var(--chrome-line);
+  border-radius: 999px; padding: 1px 7px; letter-spacing: .2px;
+}
 .crumbs { display: flex; align-items: center; gap: 7px; color: var(--chrome-soft); font-size: 13px; min-width: 0; }
 .crumbs .sep { opacity: .5; }
 .crumbs .leaf { color: var(--ink); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
