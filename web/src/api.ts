@@ -23,7 +23,21 @@ export type DocView = {
 // returns a single project with an empty name. docs is an array in the current
 // server; a bare string (older single-docs server) and path (oldest server) stay
 // accepted for back-compat.
-export type Project = { name: string; root?: string; docs?: string[] | string; path?: string };
+// Member is one council participant (or the chair): agent is a preset name
+// (claude/codex/copilot) OR a raw spawn command; model is an optional free-text
+// override. This mirrors the backend's memberDTO {agent, model}.
+export type Member = { agent: string; model?: string };
+
+export type Project = {
+  name: string;
+  root?: string;
+  docs?: string[] | string;
+  path?: string;
+  // The structured council roster the Settings page edits. Present on the current
+  // (registry-backed) server; absent on older servers / single-folder mode.
+  members?: Member[];
+  chair?: Member | null;
+};
 export type Suggestion = {
   id: string;
   proposedContent: string;
@@ -130,9 +144,71 @@ export async function getConfig(): Promise<AppConfig | null> {
   return r.ok ? r.json() : null;
 }
 
+// ApiError carries the HTTP status alongside the server's message so callers can
+// branch on it (e.g. 409 ⇒ single-folder mode has no projects registry to write).
+export class ApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+    this.name = "ApiError";
+  }
+}
+
+// throwApiError extracts the server's {"error": "..."} body (falling back to the
+// status) and throws an ApiError — so every write surfaces the exact server
+// message and its status verbatim, never a swallowed failure.
+async function throwApiError(r: Response): Promise<never> {
+  const msg = await r.json().then((j) => j?.error).catch(() => null);
+  throw new ApiError(r.status, msg || `request failed (${r.status})`);
+}
+
+// ProjectInput is the body POST /api/projects (and, partially, PATCH) accepts:
+// a root dir, its docs subpaths, the member roster, and an optional chair.
+export type ProjectInput = { root: string; docs: string[]; members: Member[]; chair?: Member | null };
+
+// createProject registers a new project. Throws ApiError with the server message
+// on validation failure (400) or when the server is single-folder mode (409).
+export async function createProject(input: ProjectInput): Promise<Project> {
+  const r = await fetch("/api/projects", { method: "POST", body: JSON.stringify(input) });
+  if (!r.ok) await throwApiError(r);
+  return r.json();
+}
+
+// updateProject merge-edits a project's docs/members/chair (name + root are
+// immutable). Only the keys present in the patch change server-side.
+export async function updateProject(name: string, patch: Partial<ProjectInput>): Promise<Project> {
+  const r = await fetch(`/api/projects/${encodeURIComponent(name)}`, { method: "PATCH", body: JSON.stringify(patch) });
+  if (!r.ok) await throwApiError(r);
+  return r.json();
+}
+
+// deleteProject unregisters a project. Throws ApiError on 404/409.
+export async function deleteProject(name: string): Promise<void> {
+  const r = await fetch(`/api/projects/${encodeURIComponent(name)}`, { method: "DELETE" });
+  if (!r.ok) await throwApiError(r);
+}
+
+// isSingleFolderMode detects the server's single-folder mode from the project
+// list: it returns exactly one project with an empty name (registry mode always
+// names a project after its root basename). Used to show the "manage via CLI"
+// notice instead of a projects form. The 409 on writes is the authoritative
+// fallback, handled by the CRUD callers above.
+export function isSingleFolderMode(projects: Project[]): boolean {
+  return projects.length === 1 && projects[0].name === "";
+}
+
 // Settings is the editable subset of a project's outbox.yaml, keyed by the
-// outbox.yaml field names (the same keys the PUT endpoint accepts).
-export type Settings = { auto_update: boolean; auto_reply: boolean; agent_cmd: string };
+// outbox.yaml field names (the same keys the PUT endpoint accepts). The council
+// guardrails are integers; auto_* are booleans; agent_cmd is a template string.
+export type Settings = {
+  auto_update: boolean;
+  auto_reply: boolean;
+  agent_cmd: string;
+  council_rounds: number;
+  council_budget: number;
+  council_deadlock_threshold: number;
+};
 
 // getSettings reads the current project's editable outbox.yaml fields. In
 // multi-project mode pass the selected project name; single-folder mode ignores it.

@@ -6,7 +6,7 @@ import { Margin } from "./comments/Margin";
 import { BaselineDiff } from "./governance/BaselineDiff";
 import { DecisionLog } from "./log/DecisionLog";
 import { Modal } from "./Modal";
-import { SettingsPanel } from "./settings/SettingsPanel";
+import { SettingsPage } from "./settings/SettingsPage";
 import "./governance/governance.css";
 
 const PanelLeftIcon = () => (
@@ -23,9 +23,9 @@ const PanelRightIcon = () => (
   </svg>
 );
 const GearIcon = () => (
-  <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.4">
-    <circle cx="9" cy="9" r="2.4" />
-    <path d="M9 1.8v2M9 14.2v2M1.8 9h2M14.2 9h2M3.9 3.9l1.4 1.4M12.7 12.7l1.4 1.4M14.1 3.9l-1.4 1.4M5.3 12.7l-1.4 1.4" strokeLinecap="round" />
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="12" r="3" />
+    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
   </svg>
 );
 
@@ -53,7 +53,11 @@ export default function App() {
   const [showLog, setShowLog] = useState(false);
   // Which approval action is awaiting confirmation in the modal (null = closed).
   const [confirm, setConfirm] = useState<null | "approve" | "reapprove">(null);
-  const [showSettings, setShowSettings] = useState(false);
+  // Top-level view: the docs reader or the dedicated Settings page. Restored from
+  // the URL (?settings) so a reload keeps the page, mirroring ?doc= routing.
+  const [showSettings, setShowSettings] = useState(
+    () => new URLSearchParams(window.location.search).has("settings"),
+  );
   // Build version for the header badge ("dev" for local builds).
   const [version, setVersion] = useState("");
   const [commentsW, setCommentsW] = useState(() => {
@@ -170,12 +174,13 @@ export default function App() {
   useEffect(() => { getConfig().then((c) => setVersion(c?.version ?? "")); }, []);
   // Load the registered projects; keep the stored selection if it is still valid,
   // otherwise fall back to the first project (single-folder mode → empty name).
-  useEffect(() => {
-    listProjects().then((ps) => {
-      setProjects(ps);
-      setProject((cur) => (ps.some((p) => p.name === cur) ? cur : ps[0]?.name ?? ""));
-    });
+  // Exposed as a callback so the Settings page can refresh it after a CRUD write.
+  const loadProjects = useCallback(async () => {
+    const ps = await listProjects();
+    setProjects(ps);
+    setProject((cur) => (ps.some((p) => p.name === cur) ? cur : ps[0]?.name ?? ""));
   }, []);
+  useEffect(() => { loadProjects(); }, [loadProjects]);
   useEffect(() => { localStorage.setItem(PROJECT_KEY, project); }, [project]);
 
   // Show the switcher only with 2+ projects — single-folder UX stays uncluttered.
@@ -196,9 +201,29 @@ export default function App() {
     const match = wantPath ? visibleDocs.find((x) => x.path === wantPath) : undefined;
     setDocId(match ? match.id : visibleDocs[0].id);
   }, [visibleDocs, docId]);
-  // Reflect the open document in the URL (?doc=<path>) so refresh restores it.
-  // replaceState (not pushState) to avoid history-stack spam.
+  // Open the dedicated Settings page and push ?settings so a reload / back button
+  // works; closing restores the docs view (the ?doc= reflect effect below re-adds
+  // the doc query on the next render).
+  const openSettings = useCallback(() => {
+    setShowSettings(true);
+    window.history.pushState(null, "", `${window.location.pathname}?settings`);
+  }, []);
+  const closeSettings = useCallback(() => {
+    setShowSettings(false);
+    window.history.replaceState(null, "", window.location.pathname);
+  }, []);
+  // Sync the view with browser back/forward navigation.
   useEffect(() => {
+    const onPop = () => setShowSettings(new URLSearchParams(window.location.search).has("settings"));
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  // Reflect the open document in the URL (?doc=<path>) so refresh restores it.
+  // replaceState (not pushState) to avoid history-stack spam. Skipped while the
+  // Settings page owns the URL (?settings).
+  useEffect(() => {
+    if (showSettings) return;
     if (!docId) return;
     const path = docs.find((d) => d.id === docId)?.path;
     if (!path) return;
@@ -211,7 +236,7 @@ export default function App() {
     const enc = encodeURIComponent(path).replace(/%2F/g, "/");
     const hash = keepHash ? window.location.hash : "";
     window.history.replaceState(null, "", `${window.location.pathname}?doc=${enc}${hash}`);
-  }, [docId, docs]);
+  }, [docId, docs, showSettings]);
   useEffect(() => {
     if (!docId) return;
     refresh();
@@ -232,6 +257,18 @@ export default function App() {
   const unresolved = view?.comments?.filter((c) => c.status !== "resolved").length ?? 0;
   const openCount = unresolved;
   const gateTitle = unresolved ? `Resolve all ${unresolved} comment(s) first` : "";
+
+  if (showSettings) {
+    return (
+      <SettingsPage
+        projects={projects}
+        initialProject={project}
+        version={version}
+        onBack={closeSettings}
+        onProjectsChanged={loadProjects}
+      />
+    );
+  }
 
   return (
     <div className="app-shell">
@@ -278,16 +315,9 @@ export default function App() {
           <button className="gov-btn ghost" onClick={() => setShowLog((v) => !v)}>History</button>
         )}
         <div className="spacer" />
-        <button className="icon-btn" title="Settings" aria-label="Settings" onClick={() => setShowSettings(true)}><GearIcon /></button>
+        <button className="icon-btn" title="Settings" aria-label="Settings" onClick={openSettings}><GearIcon /></button>
         <button className={"icon-btn" + (treeOpen ? " on" : "")} title="Toggle files" onClick={() => setTreeOpen((v) => !v)}><PanelLeftIcon /></button>
         <button className={"icon-btn" + (commentsOpen ? " on" : "")} title="Toggle comments" onClick={() => setCommentsOpen((v) => !v)}><PanelRightIcon /></button>
-        {showSettings && (
-          <SettingsPanel
-            project={project}
-            projectLabel={multiProject ? (project || "(root)") : undefined}
-            onClose={() => setShowSettings(false)}
-          />
-        )}
         {showBaseline && view && (
           <BaselineDiff baseline={view.baselineContent} current={view.content} onClose={() => setShowBaseline(false)} />
         )}
