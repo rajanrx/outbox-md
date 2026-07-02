@@ -453,3 +453,54 @@ func TestCouncilZeroOrNegativeFallsBackToDefault(t *testing.T) {
 		t.Fatal("negative council_rounds should fall back to default")
 	}
 }
+
+func TestEmbedAndKBScopeDefaults(t *testing.T) {
+	cfg := Load(t.TempDir())
+	if cfg.EmbedCmd != "" {
+		t.Fatalf("default embed_cmd = %q, want empty (FTS5-only, no hard-fail)", cfg.EmbedCmd)
+	}
+	if cfg.ResolveKBScope() != KBScopeProject {
+		t.Fatalf("default kb_scope resolved to %q, want %q", cfg.ResolveKBScope(), KBScopeProject)
+	}
+	if cfg.EmbedAPI.Configured() {
+		t.Fatal("default embed_api should not be Configured()")
+	}
+}
+
+func TestEmbedConfigFromYAML(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "embed_cmd: my-embed-wrapper --json\nkb_scope: all\nembed_api:\n  provider: voyage\n  model: voyage-3.5-lite\n  api_key_env: VOYAGE_API_KEY\n")
+	cfg := Load(dir)
+	if cfg.EmbedCmd != "my-embed-wrapper --json" {
+		t.Fatalf("embed_cmd = %q", cfg.EmbedCmd)
+	}
+	if cfg.ResolveKBScope() != KBScopeAll {
+		t.Fatalf("kb_scope resolved to %q, want all", cfg.ResolveKBScope())
+	}
+	if !cfg.EmbedAPI.Configured() || cfg.EmbedAPI.Provider != "voyage" || cfg.EmbedAPI.APIKeyEnv != "VOYAGE_API_KEY" {
+		t.Fatalf("embed_api = %+v", cfg.EmbedAPI)
+	}
+}
+
+func TestKBScopeUnknownFallsBackToProject(t *testing.T) {
+	if (Config{KBScope: "galaxy"}).ResolveKBScope() != KBScopeProject {
+		t.Fatal("unknown kb_scope should fall back to project")
+	}
+	if (Config{}).ResolveKBScope() != KBScopeProject {
+		t.Fatal("blank kb_scope should fall back to project")
+	}
+}
+
+func TestEmbedEnvOverrides(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "embed_cmd: from-file\nkb_scope: project\n")
+	t.Setenv("OUTBOX_EMBED_CMD", "from-env --flag")
+	t.Setenv("OUTBOX_KB_SCOPE", "all")
+	cfg := Load(dir)
+	if cfg.EmbedCmd != "from-env --flag" {
+		t.Fatalf("OUTBOX_EMBED_CMD override = %q", cfg.EmbedCmd)
+	}
+	if cfg.ResolveKBScope() != KBScopeAll {
+		t.Fatalf("OUTBOX_KB_SCOPE override resolved to %q", cfg.ResolveKBScope())
+	}
+}
