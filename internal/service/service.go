@@ -463,20 +463,23 @@ func (s *Service) Propose(commentID, token, content, agent string) (domain.Sugge
 // accept-flow is exactly today's.
 
 // CouncilView is the read model for a comment's council: the set, its candidates
-// in submission order, and the synthesis (if recorded).
+// in submission order, the discussion transcript (rounds in order), and the
+// synthesis (if recorded).
 type CouncilView struct {
-	Set        domain.CandidateSet `json:"set"`
-	Candidates []domain.Candidate  `json:"candidates"`
-	Synthesis  *domain.Synthesis   `json:"synthesis"`
+	Set        domain.CandidateSet        `json:"set"`
+	Candidates []domain.Candidate         `json:"candidates"`
+	Discussion []domain.DiscussionMessage `json:"discussion"`
+	Synthesis  *domain.Synthesis          `json:"synthesis"`
 }
 
 // SubmitReview records one council member's review as a Candidate. It validates
 // the claim token (members share the comment's token, distinguished by
 // agentIdentity), lazily creates the comment's CandidateSet, and enforces
-// content required iff verdict == edit. It never writes disk, never resolves,
-// and never changes the comment's status — candidates accumulate while the set
-// stays gathering.
-func (s *Service) SubmitReview(commentID, token, lens, verdict, rationale, content, agentIdentity string) (domain.Candidate, error) {
+// content required iff verdict == edit. round is the discussion pass: 0 is the
+// independent, blind take; >=1 is a revised position from a discussion round. It
+// never writes disk, never resolves, and never changes the comment's status —
+// candidates accumulate while the set stays gathering.
+func (s *Service) SubmitReview(commentID, token string, round int, lens, verdict, rationale, content, agentIdentity string) (domain.Candidate, error) {
 	if _, err := s.requireToken(commentID, token); err != nil {
 		return domain.Candidate{}, err
 	}
@@ -503,13 +506,35 @@ func (s *Service) SubmitReview(commentID, token, lens, verdict, rationale, conte
 		return domain.Candidate{}, err
 	}
 	return s.store.AddCandidate(domain.Candidate{
-		CandidateSetID: set.ID, Lens: lens, Verdict: verdict,
+		CandidateSetID: set.ID, Round: round, Lens: lens, Verdict: verdict,
 		Rationale: rationale, Content: content, AgentIdentity: agentIdentity,
 	})
 }
 
+// SubmitDiscussion records one attributed message on a council's discussion
+// transcript. Like SubmitReview it is token-authed (members share the comment's
+// claim token, distinguished by agentIdentity) and lazily creates the set, but
+// it is purely additive: it records the message and NOTHING else — it does not
+// resolve the comment, write the document, emit a suggestion, or change the
+// comment's status. round is the discussion pass the message belongs to; refs are
+// its citations (member/kb).
+func (s *Service) SubmitDiscussion(commentID, token string, round int, body string, refs []domain.DiscussionRef, agentIdentity string) (domain.DiscussionMessage, error) {
+	if _, err := s.requireToken(commentID, token); err != nil {
+		return domain.DiscussionMessage{}, err
+	}
+	set, err := s.store.GetOrCreateCandidateSet(commentID)
+	if err != nil {
+		return domain.DiscussionMessage{}, err
+	}
+	return s.store.AddDiscussionMessage(domain.DiscussionMessage{
+		CandidateSetID: set.ID, Round: round, AgentIdentity: agentIdentity,
+		Body: body, Refs: refs,
+	})
+}
+
 // ListCandidates returns the council view for a comment: the set, its candidates
-// in order, and the synthesis if any. Returns an error if no set exists yet.
+// in order, the discussion transcript, and the synthesis if any. Returns an error
+// if no set exists yet.
 func (s *Service) ListCandidates(commentID string) (CouncilView, error) {
 	set, ok, err := s.store.GetCandidateSetByComment(commentID)
 	if err != nil {
@@ -522,7 +547,11 @@ func (s *Service) ListCandidates(commentID string) (CouncilView, error) {
 	if err != nil {
 		return CouncilView{}, err
 	}
-	view := CouncilView{Set: set, Candidates: cands}
+	disc, err := s.store.ListDiscussionByComment(commentID)
+	if err != nil {
+		return CouncilView{}, err
+	}
+	view := CouncilView{Set: set, Candidates: cands, Discussion: disc}
 	if syn, ok, err := s.store.GetSynthesisByComment(commentID); err != nil {
 		return CouncilView{}, err
 	} else if ok {

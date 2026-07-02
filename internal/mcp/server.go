@@ -73,6 +73,7 @@ func NewServer(h *Handlers) *mcp.Server {
 	type submitReviewIn struct {
 		CommentID     string `json:"commentId"`
 		Token         string `json:"token" jsonschema:"the claim token from claim_comment"`
+		Round         int    `json:"round,omitempty" jsonschema:"the discussion pass: 0 (or omitted) = the independent blind take, >=1 = a revised position from a discussion round"`
 		Lens          string `json:"lens" jsonschema:"the review lens: correctness | completeness | ambiguity | risk | simplicity | skeptic"`
 		Verdict       string `json:"verdict" jsonschema:"the member's stance: edit | reply | reject_comment"`
 		Rationale     string `json:"rationale" jsonschema:"why, in the member's own words"`
@@ -81,10 +82,26 @@ func NewServer(h *Handlers) *mcp.Server {
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "submit_review",
-		Description: "Council-mode sibling of propose_suggestion: record one member's independent review (lens + verdict + rationale, plus full replacement content iff verdict is edit) as a candidate. Never resolves or writes; the human picks.",
+		Description: "Council-mode sibling of propose_suggestion: record one member's review (lens + verdict + rationale, plus full replacement content iff verdict is edit) as a candidate for a round (0 = independent take, >=1 = discussion revision). Never resolves or writes; the human picks.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in submitReviewIn) (*mcp.CallToolResult, domain.Candidate, error) {
-		cd, err := h.SubmitReview(in.CommentID, in.Token, in.Lens, in.Verdict, in.Rationale, in.Content, in.AgentIdentity)
+		cd, err := h.SubmitReview(in.CommentID, in.Token, in.Round, in.Lens, in.Verdict, in.Rationale, in.Content, in.AgentIdentity)
 		return nil, cd, err
+	})
+
+	type submitDiscussionIn struct {
+		CommentID     string                 `json:"commentId"`
+		Token         string                 `json:"token" jsonschema:"the claim token from claim_comment"`
+		Round         int                    `json:"round,omitempty" jsonschema:"the discussion round this message belongs to (>=1)"`
+		Body          string                 `json:"body" jsonschema:"the message text: concur, dissent, or revise in response to the other members"`
+		Refs          []domain.DiscussionRef `json:"refs,omitempty" jsonschema:"citations for this message: {kind: member|kb, targetId}"`
+		AgentIdentity string                 `json:"agentIdentity" jsonschema:"the council member's identity"`
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "submit_discussion",
+		Description: "Council-mode discussion: record one attributed message on the comment's discussion transcript (a member responding to the others in a round, with optional member/kb citations). Purely additive — it resolves nothing, writes no file, and changes no comment status; the human still picks.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in submitDiscussionIn) (*mcp.CallToolResult, domain.DiscussionMessage, error) {
+		msg, err := h.SubmitDiscussion(in.CommentID, in.Token, in.Round, in.Body, in.Refs, in.AgentIdentity)
+		return nil, msg, err
 	})
 
 	type listCandidatesIn struct {

@@ -54,7 +54,7 @@ func TestSubmitReviewHandlerDrivesService(t *testing.T) {
 	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 6, End: 11}, "human")
 	tok, _, _ := h.ClaimComment([]string{c.ID}, "runner")
 
-	cd, err := h.SubmitReview(c.ID, tok, domain.LensSkeptic, domain.VerdictRejectComment, "premise is wrong", "", "m1")
+	cd, err := h.SubmitReview(c.ID, tok, 0, domain.LensSkeptic, domain.VerdictRejectComment, "premise is wrong", "", "m1")
 	if err != nil {
 		t.Fatalf("submit_review: %v", err)
 	}
@@ -116,10 +116,10 @@ func TestRecordSynthesisAndListCandidatesHandlers(t *testing.T) {
 	tok, _, _ := h.ClaimComment([]string{c.ID}, "runner")
 
 	// Two members submit independent candidates.
-	if _, err := h.SubmitReview(c.ID, tok, domain.LensCorrectness, domain.VerdictEdit, "fix it", "Howdy world", "m1"); err != nil {
+	if _, err := h.SubmitReview(c.ID, tok, 0, domain.LensCorrectness, domain.VerdictEdit, "fix it", "Howdy world", "m1"); err != nil {
 		t.Fatalf("submit m1: %v", err)
 	}
-	if _, err := h.SubmitReview(c.ID, tok, domain.LensSkeptic, domain.VerdictRejectComment, "premise wrong", "", "m2"); err != nil {
+	if _, err := h.SubmitReview(c.ID, tok, 0, domain.LensSkeptic, domain.VerdictRejectComment, "premise wrong", "", "m2"); err != nil {
 		t.Fatalf("submit m2: %v", err)
 	}
 
@@ -177,5 +177,95 @@ func TestCouncilChairToolsRespectSourcesWhitelist(t *testing.T) {
 	}
 	if _, err := h.RecordSynthesis(outC.ID, "tok", "x", "", 0.5, 50, "chair"); err == nil {
 		t.Fatal("RecordSynthesis on hidden-doc comment: want error, got nil")
+	}
+}
+
+// submit_discussion must be registered (discoverable via tools/list).
+func TestServerRegistersSubmitDiscussion(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := service.New(s, func(_, _, _ string) error { return nil })
+	srv := NewServer(&Handlers{Svc: svc, St: s})
+
+	ctx := context.Background()
+	t1, t2 := mcp.NewInMemoryTransports()
+	if _, err := srv.Connect(ctx, t1, nil); err != nil {
+		t.Fatal(err)
+	}
+	c := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+	cs, err := c.Connect(ctx, t2, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.Close()
+
+	found := false
+	for tool, err := range cs.Tools(ctx, nil) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tool.Name == "submit_discussion" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("tools/list did not include submit_discussion")
+	}
+}
+
+// submit_discussion is token-authed: a bad token is rejected and records nothing;
+// the valid claim token records the message. list_candidates then surfaces it on
+// the transcript.
+func TestSubmitDiscussionHandler(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := service.New(s, func(_, _, _ string) error { return nil })
+	h := &Handlers{Svc: svc, St: s}
+	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
+	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 6, End: 11}, "human")
+	tok, _, _ := h.ClaimComment([]string{c.ID}, "runner")
+
+	// Bad token rejected, nothing recorded.
+	if _, err := h.SubmitDiscussion(c.ID, "wrong", 1, "nope", nil, "m1"); err == nil {
+		t.Fatal("submit_discussion with a bad token: want error, got nil")
+	}
+	if msgs, _ := s.ListDiscussionByComment(c.ID); len(msgs) != 0 {
+		t.Fatalf("bad-token discussion recorded %d messages", len(msgs))
+	}
+
+	// Valid token records a message with a citation.
+	msg, err := h.SubmitDiscussion(c.ID, tok, 1, "concur",
+		[]domain.DiscussionRef{{Kind: "kb", TargetID: "doc:spec.md#1"}}, "m2")
+	if err != nil {
+		t.Fatalf("submit_discussion: %v", err)
+	}
+	if msg.ID == "" || msg.Round != 1 || len(msg.Refs) != 1 {
+		t.Fatalf("message = %+v", msg)
+	}
+
+	// list_candidates includes the discussion transcript.
+	view, err := h.ListCandidates(c.ID)
+	if err != nil {
+		t.Fatalf("list_candidates: %v", err)
+	}
+	if len(view.Discussion) != 1 || view.Discussion[0].Body != "concur" {
+		t.Fatalf("discussion = %+v, want [concur]", view.Discussion)
+	}
+}
+
+// submit_discussion honours the sources whitelist: a comment whose doc is outside
+// the served set is refused, so a stale id can neither read nor write a hidden doc.
+func TestSubmitDiscussionRespectsSourcesWhitelist(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := service.New(s, func(_, _, _ string) error { return nil })
+	svc.SetConfig(config.Config{Sources: []string{"docs/specs"}})
+	h := &Handlers{Svc: svc, St: s}
+
+	outDoc, _, _ := s.CreateDocument("other/out.md", "secret world", "human")
+	outC, _ := svc.PostComment(outDoc.ID, domain.Anchor{Start: 0, End: 6}, "human")
+
+	if _, err := h.SubmitDiscussion(outC.ID, "tok", 1, "leak", nil, "m1"); err == nil {
+		t.Fatal("SubmitDiscussion on hidden-doc comment: want error, got nil")
 	}
 }
