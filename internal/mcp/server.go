@@ -41,13 +41,18 @@ func NewServer(h *Handlers) *mcp.Server {
 	}
 	type claimOut struct {
 		Token string `json:"token"`
+		// Claimed is the subset of the requested ids this call actually won. Under
+		// fan-out (multiple agents at once) another agent may claim an id first; a
+		// lost id is absent here. Process ONLY these ids with this token; skip the
+		// rest — they are being handled by another agent.
+		Claimed []string `json:"claimed"`
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "claim_comment",
-		Description: "Claim one or more comments for processing; returns a claim token.",
+		Description: "Claim one or more comments for processing; returns a claim token and the subset of ids actually won (others were claimed by a concurrent agent — process only the won ids).",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in claimIn) (*mcp.CallToolResult, claimOut, error) {
-		tok, err := h.ClaimComment(in.CommentIDs, in.Agent)
-		return nil, claimOut{Token: tok}, err
+		tok, claimed, err := h.ClaimComment(in.CommentIDs, in.Agent)
+		return nil, claimOut{Token: tok, Claimed: claimed}, err
 	})
 
 	type proposeIn struct {

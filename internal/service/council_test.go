@@ -15,7 +15,7 @@ func claimedComment(t *testing.T, s *store.Store, svc *Service) (domain.Comment,
 	if err != nil {
 		t.Fatal(err)
 	}
-	tok, err := svc.Claim([]string{c.ID}, "runner")
+	tok, _, err := svc.Claim([]string{c.ID}, "runner")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestPickRejectsForeignCandidate(t *testing.T) {
 	// A candidate belonging to a different comment's set.
 	doc2, _, _ := s.CreateDocument("other.md", "x", "human")
 	c2, _ := svc.PostComment(doc2.ID, domain.Anchor{Start: 0, End: 1}, "human")
-	tok2, _ := svc.Claim([]string{c2.ID}, "runner")
+	tok2, _, _ := svc.Claim([]string{c2.ID}, "runner")
 	foreign, _ := svc.SubmitReview(c2.ID, tok2, domain.LensRisk, domain.VerdictReply, "r", "", "m9")
 
 	// Seed c1 with its own set so it exists.

@@ -51,7 +51,7 @@ func TestSubmitReviewHandlerDrivesService(t *testing.T) {
 	h := &Handlers{Svc: svc, St: s}
 	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
 	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 6, End: 11}, "human")
-	tok, _ := h.ClaimComment([]string{c.ID}, "runner")
+	tok, _, _ := h.ClaimComment([]string{c.ID}, "runner")
 
 	cd, err := h.SubmitReview(c.ID, tok, domain.LensSkeptic, domain.VerdictRejectComment, "premise is wrong", "", "m1")
 	if err != nil {
