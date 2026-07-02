@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  ApiError,
   createProject,
   deleteProject,
   getSettings,
@@ -96,11 +97,14 @@ function ProjectsSection({
   // takes effect after `outbox up` is restarted.
   const [restartHint, setRestartHint] = useState(false);
   const noticeChanged = () => { setRestartHint(true); onProjectsChanged(); };
+  // A write can also return 409 (single-folder mode) even when the proactive
+  // heuristic missed it — fall back to the same CLI notice rather than a raw error.
+  const [cliOnly, setCliOnly] = useState(singleFolder);
 
   return (
     <section className="settings-section">
       <h2 className="settings-section-title">Projects</h2>
-      {singleFolder ? (
+      {cliOnly ? (
         <p className="settings-note" role="note">
           Projects are managed via the CLI (<code>outbox add</code>) in single-folder mode.
         </p>
@@ -113,9 +117,9 @@ function ProjectsSection({
             </p>
           )}
           {projects.map((p) => (
-            <ProjectCard key={p.name} project={p} onChanged={noticeChanged} />
+            <ProjectCard key={p.name} project={p} onChanged={noticeChanged} onSingleFolder={() => setCliOnly(true)} />
           ))}
-          <AddProject onAdded={noticeChanged} />
+          <AddProject onAdded={noticeChanged} onSingleFolder={() => setCliOnly(true)} />
         </>
       )}
     </section>
@@ -123,7 +127,7 @@ function ProjectsSection({
 }
 
 // ProjectCard edits one existing project's docs/members/chair and can remove it.
-function ProjectCard({ project, onChanged }: { project: Project; onChanged: () => void }) {
+function ProjectCard({ project, onChanged, onSingleFolder }: { project: Project; onChanged: () => void; onSingleFolder: () => void }) {
   const [docs, setDocs] = useState(docsToText(projectDocs(project)));
   const [members, setMembers] = useState<Member[]>(project.members ?? []);
   const [chair, setChair] = useState<Member>(project.chair ?? { agent: "", model: "" });
@@ -148,6 +152,7 @@ function ProjectCard({ project, onChanged }: { project: Project; onChanged: () =
       setSave({ busy: false, saved: true, error: null });
       onChanged();
     } catch (e) {
+      if (e instanceof ApiError && e.status === 409) { onSingleFolder(); return; }
       setSave({ busy: false, saved: false, error: e instanceof Error ? e.message : "save failed" });
     }
   };
@@ -158,6 +163,7 @@ function ProjectCard({ project, onChanged }: { project: Project; onChanged: () =
       await deleteProject(project.name);
       onChanged();
     } catch (e) {
+      if (e instanceof ApiError && e.status === 409) { onSingleFolder(); return; }
       setSave({ busy: false, saved: false, error: e instanceof Error ? e.message : "remove failed" });
       setConfirming(false);
     }
@@ -208,7 +214,7 @@ function ProjectCard({ project, onChanged }: { project: Project; onChanged: () =
 }
 
 // AddProject is the "register a new project" form → POST /api/projects.
-function AddProject({ onAdded }: { onAdded: () => void }) {
+function AddProject({ onAdded, onSingleFolder }: { onAdded: () => void; onSingleFolder: () => void }) {
   const [open, setOpen] = useState(false);
   const [root, setRoot] = useState("");
   const [docs, setDocs] = useState("");
@@ -238,6 +244,7 @@ function AddProject({ onAdded }: { onAdded: () => void }) {
       setOpen(false);
       reset();
     } catch (e) {
+      if (e instanceof ApiError && e.status === 409) { onSingleFolder(); return; }
       setSave({ busy: false, saved: false, error: e instanceof Error ? e.message : "add failed" });
     }
   };

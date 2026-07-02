@@ -96,6 +96,19 @@ describe("SettingsPage", () => {
     expect(queryByText("+ Add project")).toBeNull();
   });
 
+  it("falls back to the CLI notice when a project write returns 409", async () => {
+    (api.updateProject as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new api.ApiError(409, "projects API requires registry mode"),
+    );
+    const { container, getByText, queryByText } = render(
+      <SettingsPage projects={multi} initialProject="repo" version="dev" onBack={noop} onProjectsChanged={noop} />,
+    );
+    const card = container.querySelector(".settings-card") as HTMLElement;
+    fireEvent.click(within(card).getByText("Save"));
+    await waitFor(() => expect(getByText(/managed via the CLI/i)).toBeTruthy());
+    expect(queryByText("+ Add project")).toBeNull();
+  });
+
   it("blocks save with a chair-required error for 2+ members", async () => {
     const twoMembers: Project[] = [
       { name: "repo", root: "/repo", docs: ["docs"], members: [{ agent: "claude" }, { agent: "codex" }], chair: null },
