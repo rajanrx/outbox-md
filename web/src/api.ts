@@ -136,9 +136,89 @@ export async function rejectSuggestion(commentId: string): Promise<unknown> {
   return r.ok ? r.json().catch(() => null) : null;
 }
 
+// ── Council read model ──────────────────────────────────────────────
+// The council is a per-comment panel of AI members that each review a comment,
+// optionally debate over rounds, and are rolled up by a chair into a synthesis.
+// These mirror the backend DTOs (internal/domain, internal/service.CouncilView).
+
+// DiscussionRef is a citation on a discussion message: "member" points at another
+// member's candidate/message; "kb" points at a knowledge-base passage.
+export type DiscussionRef = { kind: "member" | "kb"; targetId: string };
+
+// Candidate is one member's review. round 0 = the independent blind take; round
+// >=1 = a revised position submitted during a discussion round. content is a full
+// replacement iff verdict === "edit". chosen is set by the human-only pick.
+export type Candidate = {
+  id: string;
+  candidateSetId: string;
+  round: number;
+  lens: string;
+  verdict: "edit" | "reply" | "reject_comment";
+  rationale: string;
+  content: string;
+  agentIdentity: string;
+  chosen: boolean;
+};
+
+// DiscussionMessage is one attributed message on the debate transcript.
+export type DiscussionMessage = {
+  id: string;
+  candidateSetId: string;
+  round: number;
+  agentIdentity: string;
+  body: string;
+  refs: DiscussionRef[];
+};
+
+// Synthesis is the chair's roll-up: agreementScore (0..1), confidence (0..100),
+// the preserved minority position, and the id of the ordinary Suggestion offered.
+export type Synthesis = {
+  id: string;
+  candidateSetId: string;
+  agreementScore: number;
+  confidence: number;
+  dissent: string;
+  suggestionId: string;
+  createdBy: string;
+};
+
+// CandidateSet stays "gathering" through discussion rounds (a backend constraint),
+// so DERIVE "discussing" from candidates having round > 0, not from state.
+export type CandidateSet = { id: string; commentId: string; state: string; quorum: number };
+
+// CouncilView is the whole read model for a comment's council.
+export type CouncilView = {
+  set: CandidateSet;
+  candidates: Candidate[];
+  discussion: DiscussionMessage[];
+  synthesis: Synthesis | null;
+};
+
+// getCandidates returns a comment's council view, or null when the comment has no
+// candidate set (a plain, non-council comment — the endpoint 404s). Any other
+// non-OK response also yields null so a transient error never breaks the plain
+// comment UI; the council surface simply stays hidden.
+export async function getCandidates(commentId: string): Promise<CouncilView | null> {
+  const r = await fetch(`/api/comments/${commentId}/candidates`);
+  return r.ok ? r.json() : null;
+}
+
+// pickCandidate records the human's pick of one candidate. The server emits the
+// ordinary Suggestion and marks the set decided. Throws on a non-OK response —
+// surfacing the server's {"error"} message — so a failed pick is never mistaken
+// for success and the caller can keep the pick cards on screen.
+export async function pickCandidate(commentId: string, candidateId: string): Promise<void> {
+  const r = await fetch(`/api/comments/${commentId}/candidates/${candidateId}/pick`, { method: "POST" });
+  if (!r.ok) {
+    const msg = await r.json().then((j) => j?.error).catch(() => null);
+    throw new Error(msg || `pick failed (HTTP ${r.status})`);
+  }
+}
+
 // AppConfig is the subset of /api/config the UI reads directly. version is "dev"
-// for local builds and the release tag otherwise.
-export type AppConfig = { version: string };
+// for local builds and the release tag otherwise. councilDeadlockThreshold is the
+// confidence (0..100) below which a chair verdict is treated as "no consensus".
+export type AppConfig = { version: string; councilDeadlockThreshold?: number };
 export async function getConfig(): Promise<AppConfig | null> {
   const r = await fetch("/api/config");
   return r.ok ? r.json() : null;
