@@ -50,16 +50,16 @@ export function DiffSplit({ rows, lineComments }: { rows: AlignedRow[]; lineComm
           ((oldRef && hasLineContent(lineComments, oldRef)) || (newRef && hasLineContent(lineComments, newRef)));
         return (
           <div key={i} className="drow-split">
-            <div className="dnum dnum-l" aria-hidden="true">
+            <div className="dnum dnum-l">
               {oldRef && lineComments && <AddCommentButton api={lineComments} lineRef={oldRef} />}
-              {r.left?.num ?? ""}
+              <span aria-hidden="true">{r.left?.num ?? ""}</span>
             </div>
             <div className={`dcell left ${leftKind}`}>
               {r.left ? <DiffSegs segs={r.left.segs} /> : <span className="ph" />}
             </div>
-            <div className="dnum dnum-r" aria-hidden="true">
+            <div className="dnum dnum-r">
               {newRef && lineComments && <AddCommentButton api={lineComments} lineRef={newRef} />}
-              {r.right?.num ?? ""}
+              <span aria-hidden="true">{r.right?.num ?? ""}</span>
             </div>
             <div className={`dcell right ${rightKind}`}>
               {r.right ? <DiffSegs segs={r.right.segs} /> : <span className="ph" />}
