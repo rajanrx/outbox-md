@@ -19,7 +19,7 @@ func TestProjectsEndpointShape(t *testing.T) {
 	defer s.Close()
 	svc := service.New(s, func(_, _, _ string) error { return nil })
 	svc.SetProjects([]registry.Project{
-		{Name: "alpha", Root: "/tmp/alpha", Docs: []string{"."}, Agent: "codex exec {prompt}"},
+		{Name: "alpha", Root: "/tmp/alpha", Docs: []string{"."}, Agents: []string{"codex exec {prompt}"}},
 		{Name: "beta", Root: "/tmp/beta", Docs: []string{"docs/specs", "rfcs"}},
 	})
 	h := NewAPI(svc, s, sse.NewHub())

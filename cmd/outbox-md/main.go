@@ -526,7 +526,7 @@ func autoReplyNotifier(root string, projects []registry.Project, cfg config.Conf
 	// whose root is the served dir — preserving the original single-cwd behaviour.
 	targets := make(map[string]autoreply.Target, len(projects))
 	for _, p := range projects {
-		targets[p.Name] = autoreply.Target{Root: p.Root, AgentCmd: p.Agent}
+		targets[p.Name] = autoreply.Target{Root: p.Root, AgentCmd: p.AgentCmd()}
 	}
 	return autoreply.New(autoreply.Config{
 		Enabled:  true,
@@ -813,22 +813,29 @@ func retryCmd(args []string, out io.Writer) error {
 	return nil
 }
 
-// addProject registers a project: `outbox add <root> <docs...> [--agent <preset>
-// | --agent-cmd <cmd>]`. root (required) is the project repo root and must be an
-// existing directory; docs is ONE OR MORE spec subpaths under root ("." is a
-// valid, explicit entry meaning the whole repo) — zero docs is an error. The
-// per-project agent command is resolved from --agent-cmd (an explicit command
-// with a {prompt} token, which wins) or --agent (a preset name); when neither is
-// given the project uses the global default at auto-reply time. Registration is
-// idempotent by (root, docs-set) and names are kept unique (see registry.Add). A
-// missing/invalid argument prints the add usage + examples and returns an error.
+// addProject registers a project: `outbox add <root> <docs...> [--agent <preset>]…
+// [--agent-cmd <cmd>]… [--chair <preset> | --chair-cmd <cmd>]`. root (required) is
+// the project repo root and must be an existing directory; docs is ONE OR MORE
+// spec subpaths under root ("." is a valid, explicit entry meaning the whole repo)
+// — zero docs is an error. --agent and --agent-cmd are REPEATABLE: each appends a
+// council member (a preset resolves to its command; --agent-cmd is a raw command).
+// --chair / --chair-cmd set the verdict-synthesising chair. Council rule: with two
+// or more members a chair is REQUIRED (add prints the help and errors otherwise).
+// Zero members ⇒ the project inherits the global default at auto-reply time; one
+// member is single-agent mode. Registration is idempotent by (root, docs-set) and
+// names are kept unique (see registry.Add). A missing/invalid argument prints the
+// add usage + examples and returns an error.
 func addProject(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("add", flag.ContinueOnError)
 	fs.SetOutput(out)
 	// On a bad flag, print the add usage + examples (not just Go's terse error).
 	fs.Usage = func() { usageFor(out, "add") }
-	agentPreset := fs.String("agent", "", "per-project agent preset: "+strings.Join(agentpreset.Names(), ", "))
-	agentCmd := fs.String("agent-cmd", "", "per-project agent command with a {prompt} token (overrides --agent)")
+	var agentPresets stringSliceFlag
+	fs.Var(&agentPresets, "agent", "council member preset (repeatable): "+strings.Join(agentpreset.Names(), ", "))
+	var agentCmds stringSliceFlag
+	fs.Var(&agentCmds, "agent-cmd", "council member command with a {prompt} token (repeatable)")
+	chairPreset := fs.String("chair", "", "council chair preset (required with >=2 members): "+strings.Join(agentpreset.Names(), ", "))
+	chairCmd := fs.String("chair-cmd", "", "council chair command with a {prompt} token (overrides --chair)")
 	// Go's flag package stops at the first positional, so `add <root> <docs>
 	// --agent x` would ignore the trailing flag. Parse in a loop, peeling off one
 	// positional at a time and re-parsing the remainder, so flags may appear
@@ -856,23 +863,45 @@ func addProject(args []string, out io.Writer) error {
 	}
 	root := positionals[0]
 	docs := positionals[1:]
-	// Resolve the agent command: --agent-cmd (explicit) wins over --agent (preset);
-	// empty when neither is set (the project inherits the global default).
-	agent := strings.TrimSpace(*agentCmd)
-	if agent == "" && strings.TrimSpace(*agentPreset) != "" {
-		resolved, err := agentpreset.ResolveOrError(strings.TrimSpace(*agentPreset))
+	// Members: each --agent resolves a preset to its command; each --agent-cmd is a
+	// raw command. Presets are listed first, then raw commands, each preserving its
+	// own within-flag order. An empty member list ⇒ inherit the global default.
+	var members []string
+	for _, preset := range agentPresets {
+		resolved, err := agentpreset.ResolveOrError(strings.TrimSpace(preset))
 		if err != nil {
 			return err
 		}
-		agent = resolved
+		members = append(members, resolved)
 	}
-	p, err := registry.Add(registryPath(), root, docs, agent)
+	for _, c := range agentCmds {
+		if s := strings.TrimSpace(c); s != "" {
+			members = append(members, s)
+		}
+	}
+	// Chair: --chair-cmd (explicit) wins over --chair (preset).
+	chair := strings.TrimSpace(*chairCmd)
+	if chair == "" && strings.TrimSpace(*chairPreset) != "" {
+		resolved, err := agentpreset.ResolveOrError(strings.TrimSpace(*chairPreset))
+		if err != nil {
+			return err
+		}
+		chair = resolved
+	}
+	// Surface the council rule with the add help before hitting the registry.
+	if len(members) >= 2 && chair == "" {
+		usageFor(out, "add")
+		return fmt.Errorf("add: council mode (%d members) requires --chair <preset> or --chair-cmd \"<cmd>\"", len(members))
+	}
+	p, err := registry.Add(registryPath(), root, docs, members, chair)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "registered project %q → %s (docs: %s)", p.Name, p.Root, strings.Join(p.Docs, ", "))
-	if p.Agent != "" {
-		fmt.Fprintf(out, " [agent: %s]", p.Agent)
+	if p.IsCouncil() {
+		fmt.Fprintf(out, " [%s → chair: %s]", strings.Join(p.Members(), ", "), p.Chair)
+	} else if cmd := p.AgentCmd(); cmd != "" {
+		fmt.Fprintf(out, " [%s]", cmd)
 	}
 	fmt.Fprintln(out)
 	return nil
@@ -927,8 +956,10 @@ func listProjectsCmd(out io.Writer) error {
 	}
 	for _, p := range projects {
 		line := fmt.Sprintf("%s\t%s", p.Name, projectLocations(p))
-		if p.Agent != "" {
-			line += "\t[" + p.Agent + "]"
+		if p.IsCouncil() {
+			line += "\t[" + strings.Join(p.Members(), ", ") + " → chair: " + p.Chair + "]"
+		} else if cmd := p.AgentCmd(); cmd != "" {
+			line += "\t[" + cmd + "]"
 		}
 		fmt.Fprintln(out, line)
 	}
