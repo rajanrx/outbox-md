@@ -1209,8 +1209,10 @@ func sortedIdentities(m map[string]CouncilTurn) []string {
 func oneLine(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
 	const max = 240
-	if len(s) > max {
-		return s[:max] + "…"
+	// Truncate on a rune boundary — LLM free-text is UTF-8 and a byte slice could
+	// cut mid-rune, emitting a broken character into the prompt.
+	if r := []rune(s); len(r) > max {
+		return string(r[:max]) + "…"
 	}
 	return s
 }
