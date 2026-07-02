@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { listDocs, listProjects, getDoc, approve, reapprove, type DocView, type Project } from "./api";
+import { listDocs, listProjects, getDoc, getConfig, approve, reapprove, type DocView, type Project } from "./api";
 import { FileTree } from "./docs/FileTree";
 import { Reader } from "./reader/Reader";
 import { Margin } from "./comments/Margin";
 import { BaselineDiff } from "./governance/BaselineDiff";
 import { DecisionLog } from "./log/DecisionLog";
 import { Modal } from "./Modal";
+import { SettingsPanel } from "./settings/SettingsPanel";
 import "./governance/governance.css";
 
 const PanelLeftIcon = () => (
@@ -21,6 +22,16 @@ const PanelRightIcon = () => (
     <path d="M11 3v12" />
   </svg>
 );
+const GearIcon = () => (
+  <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.4">
+    <circle cx="9" cy="9" r="2.4" />
+    <path d="M9 1.8v2M9 14.2v2M1.8 9h2M14.2 9h2M3.9 3.9l1.4 1.4M12.7 12.7l1.4 1.4M14.1 3.9l-1.4 1.4M5.3 12.7l-1.4 1.4" strokeLinecap="round" />
+  </svg>
+);
+
+// versionLabel renders the raw version string as a badge: "dev" as-is, a tag
+// starting with "v" as-is, otherwise prefixed with "v".
+const versionLabel = (v: string) => (v === "dev" || v.startsWith("v") ? v : `v${v}`);
 
 const COMMENTS_W_KEY = "outbox.commentsWidth";
 const clampW = (w: number) => Math.min(760, Math.max(300, w));
@@ -42,6 +53,9 @@ export default function App() {
   const [showLog, setShowLog] = useState(false);
   // Which approval action is awaiting confirmation in the modal (null = closed).
   const [confirm, setConfirm] = useState<null | "approve" | "reapprove">(null);
+  const [showSettings, setShowSettings] = useState(false);
+  // Build version for the header badge ("dev" for local builds).
+  const [version, setVersion] = useState("");
   const [commentsW, setCommentsW] = useState(() => {
     const v = Number(localStorage.getItem(COMMENTS_W_KEY));
     return v ? clampW(v) : 420;
@@ -153,6 +167,7 @@ export default function App() {
   }, []);
 
   useEffect(() => { listDocs().then((d) => setDocs(d ?? [])); }, []);
+  useEffect(() => { getConfig().then((c) => setVersion(c?.version ?? "")); }, []);
   // Load the registered projects; keep the stored selection if it is still valid,
   // otherwise fall back to the first project (single-folder mode → empty name).
   useEffect(() => {
@@ -221,7 +236,10 @@ export default function App() {
   return (
     <div className="app-shell">
       <div className="topbar" style={{ position: "relative" }}>
-        <div className="brand"><span className="dot" /><b>outbox</b><span>·md</span></div>
+        <div className="brand">
+          <span className="dot" /><b>outbox</b><span>·md</span>
+          {version && <span className="version-badge" title="outbox-md version">{versionLabel(version)}</span>}
+        </div>
         {multiProject && (
           <select
             className="project-switcher"
@@ -260,8 +278,16 @@ export default function App() {
           <button className="gov-btn ghost" onClick={() => setShowLog((v) => !v)}>History</button>
         )}
         <div className="spacer" />
+        <button className="icon-btn" title="Settings" aria-label="Settings" onClick={() => setShowSettings(true)}><GearIcon /></button>
         <button className={"icon-btn" + (treeOpen ? " on" : "")} title="Toggle files" onClick={() => setTreeOpen((v) => !v)}><PanelLeftIcon /></button>
         <button className={"icon-btn" + (commentsOpen ? " on" : "")} title="Toggle comments" onClick={() => setCommentsOpen((v) => !v)}><PanelRightIcon /></button>
+        {showSettings && (
+          <SettingsPanel
+            project={project}
+            projectLabel={multiProject ? (project || "(root)") : undefined}
+            onClose={() => setShowSettings(false)}
+          />
+        )}
         {showBaseline && view && (
           <BaselineDiff baseline={view.baselineContent} current={view.content} onClose={() => setShowBaseline(false)} />
         )}
