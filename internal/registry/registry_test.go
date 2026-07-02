@@ -158,6 +158,28 @@ func TestAddIsIdempotentByRootAndDocs(t *testing.T) {
 	}
 }
 
+// TestAddIdempotentRegardlessOfDocsOrder — re-adding a root with the same docs in
+// a different order must dedupe (equalDocs is set-based, not order-sensitive), so
+// `add root specs api-specs` then `add root api-specs specs` is one entry, not two.
+func TestAddIdempotentRegardlessOfDocsOrder(t *testing.T) {
+	file := regFile(t)
+	root := t.TempDir()
+	for _, d := range []string{"specs", "api-specs"} {
+		if err := os.Mkdir(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := Add(file, root, []string{"specs", "api-specs"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Add(file, root, []string{"api-specs", "specs"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if list, _ := List(file); len(list) != 1 {
+		t.Fatalf("reordered docs should dedupe: %d entries, want 1", len(list))
+	}
+}
+
 func TestAddMissingRootErrors(t *testing.T) {
 	file := regFile(t)
 	if _, err := Add(file, filepath.Join(t.TempDir(), "does-not-exist"), []string{"."}, ""); err == nil {

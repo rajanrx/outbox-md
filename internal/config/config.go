@@ -300,6 +300,10 @@ type Coverage struct {
 // is exactly the predicate importMarkdown applies, so the served set equals the
 // imported set (no import/serve drift).
 func (cv Coverage) Covers(key string) bool {
+	// Normalize the key ONCE so both predicates see the same path: underDocs
+	// cleans internally but SourcesMatch only slashes, so a "./"/"../"/"//" key
+	// could diverge between the two checks. Both re-normalize idempotently.
+	key = path.Clean(filepath.ToSlash(key))
 	return underDocs(cv.Docs, key) && SourcesMatch(cv.Sources, key)
 }
 

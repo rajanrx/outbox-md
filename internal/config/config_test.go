@@ -390,3 +390,17 @@ func TestAgentTimeoutParsing(t *testing.T) {
 		t.Fatalf("invalid timeout = %v, want default", got)
 	}
 }
+
+// TestCoversNormalizesKeyOnce — a key with a "./" segment must be cleaned before
+// BOTH predicates: underDocs cleans internally, but SourcesMatch only slashed, so
+// an un-cleaned key could pass the docs-union yet miss the sources match. Covers
+// now normalizes once so the two agree.
+func TestCoversNormalizesKeyOnce(t *testing.T) {
+	cv := Coverage{Docs: []string{"."}, Sources: []string{"drafts"}}
+	if !cv.Covers("./drafts/a.md") {
+		t.Fatal(`Covers("./drafts/a.md") = false; want true (key must be cleaned before SourcesMatch)`)
+	}
+	if cv.Covers("notes/a.md") {
+		t.Fatal(`Covers("notes/a.md") = true; want false (outside the sources whitelist)`)
+	}
+}
