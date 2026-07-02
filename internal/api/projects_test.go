@@ -12,14 +12,32 @@ import (
 	"github.com/rajanrx/outbox-md/internal/store"
 )
 
-// TestProjectsEndpointShape verifies GET /api/projects returns [{name, root,
-// docs}] as configured on the service (agent is deliberately not exposed).
+// projectResp mirrors the GET /api/projects wire shape for assertions.
+type projectResp struct {
+	Name    string   `json:"name"`
+	Root    string   `json:"root"`
+	Docs    []string `json:"docs"`
+	Members []struct {
+		Agent string `json:"agent"`
+		Model string `json:"model"`
+	} `json:"members"`
+	Chair *struct {
+		Agent string `json:"agent"`
+		Model string `json:"model"`
+	} `json:"chair"`
+}
+
+// TestProjectsEndpointShape verifies GET /api/projects returns [{name, root, docs,
+// members, chair}] — members carry the structured {agent, model} the Settings page
+// edits (resolved commands stay internal).
 func TestProjectsEndpointShape(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	defer s.Close()
 	svc := service.New(s, func(_, _, _ string) error { return nil })
 	svc.SetProjects([]registry.Project{
-		{Name: "alpha", Root: "/tmp/alpha", Docs: []string{"."}, Agents: []string{"codex exec {prompt}"}},
+		{Name: "alpha", Root: "/tmp/alpha", Docs: []string{"."},
+			Members: []registry.Member{{Agent: "claude", Model: "opus"}, {Agent: "codex"}},
+			Chair:   &registry.Member{Agent: "copilot", Model: "gpt-5"}},
 		{Name: "beta", Root: "/tmp/beta", Docs: []string{"docs/specs", "rfcs"}},
 	})
 	h := NewAPI(svc, s, sse.NewHub())
@@ -29,12 +47,7 @@ func TestProjectsEndpointShape(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("GET /api/projects: %d %s", rec.Code, rec.Body.String())
 	}
-	var got []struct {
-		Name  string   `json:"name"`
-		Root  string   `json:"root"`
-		Docs  []string `json:"docs"`
-		Agent string   `json:"agent"`
-	}
+	var got []projectResp
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v (%s)", err, rec.Body.String())
 	}
@@ -42,13 +55,21 @@ func TestProjectsEndpointShape(t *testing.T) {
 		len(got[0].Docs) != 1 || got[0].Docs[0] != "." {
 		t.Fatalf("projects = %+v, want alpha+beta with root/docs", got)
 	}
+	// Members + models are exposed (the Settings page needs them to configure).
+	if len(got[0].Members) != 2 ||
+		got[0].Members[0].Agent != "claude" || got[0].Members[0].Model != "opus" ||
+		got[0].Members[1].Agent != "codex" || got[0].Members[1].Model != "" {
+		t.Fatalf("alpha members = %+v, want claude:opus + codex", got[0].Members)
+	}
+	if got[0].Chair == nil || got[0].Chair.Agent != "copilot" || got[0].Chair.Model != "gpt-5" {
+		t.Fatalf("alpha chair = %+v, want copilot:gpt-5", got[0].Chair)
+	}
 	if got[1].Name != "beta" || got[1].Root != "/tmp/beta" ||
 		len(got[1].Docs) != 2 || got[1].Docs[0] != "docs/specs" || got[1].Docs[1] != "rfcs" {
 		t.Fatalf("projects[1] = %+v, want beta docs [docs/specs rfcs]", got[1])
 	}
-	// The per-project agent command must not leak to the UI endpoint.
-	if got[0].Agent != "" {
-		t.Fatalf("agent should not be exposed by /api/projects, got %q", got[0].Agent)
+	if len(got[1].Members) != 0 || got[1].Chair != nil {
+		t.Fatalf("beta = %+v, want no members/chair", got[1])
 	}
 }
 

@@ -40,6 +40,10 @@ type Service struct {
 	cfg       config.Config
 	notify    webhook.Notifier
 	projects  []registry.Project
+	// regPath is the on-disk projects.json path (set only in registry-backed
+	// multi-project mode) that the HTTP projects CRUD API persists through. Empty in
+	// single-folder mode, where CRUD is rejected.
+	regPath string
 	// version is the CLI/server version string surfaced at /api/config so the UI
 	// can show a build badge. "dev" for local builds; set once at startup.
 	version string
@@ -73,6 +77,16 @@ func (s *Service) SetProjects(p []registry.Project) { s.projects = p }
 
 // Projects returns the projects being served (read-only view for the API).
 func (s *Service) Projects() []registry.Project { return s.projects }
+
+// SetRegistryPath records the on-disk projects.json path so the HTTP projects
+// CRUD API can persist add/edit/delete through the registry (the same file the
+// CLI uses). It is set only in registry-backed (multi-project) mode; single-folder
+// mode leaves it empty, which the CRUD handlers reject.
+func (s *Service) SetRegistryPath(p string) { s.regPath = p }
+
+// RegistryPath returns the projects.json path, or "" when the server is not
+// registry-backed (single-folder mode).
+func (s *Service) RegistryPath() string { return s.regPath }
 
 // SetWebhook installs the notifier fired on governance events. Defaults to a
 // no-op; main wires in an HTTP notifier when a webhook URL is configured.

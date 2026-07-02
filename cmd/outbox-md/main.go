@@ -412,6 +412,12 @@ func buildServer(root string, projects []registry.Project, autoReplyFlag, logs b
 	svc.SetConfig(cfg)
 	svc.SetProjects(projects)
 	svc.SetVersion(version)
+	// Registry-backed (multi-project) mode exposes the projects CRUD API, which
+	// persists through the shared projects.json. Single-folder mode has no registry
+	// to write to, so the path stays empty and the CRUD endpoints reject writes.
+	if multi {
+		svc.SetRegistryPath(registryPath())
+	}
 	// One governance event fans out to the external HTTP runner (webhook), every
 	// open browser stream (SSE hub), and — when enabled — the in-process
 	// auto-reply engine that spawns the agent CLI on each human comment.
@@ -533,8 +539,8 @@ func autoReplyNotifier(root string, projects []registry.Project, cfg config.Conf
 		targets[p.Name] = autoreply.Target{
 			Root:     p.Root,
 			AgentCmd: p.AgentCmd(),
-			Members:  p.Members(),
-			Chair:    p.Chair,
+			Members:  p.MemberCmds(),
+			Chair:    p.ChairCmd(),
 		}
 	}
 	return autoreply.New(autoreply.Config{
@@ -899,10 +905,10 @@ func addProject(args []string, out io.Writer) error {
 	// On a bad flag, print the add usage + examples (not just Go's terse error).
 	fs.Usage = func() { usageFor(out, "add") }
 	var agentPresets stringSliceFlag
-	fs.Var(&agentPresets, "agent", "council member preset (repeatable): "+strings.Join(agentpreset.Names(), ", "))
+	fs.Var(&agentPresets, "agent", "council member preset, optionally preset:model (repeatable): "+strings.Join(agentpreset.Names(), ", "))
 	var agentCmds stringSliceFlag
-	fs.Var(&agentCmds, "agent-cmd", "council member command with a {prompt} token (repeatable)")
-	chairPreset := fs.String("chair", "", "council chair preset (required with >=2 members): "+strings.Join(agentpreset.Names(), ", "))
+	fs.Var(&agentCmds, "agent-cmd", "council member command with a {prompt} token (repeatable; model embedded by you)")
+	chairPreset := fs.String("chair", "", "council chair preset, optionally preset:model (required with >=2 members): "+strings.Join(agentpreset.Names(), ", "))
 	chairCmd := fs.String("chair-cmd", "", "council chair command with a {prompt} token (overrides --chair)")
 	// Go's flag package stops at the first positional, so `add <root> <docs>
 	// --agent x` would ignore the trailing flag. Parse in a loop, peeling off one
@@ -931,33 +937,39 @@ func addProject(args []string, out io.Writer) error {
 	}
 	root := positionals[0]
 	docs := positionals[1:]
-	// Members: each --agent resolves a preset to its command; each --agent-cmd is a
-	// raw command. Presets are listed first, then raw commands, each preserving its
-	// own within-flag order. An empty member list ⇒ inherit the global default.
-	var members []string
-	for _, preset := range agentPresets {
-		resolved, err := agentpreset.ResolveOrError(strings.TrimSpace(preset))
-		if err != nil {
+	// Members: each --agent names a preset (with an optional :model suffix, e.g.
+	// "claude:opus"); each --agent-cmd is a raw command (its model is the user's
+	// business — the :model syntax does NOT apply). Presets are listed first, then
+	// raw commands, each preserving its own within-flag order. The member stores the
+	// preset NAME + model (not a resolved command); resolution to the spawn command
+	// (with the model flag injected) happens in registry.Member.Command. An empty
+	// member list ⇒ inherit the global default.
+	var members []registry.Member
+	for _, spec := range agentPresets {
+		name, model := splitAgentSpec(spec)
+		if _, err := agentpreset.ResolveOrError(name); err != nil {
 			return err
 		}
-		members = append(members, resolved)
+		members = append(members, registry.Member{Agent: name, Model: model})
 	}
 	for _, c := range agentCmds {
 		if s := strings.TrimSpace(c); s != "" {
-			members = append(members, s)
+			members = append(members, registry.Member{Agent: s})
 		}
 	}
-	// Chair: --chair-cmd (explicit) wins over --chair (preset).
-	chair := strings.TrimSpace(*chairCmd)
-	if chair == "" && strings.TrimSpace(*chairPreset) != "" {
-		resolved, err := agentpreset.ResolveOrError(strings.TrimSpace(*chairPreset))
-		if err != nil {
+	// Chair: --chair-cmd (explicit raw command) wins over --chair (preset[:model]).
+	var chair registry.Member
+	if s := strings.TrimSpace(*chairCmd); s != "" {
+		chair = registry.Member{Agent: s}
+	} else if s := strings.TrimSpace(*chairPreset); s != "" {
+		name, model := splitAgentSpec(s)
+		if _, err := agentpreset.ResolveOrError(name); err != nil {
 			return err
 		}
-		chair = resolved
+		chair = registry.Member{Agent: name, Model: model}
 	}
 	// Surface the council rule with the add help before hitting the registry.
-	if len(members) >= 2 && chair == "" {
+	if len(members) >= 2 && strings.TrimSpace(chair.Agent) == "" {
 		usageFor(out, "add")
 		return fmt.Errorf("add: council mode (%d members) requires --chair <preset> or --chair-cmd \"<cmd>\"", len(members))
 	}
@@ -967,12 +979,24 @@ func addProject(args []string, out io.Writer) error {
 	}
 	fmt.Fprintf(out, "registered project %q → %s (docs: %s)", p.Name, p.Root, strings.Join(p.Docs, ", "))
 	if p.IsCouncil() {
-		fmt.Fprintf(out, " [%s → chair: %s]", strings.Join(p.Members(), ", "), p.Chair)
+		fmt.Fprintf(out, " [%s → chair: %s]", strings.Join(p.MemberCmds(), ", "), p.ChairCmd())
 	} else if cmd := p.AgentCmd(); cmd != "" {
 		fmt.Fprintf(out, " [%s]", cmd)
 	}
 	fmt.Fprintln(out)
 	return nil
+}
+
+// splitAgentSpec splits a `--agent`/`--chair` preset spec into its preset name and
+// optional model: "claude:opus" → ("claude", "opus"); "claude" → ("claude", "").
+// Only the FIRST colon splits (a model may itself contain a colon), and both sides
+// are trimmed. This applies to preset flags only — a raw --agent-cmd is verbatim.
+func splitAgentSpec(spec string) (name, model string) {
+	spec = strings.TrimSpace(spec)
+	if i := strings.Index(spec, ":"); i >= 0 {
+		return strings.TrimSpace(spec[:i]), strings.TrimSpace(spec[i+1:])
+	}
+	return spec, ""
 }
 
 // removeProject unregisters registered projects (or individual docs subpaths).
@@ -1025,7 +1049,7 @@ func listProjectsCmd(out io.Writer) error {
 	for _, p := range projects {
 		line := fmt.Sprintf("%s\t%s", p.Name, projectLocations(p))
 		if p.IsCouncil() {
-			line += "\t[" + strings.Join(p.Members(), ", ") + " → chair: " + p.Chair + "]"
+			line += "\t[" + strings.Join(p.MemberCmds(), ", ") + " → chair: " + p.ChairCmd() + "]"
 		} else if cmd := p.AgentCmd(); cmd != "" {
 			line += "\t[" + cmd + "]"
 		}
