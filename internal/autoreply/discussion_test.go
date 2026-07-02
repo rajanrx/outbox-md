@@ -161,13 +161,15 @@ func TestCouncilEarlyExitWhenStable(t *testing.T) {
 }
 
 // TestCouncilDiscussionInjectsOtherMembersPositions: the round-1 member prompt
-// carries ANOTHER member's round-0 position (verdict + rationale) — the transcript
-// the engine injects because members cannot read each other's candidates via MCP.
+// carries ANOTHER member's round-0 position — verdict + rationale AND, for an edit,
+// the actual proposed content — the transcript the engine injects because members
+// cannot read each other's candidates via MCP. Without the content a member would
+// concur/dissent on an edit it cannot see.
 func TestCouncilDiscussionInjectsOtherMembersPositions(t *testing.T) {
 	rec := &discRecorder{}
 	round0 := CouncilSnapshot{Candidates: []CouncilTurn{
 		{AgentIdentity: "member-1", Round: 0, Lens: domain.LensCorrectness, Verdict: domain.VerdictReply, Rationale: "m1-initial-take"},
-		{AgentIdentity: "member-2", Round: 0, Lens: domain.LensSkeptic, Verdict: domain.VerdictEdit, Content: "X", Rationale: "UNIQUE-SKEPTIC-RATIONALE"},
+		{AgentIdentity: "member-2", Round: 0, Lens: domain.LensSkeptic, Verdict: domain.VerdictEdit, Content: "UNIQUE-EDIT-BODY-42", Rationale: "UNIQUE-SKEPTIC-RATIONALE"},
 	}}
 	state := func(string) (CouncilSnapshot, error) { return round0, nil }
 	// rounds=1 ⇒ exactly one discussion round then the loop ends.
@@ -185,15 +187,17 @@ func TestCouncilDiscussionInjectsOtherMembersPositions(t *testing.T) {
 	defer rec.mu.Unlock()
 	var found bool
 	for _, p := range rec.memberPrompts {
-		// member-1's round-1 discussion prompt must carry member-2's round-0 position.
+		// member-1's round-1 discussion prompt must carry member-2's round-0 position
+		// INCLUDING the actual proposed edit content (not just a placeholder).
 		if strings.Contains(p, "discussion round 1") &&
 			strings.Contains(p, `"member-1"`) &&
-			strings.Contains(p, "UNIQUE-SKEPTIC-RATIONALE") {
+			strings.Contains(p, "UNIQUE-SKEPTIC-RATIONALE") &&
+			strings.Contains(p, "UNIQUE-EDIT-BODY-42") {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("round-1 member-1 prompt did not carry member-2's round-0 position; prompts=%v", rec.memberPrompts)
+		t.Fatalf("round-1 member-1 prompt did not carry member-2's round-0 position + edit content; prompts=%v", rec.memberPrompts)
 	}
 }
 

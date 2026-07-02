@@ -1160,7 +1160,7 @@ func formatCouncilTranscript(snap CouncilSnapshot, self string) string {
 	if p, ok := latest[self]; ok {
 		fmt.Fprintf(&b, "Your prior position (round %d, %s lens): verdict=%s — %s\n", p.Round, p.Lens, p.Verdict, oneLine(p.Rationale))
 		if p.Verdict == domain.VerdictEdit {
-			b.WriteString("  (you proposed a full-document edit)\n")
+			fmt.Fprintf(&b, "  your proposed edit [candidate %s]:\n%s\n", p.ID, indentBlock(councilEditExcerpt(p.Content)))
 		}
 	} else {
 		b.WriteString("Your prior position: (none recorded)\n")
@@ -1173,11 +1173,14 @@ func formatCouncilTranscript(snap CouncilSnapshot, self string) string {
 			continue
 		}
 		p := latest[id]
-		note := ""
+		fmt.Fprintf(&b, "- %s (%s lens): verdict=%s — %s\n", id, p.Lens, p.Verdict, oneLine(p.Rationale))
 		if p.Verdict == domain.VerdictEdit {
-			note = " [proposes a full-document edit]"
+			// Show the ACTUAL proposed replacement (bounded), not a placeholder —
+			// members cannot call list_candidates, so without this they would
+			// concur/dissent on an edit they cannot see. The candidate id lets them
+			// cite it in submit_discussion.
+			fmt.Fprintf(&b, "    proposed edit [candidate %s]:\n%s\n", p.ID, indentBlock(councilEditExcerpt(p.Content)))
 		}
-		fmt.Fprintf(&b, "- %s (%s lens): verdict=%s — %s%s\n", id, p.Lens, p.Verdict, oneLine(p.Rationale), note)
 		others++
 	}
 	if others == 0 {
@@ -1215,6 +1218,31 @@ func oneLine(s string) string {
 		return string(r[:max]) + "…"
 	}
 	return s
+}
+
+// councilEditExcerpt renders a member's proposed edit content for the discussion
+// transcript. Unlike oneLine it PRESERVES line structure (an edit is a document, so
+// its shape matters to a reviewer), and bounds the size so a large document doesn't
+// blow the prompt — rune-safe, with a truncation marker naming the full length.
+func councilEditExcerpt(content string) string {
+	const max = 800
+	if content == "" {
+		return "(empty)"
+	}
+	if r := []rune(content); len(r) > max {
+		return string(r[:max]) + fmt.Sprintf("\n…(truncated; %d chars total)", len(r))
+	}
+	return content
+}
+
+// indentBlock indents every line of s by four spaces so an embedded block (e.g. a
+// proposed edit) reads as a distinct, quoted section inside the transcript.
+func indentBlock(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		lines[i] = "    " + l
+	}
+	return strings.Join(lines, "\n")
 }
 
 // waveSize is how many agent runs to launch in one wave. It is bounded by the
