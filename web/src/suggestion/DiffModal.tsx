@@ -1,15 +1,18 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   accept,
   getPendingSuggestions,
   getSuggestion,
   rejectSuggestion,
+  reply,
   type PendingSuggestion,
   type Suggestion,
 } from "../api";
 import { counts } from "./DiffRows";
 import { unifiedDiff } from "./diff";
+import { type LineCommentApi } from "./LineComments";
+import { canRefine, formatRefineMessage, groupDrafts, lineKey, type LineDraft } from "./refine";
 import { DiffToggle, DiffView, useDiffView } from "./view";
 import "./diff.css";
 
@@ -32,6 +35,13 @@ export function DiffModal({ open, commentId, currentContent, title, onClose, onC
   const [pending, setPending] = useState<PendingSuggestion[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useDiffView();
+  // Inline-comment drafts for the Refine loop: unsent, keyed to a diff line, held
+  // only in component state until the user clicks Refine. `editing` tracks the one
+  // open composer/editor (id set → editing an existing draft). `sent` swaps the
+  // footer for a confirmation once the refine reply is posted.
+  const [drafts, setDrafts] = useState<LineDraft[]>([]);
+  const [editing, setEditing] = useState<{ key: string; id?: string; value: string } | null>(null);
+  const [sent, setSent] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -49,6 +59,18 @@ export function DiffModal({ open, commentId, currentContent, title, onClose, onC
     getPendingSuggestions().then((p) => { if (live) setPending(p); });
     return () => { live = false; };
   }, [open, commentId]);
+
+  // Drafts belong to a single suggestion review; clear them whenever the modal
+  // opens or targets a different comment.
+  useEffect(() => {
+    setDrafts([]);
+    setEditing(null);
+    setSent(false);
+  }, [open, commentId]);
+
+  // Grouped for O(1) per-row lookup in the diff. Kept above the early return so
+  // the hook order is stable.
+  const draftMap = useMemo(() => groupDrafts(drafts), [drafts]);
 
   if (!open) return null;
 
@@ -69,6 +91,55 @@ export function DiffModal({ open, commentId, currentContent, title, onClose, onC
   const before = proposable ? currentContent : (sg?.againstContent ?? currentContent);
   const changed = !!sg && sg.proposedContent !== before;
   const stateLabel = sg?.state === "accepted" ? "Accepted" : sg?.state === "rejected" ? "Rejected" : sg?.state;
+
+  // Controlled line-comment API handed to the "This change" DiffView. Saving
+  // stores a draft; editing/removing mutate the list; nothing is posted until
+  // Refine. Only wired for a live proposed suggestion (below).
+  const lineComments: LineCommentApi = {
+    drafts: draftMap,
+    editing,
+    onAddClick: (ref) => setEditing({ key: lineKey(ref.side, ref.lineNo), value: "" }),
+    onEditClick: (d) => setEditing({ key: lineKey(d.side, d.lineNo), id: d.id, value: d.body }),
+    onEditingChange: (value) => setEditing((e) => (e ? { ...e, value } : e)),
+    onSave: (ref) => {
+      if (!editing) return;
+      const body = editing.value.trim();
+      if (!body) return;
+      if (editing.id) {
+        const id = editing.id;
+        setDrafts((ds) => ds.map((d) => (d.id === id ? { ...d, body } : d)));
+      } else {
+        setDrafts((ds) => [
+          ...ds,
+          { id: crypto.randomUUID(), side: ref.side, lineNo: ref.lineNo, snippet: ref.snippet, body },
+        ]);
+      }
+      setEditing(null);
+    },
+    onCancel: () => setEditing(null),
+    onRemove: (id) => {
+      setDrafts((ds) => ds.filter((d) => d.id !== id));
+      setEditing((e) => (e?.id === id ? null : e));
+    },
+  };
+
+  // Refine = format the drafts into ONE structured human reply and post it via the
+  // existing reply path → fires comment.replied → the auto-reply agent proposes an
+  // improved suggestion. The current proposal is left untouched (not rejected): the
+  // agent supersedes it with the refined one — the safer default.
+  const onRefine = async () => {
+    if (!canRefine(drafts)) return;
+    setBusy(true);
+    try {
+      await reply(commentId, formatRefineMessage(drafts));
+      setDrafts([]);
+      setEditing(null);
+      setSent(true);
+      onChange();
+    } finally {
+      setBusy(false);
+    }
+  };
 
   // Portal to <body> so the fixed-position backdrop is measured against the
   // viewport, not a clipping ancestor.
@@ -96,7 +167,12 @@ export function DiffModal({ open, commentId, currentContent, title, onClose, onC
               <div className="diff-empty">Loading change…</div>
             ) : changed ? (
               <div className="diff-frame">
-                <DiffView before={before} after={sg.proposedContent} mode={mode} />
+                <DiffView
+                  before={before}
+                  after={sg.proposedContent}
+                  mode={mode}
+                  lineComments={proposable ? lineComments : undefined}
+                />
               </div>
             ) : (
               <div className="diff-empty">No textual changes from the current version.</div>
@@ -131,22 +207,44 @@ export function DiffModal({ open, commentId, currentContent, title, onClose, onC
         </div>
 
         <div className="diff-modal-foot">
-          {sg && !proposable ? (
+          {sent ? (
+            <span className="refine-sent" role="status">
+              Refinement sent — the agent will revise this suggestion.
+            </span>
+          ) : sg && !proposable ? (
             <span className={`suggestion-state state-${sg.state}`}>{stateLabel}</span>
           ) : (
             <span className="diff-foot-spacer" />
           )}
-          {/* Accept/Reject only for a live proposed suggestion; an accepted/
-              rejected one is read-only (the status label above is shown instead). */}
-          {proposable && (
+          {/* After a refine is posted the review is done here — just offer Close.
+              Otherwise Refine/Reject/Approve for a live proposed suggestion; an
+              accepted/rejected one is read-only (status label shown instead). */}
+          {sent ? (
             <div className="diff-foot-actions">
-              <button disabled={busy} onClick={() => act(() => rejectSuggestion(commentId))}>
-                Reject
-              </button>
-              <button className="primary" disabled={busy} onClick={() => act(() => accept(commentId))}>
-                Approve
-              </button>
+              <button className="primary" onClick={onClose}>Close</button>
             </div>
+          ) : (
+            proposable && (
+              <div className="diff-foot-actions">
+                {/* Refine posts the inline drafts as a human reply; enabled once at
+                    least one line comment is drafted. The current proposal is left
+                    as-is for the agent to supersede. */}
+                <button
+                  className="refine"
+                  disabled={busy || !canRefine(drafts)}
+                  title="Send inline feedback so the agent proposes a better suggestion"
+                  onClick={onRefine}
+                >
+                  Refine ({drafts.length})
+                </button>
+                <button disabled={busy} onClick={() => act(() => rejectSuggestion(commentId))}>
+                  Reject
+                </button>
+                <button className="primary" disabled={busy} onClick={() => act(() => accept(commentId))}>
+                  Approve
+                </button>
+              </div>
+            )
           )}
         </div>
       </div>
