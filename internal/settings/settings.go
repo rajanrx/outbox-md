@@ -44,6 +44,12 @@ var Editable = []Field{
 	{Key: "council_rounds", Kind: KindInt, Desc: "max council discussion rounds (early-exit on consensus)"},
 	{Key: "council_budget", Kind: KindInt, Desc: "per-council token budget guardrail"},
 	{Key: "council_deadlock_threshold", Kind: KindInt, Desc: "confidence % below which the chair posts \"no consensus\" options"},
+	{Key: "embed_cmd", Kind: KindString, Desc: "RAG embedder command (reads text on stdin, writes a JSON vector; empty => FTS5 keyword-only)"},
+	{Key: "kb_scope", Kind: KindString, Desc: "retrieval scope: project (default) or all"},
+	// embed_api is a nested mapping (provider/model/api_key_env), so like
+	// agent.batch_size it is NOT in this top-level-scalar write path; it is parsed
+	// from outbox.yaml and read at use time. The API key is never surfaced or
+	// stored — only the env-var NAME lives in config.
 }
 
 // FieldByKey returns the editable field for key, if any.

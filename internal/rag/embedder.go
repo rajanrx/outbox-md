@@ -49,6 +49,8 @@ func NewEmbedder(cfg config.Config) (Embedder, error) {
 		return NewCmdEmbedder(cmd), nil
 	}
 	// embed_api is reserved for a later slice; with no embed_cmd we fall through to
-	// no embedder (FTS5-only) rather than failing.
+	// no embedder (FTS5-only) rather than failing. NOTE for 3C: spec §5.2 says
+	// embed_api OVERRIDES embed_cmd when set — when the API embedder is implemented,
+	// check cfg.EmbedAPI.Configured() BEFORE embed_cmd here and return it first.
 	return nil, nil
 }

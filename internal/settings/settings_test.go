@@ -116,3 +116,37 @@ func TestCouncilIntFieldsEditableAndWrite(t *testing.T) {
 		t.Fatalf("council_rounds round-trip = %d, want 3", cfg.ResolveCouncilRounds())
 	}
 }
+
+// TestRAGStringFieldsEditableAndWrite: embed_cmd and kb_scope are editable string
+// fields that round-trip through config; embed_api (nested) is intentionally NOT
+// editable via this top-level-scalar write path.
+func TestRAGStringFieldsEditableAndWrite(t *testing.T) {
+	for _, key := range []string{"embed_cmd", "kb_scope"} {
+		f, ok := FieldByKey(key)
+		if !ok {
+			t.Fatalf("%s should be an editable field", key)
+		}
+		if f.Kind != KindString {
+			t.Fatalf("%s kind = %q, want string", key, f.Kind)
+		}
+	}
+	if _, ok := FieldByKey("embed_api"); ok {
+		t.Fatal("embed_api is nested and must NOT be a top-level editable field")
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "outbox.yaml")
+	if err := os.WriteFile(path, []byte("# guidance\nauto_reply: false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteKey(path, "kb_scope", "all", KindString); err != nil {
+		t.Fatalf("write string: %v", err)
+	}
+	if cfg := config.Load(dir); cfg.ResolveKBScope() != config.KBScopeAll {
+		t.Fatalf("kb_scope round-trip = %q, want all", cfg.ResolveKBScope())
+	}
+	txt, _ := os.ReadFile(path)
+	if !strings.Contains(string(txt), "guidance") {
+		t.Fatalf("comment clobbered:\n%s", txt)
+	}
+}
