@@ -752,9 +752,24 @@ func (s *Service) HumanReply(commentID, body string) (domain.ThreadMessage, erro
 	// list_open_comments only returns 'open'. Re-queue it (unless already
 	// resolved) so the agent responds again.
 	_ = s.store.ReopenCommentIfNotResolved(commentID)
+	c, gcErr := s.store.GetComment(commentID)
+	// Council re-engagement (spec §3.3: a human reply kicks a fresh verdict). If
+	// this comment has a council set that already reached a terminal state, reset it
+	// to 'gathering' so the re-triggered council can record a NEW synthesis. Without
+	// this, the single-shot TryClaimSynthesis guard — which correctly blocks
+	// intra-run double-synthesis — permanently blocks re-verdicts after the first,
+	// so a human's "refine" reply re-triggers the council but produces nothing. Only
+	// when the comment is live (not resolved); single-agent comments have no set, so
+	// this is a no-op for them.
+	if gcErr == nil && c.Status != domain.CommentResolved {
+		if set, ok, err := s.store.GetCandidateSetByComment(commentID); err == nil && ok &&
+			(set.State == domain.CandidateSetSynthesized || set.State == domain.CandidateSetDecided) {
+			_ = s.store.SetCandidateSetState(set.ID, domain.CandidateSetGathering)
+		}
+	}
 	// Fire unconditionally — a reply happened even when the reopen was a no-op
 	// (e.g. the comment was already resolved).
-	if c, err := s.store.GetComment(commentID); err == nil {
+	if gcErr == nil {
 		s.fireCommentEvent(webhook.EventCommentReplied, c)
 	}
 	return m, nil
