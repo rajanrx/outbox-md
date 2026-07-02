@@ -415,16 +415,15 @@ func validateDocs(absRoot string, docs []string) ([]string, error) {
 			d = "."
 		}
 		d = filepath.Clean(d)
-		if filepath.IsAbs(d) {
-			return nil, fmt.Errorf("%w: %q must be relative to the project root", ErrBadDocs, d)
-		}
-		// Reject a traversal BEFORE any os.Stat: filepath.Clean keeps a leading
-		// "..", so "../escape" passes the IsAbs check and would otherwise be stat'd
-		// OUTSIDE root — a request-controlled path-injection probe. The resolved-
-		// symlink containment check below is the deeper guard; this lexical one
-		// keeps the stat itself inside root (and closes CodeQL go/path-injection).
-		if d == ".." || strings.HasPrefix(d, ".."+string(os.PathSeparator)) {
-			return nil, fmt.Errorf("%w: %q escapes the project root", ErrBadDocs, d)
+		// filepath.IsLocal rejects an absolute path, an empty path, and any ".."
+		// traversal that would escape the root — lexically, BEFORE any os.Stat. It is
+		// the stdlib path-containment sanitizer that CodeQL's go/path-injection query
+		// recognises, so the os.Stat below can only ever touch a path INSIDE absRoot
+		// (filepath.Clean keeps a leading "..", so a bare IsAbs check would let
+		// "../escape" through to a stat outside root). The resolved-symlink
+		// containment check further down is the deeper, symlink-aware guard.
+		if !filepath.IsLocal(d) {
+			return nil, fmt.Errorf("%w: %q must be a relative path inside the project root", ErrBadDocs, d)
 		}
 		specDir := filepath.Join(absRoot, d)
 		sfi, err := os.Stat(specDir)
