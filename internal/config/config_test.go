@@ -21,6 +21,32 @@ func TestLoadDefaultsWhenAbsent(t *testing.T) {
 	}
 }
 
+func TestConcurrencyDefaultsTo4WhenAbsent(t *testing.T) {
+	cfg := Load(t.TempDir())
+	if got := cfg.Agent.ResolveConcurrency(); got != DefaultAgentConcurrency {
+		t.Fatalf("absent concurrency = %d, want %d (Defaults seed)", got, DefaultAgentConcurrency)
+	}
+}
+
+func TestConcurrencyFromYAML(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "agent:\n  concurrency: 8\n")
+	if got := Load(dir).Agent.ResolveConcurrency(); got != 8 {
+		t.Fatalf("concurrency = %d, want 8", got)
+	}
+}
+
+func TestConcurrencyBelowOneClampedToOne(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "agent:\n  concurrency: 0\n")
+	if got := Load(dir).Agent.ResolveConcurrency(); got != 1 {
+		t.Fatalf("explicit concurrency: 0 = %d, want 1 (single-flight)", got)
+	}
+	if got := (AgentConfig{Concurrency: -3}).ResolveConcurrency(); got != 1 {
+		t.Fatalf("negative concurrency = %d, want 1", got)
+	}
+}
+
 func TestLoadAutoUpdateDefaultsTrue(t *testing.T) {
 	if !Load(t.TempDir()).AutoUpdate {
 		t.Fatal("auto_update should default to true when the key is absent")
