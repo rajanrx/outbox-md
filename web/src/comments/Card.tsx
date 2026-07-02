@@ -81,31 +81,49 @@ export function Card({ comment, currentContent, docPath = "", active = false, pi
   const stop = (e: React.MouseEvent, fn?: () => void) => { e.stopPropagation(); fn?.(); };
   const sendReply = async () => { if (!draft.trim()) return; await reply(comment.id, draft); setDraft(""); await load(); };
 
-  // A comment carries a live suggestion whenever its latest suggestion is still
-  // proposed — which can happen while its status is open/claimed/addressed/
-  // replied (e.g. an agent that both proposed a suggestion and replied leaves
-  // the comment 'replied'). Fetch it for any non-terminal comment and render the
-  // diff when the fetched suggestion is still proposed; the full diff +
-  // Approve/Reject live in the modal (which re-fetches the suggestion). Terminal
-  // comments (resolved/detached) can leave a stale proposed row behind, so we
-  // skip them.
+  // A comment carries a suggestion in one of two viewable shapes:
+  //  • INTERACTIVE — the latest suggestion is still 'proposed' (excerpt + See diff
+  //    + Approve/Reject). This can happen while the comment status is
+  //    open/claimed/addressed/replied (e.g. an agent that both proposed and
+  //    replied leaves it 'replied'); it is diffed against the CURRENT content.
+  //  • HISTORICAL — the suggestion was 'accepted' or 'rejected' (read-only:
+  //    excerpt + See diff + a status label, no buttons). It is diffed
+  //    against-version → proposed, since post-accept the current content already
+  //    equals the proposed content. Fetch even for a resolved comment (accept
+  //    resolves the comment) so an accepted change stays visible instead of
+  //    vanishing. Only a DETACHED comment — a stale/orphaned anchor — is skipped.
   const [sg, setSg] = useState<Suggestion | null>(null);
   const [diffOpen, setDiffOpen] = useState(false);
-  const terminal = comment.status === "resolved" || comment.status === "detached";
+  // Bumped when the modal completes an Accept/Reject. Those service paths fire no
+  // SSE event, so reloadKey (driven by SSE) won't refresh the suggestion; without
+  // this the stale 'proposed' sg would linger — the accepted diff would vanish and
+  // a rejected one would keep its Approve/Reject buttons. actionTick re-fetches
+  // regardless of whether the comment's status changed (reject stays 'open').
+  const [actionTick, setActionTick] = useState(0);
+  const detached = comment.status === "detached";
   useEffect(() => {
-    if (terminal) { setSg(null); return; }
+    if (detached) { setSg(null); return; }
     let live = true;
     getSuggestion(comment.id).then((s) => { if (live) setSg(s); });
     return () => { live = false; };
-  }, [terminal, comment.id, reloadKey]);
-  // Also gate the render on !terminal: a late getSuggestion response can resolve
-  // after the comment has gone terminal, and without this a stale proposed diff
-  // would render whose Reject would reopen a resolved/detached comment.
-  const showSuggestion = !terminal && !!sg && sg.state === "proposed";
-  const rows = useMemo(() => (showSuggestion ? unifiedDiff(currentContent, sg!.proposedContent) : []), [showSuggestion, sg, currentContent]);
+  }, [detached, comment.id, reloadKey, actionTick]);
+  // Interactive only while proposed AND the comment is not resolved (a stale
+  // proposed row on a resolved comment must not offer a Reject that would reopen
+  // it). Historical whenever the suggestion is accepted/rejected.
+  const interactive = !detached && !!sg && sg.state === "proposed" && comment.status !== "resolved";
+  const historical = !detached && !!sg && (sg.state === "accepted" || sg.state === "rejected");
+  const showSuggestion = interactive || historical;
+  // Interactive diffs against the current content; a historical diff renders what
+  // the suggestion changed (against-version → proposed).
+  const before = interactive ? currentContent : (sg?.againstContent ?? "");
+  const rows = useMemo(
+    () => (showSuggestion && sg ? unifiedDiff(before, sg.proposedContent) : []),
+    [showSuggestion, sg, before],
+  );
   const excerpt = useMemo(() => excerptRows(rows), [rows]);
   const changed = rows.some((r) => r.op === "ins" || r.op === "del");
   const c = counts(rows);
+  const stateLabel = sg?.state === "accepted" ? "Accepted" : sg?.state === "rejected" ? "Rejected" : "";
 
   return (
     <div ref={ref} className={"card" + (active ? " active" : "") + (pinned ? " pinned" : "")} data-comment={comment.id} onClick={onActivate}>
@@ -142,6 +160,7 @@ export function Card({ comment, currentContent, docPath = "", active = false, pi
         <div className="suggestion" onClick={(e) => e.stopPropagation()}>
           <div className="suggestion-head">
             Suggested change
+            {historical && <span className={`suggestion-state state-${sg!.state}`}>{stateLabel}</span>}
             {changed && <span className="diff-count"><span className="ins">+{c.ins}</span> <span className="del">−{c.del}</span></span>}
           </div>
           {changed ? (
@@ -165,7 +184,7 @@ export function Card({ comment, currentContent, docPath = "", active = false, pi
           currentContent={currentContent}
           title={docPath || "Suggested change"}
           onClose={() => setDiffOpen(false)}
-          onChange={onChange}
+          onChange={() => { setActionTick((t) => t + 1); onChange(); }}
         />
       )}
 

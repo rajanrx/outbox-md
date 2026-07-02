@@ -62,7 +62,13 @@ export function DiffModal({ open, commentId, currentContent, title, onClose, onC
   // Exclude this comment's own suggestion — already shown in "This change".
   const others = (pending ?? []).filter((p) => p.commentId !== commentId);
   const proposable = !!sg && sg.state === "proposed";
-  const changed = !!sg && sg.proposedContent !== currentContent;
+  // A proposed suggestion diffs against the CURRENT content (what accepting it
+  // would change). An accepted/rejected one is a read-only HISTORICAL diff:
+  // against-version → proposed, since post-accept the current content already
+  // equals the proposed content (a current-vs-proposed diff would show nothing).
+  const before = proposable ? currentContent : (sg?.againstContent ?? currentContent);
+  const changed = !!sg && sg.proposedContent !== before;
+  const stateLabel = sg?.state === "accepted" ? "Accepted" : sg?.state === "rejected" ? "Rejected" : sg?.state;
 
   // Portal to <body> so the fixed-position backdrop is measured against the
   // viewport, not a clipping ancestor.
@@ -90,7 +96,7 @@ export function DiffModal({ open, commentId, currentContent, title, onClose, onC
               <div className="diff-empty">Loading change…</div>
             ) : changed ? (
               <div className="diff-frame">
-                <DiffView before={currentContent} after={sg.proposedContent} mode={mode} />
+                <DiffView before={before} after={sg.proposedContent} mode={mode} />
               </div>
             ) : (
               <div className="diff-empty">No textual changes from the current version.</div>
@@ -126,18 +132,22 @@ export function DiffModal({ open, commentId, currentContent, title, onClose, onC
 
         <div className="diff-modal-foot">
           {sg && !proposable ? (
-            <span className="suggestion-state">{sg.state}</span>
+            <span className={`suggestion-state state-${sg.state}`}>{stateLabel}</span>
           ) : (
             <span className="diff-foot-spacer" />
           )}
-          <div className="diff-foot-actions">
-            <button disabled={busy || !proposable} onClick={() => act(() => rejectSuggestion(commentId))}>
-              Reject
-            </button>
-            <button className="primary" disabled={busy || !proposable} onClick={() => act(() => accept(commentId))}>
-              Approve
-            </button>
-          </div>
+          {/* Accept/Reject only for a live proposed suggestion; an accepted/
+              rejected one is read-only (the status label above is shown instead). */}
+          {proposable && (
+            <div className="diff-foot-actions">
+              <button disabled={busy} onClick={() => act(() => rejectSuggestion(commentId))}>
+                Reject
+              </button>
+              <button className="primary" disabled={busy} onClick={() => act(() => accept(commentId))}>
+                Approve
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>,
