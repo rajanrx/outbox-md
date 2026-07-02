@@ -4,6 +4,49 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0](https://github.com/rajanrx/outbox-md/compare/v0.14.0...v0.15.0) (2026-07-02)
+
+
+### Features
+
+* **autoreply:** configurable timeout + startup sweep ([c670dca](https://github.com/rajanrx/outbox-md/commit/c670dcad24b06e9ef578610dce7b68d6aeaf68a3))
+* **autoreply:** council orchestration — claim, member fan-out, heartbeat, chair ([0d6c33b](https://github.com/rajanrx/outbox-md/commit/0d6c33b012206f4d0effb29e7dc6743b4d315822))
+* **autoreply:** fan out to N concurrent agents (default 4) ([8014fbc](https://github.com/rajanrx/outbox-md/commit/8014fbcf72e5f756ebef995dba6df39062fbf8eb))
+* **autoreply:** retry failed runs (configurable, default 5) ([0823c38](https://github.com/rajanrx/outbox-md/commit/0823c382491516a9c5d29ea7fd391af200675189))
+* **cli:** --agent/--chair (repeatable) on add for council members + chair ([4554232](https://github.com/rajanrx/outbox-md/commit/4554232797f798cfeed9ecbef0edb478a000cef2))
+* **cli:** --logs flag ([3287dc0](https://github.com/rajanrx/outbox-md/commit/3287dc033c0edc469dddc0764c10d846e2610239))
+* **cli:** outbox retry ([54de60f](https://github.com/rajanrx/outbox-md/commit/54de60ff737d1ad3043662e50ee943959da6182f))
+* **council:** list_candidates + record_synthesis MCP tools + confidence on synthesis ([263c583](https://github.com/rajanrx/outbox-md/commit/263c583e52b05586d678bcaefbe7b9bc8a4eebcb))
+* **council:** members + chair per project (registry + add CLI) ([2e9ee3c](https://github.com/rajanrx/outbox-md/commit/2e9ee3c45ac4d9ebe9432a628b82b802de53f26a))
+* **council:** orchestration — claim, member fan-out, heartbeat, chair (Phase 1) ([3b67933](https://github.com/rajanrx/outbox-md/commit/3b679335fc6ee902b07debd9f67d2d9439ddf136))
+* fan out to N concurrent agents + claim CAS + stale-suggestion guard ([08298c8](https://github.com/rajanrx/outbox-md/commit/08298c85f9b9bce5687c622b607278bde2573b95))
+* **mcp:** record_synthesis + list_candidates tools ([cb9e829](https://github.com/rajanrx/outbox-md/commit/cb9e8296b84bf00e11dd85c2fad89609ca8fe76a))
+* **registry:** members + chair per project (council) ([28d05a0](https://github.com/rajanrx/outbox-md/commit/28d05a01ecf9d5dec7ad3db30f6fa6cbd7b3843b))
+* **service:** confidence on synthesis ([26f3670](https://github.com/rajanrx/outbox-md/commit/26f36708a25119a6379fdf5612614dd3cbcaa0ba))
+* **service:** reject stale suggestions + won-set claim for concurrent agents ([b561921](https://github.com/rajanrx/outbox-md/commit/b561921c69ad8166349ca593f6f7d4957a32658c))
+* **store:** atomic claim CAS for concurrent agents ([6f936d9](https://github.com/rajanrx/outbox-md/commit/6f936d9c611811673154761d57f8fa07c821ee34))
+* **ui:** inline comments on the suggestion diff ([fe68f54](https://github.com/rajanrx/outbox-md/commit/fe68f54b311ac32553d163a66f278c65ef51b30f))
+* **ui:** mermaid fullscreen + show-code toggle ([b217512](https://github.com/rajanrx/outbox-md/commit/b217512245e19f106aee94e011433937b6c551b3))
+* **ui:** Refine button posts inline feedback to the thread ([8bc4026](https://github.com/rajanrx/outbox-md/commit/8bc402608ac76e60e94b4f1f75f842b21a63574a))
+* **ui:** refine loop + rendered/mermaid view in the diff modal ([718cd48](https://github.com/rajanrx/outbox-md/commit/718cd480de95a22739ebdc754cccf101278885ba))
+* **ui:** Rendered view mode in the diff modal ([b8957aa](https://github.com/rajanrx/outbox-md/commit/b8957aa6cf4bbdd61f81f6f88fc3a440cd9d8088))
+
+
+### Bug Fixes
+
+* auto-reply never loses comments (recovery + drain + retry/timeout/sweep + outbox retry + --logs) ([9bfc374](https://github.com/rajanrx/outbox-md/commit/9bfc3745a33abf7d12ff95a70438d946d6ccc431))
+* clean Covers key once + order-insensitive equalDocs (PR [#61](https://github.com/rajanrx/outbox-md/issues/61) P3s) ([2d8ba3b](https://github.com/rajanrx/outbox-md/commit/2d8ba3b5356d49ccd0761f5f4f12a0f5e5c53744))
+* **cli:** outbox retry honors -dir for single-folder DBs (PR [#69](https://github.com/rajanrx/outbox-md/issues/69) P2) ([7d29033](https://github.com/rajanrx/outbox-md/commit/7d290332fed8148654aced273ec06fd9f63c60af))
+* **council:** atomic single-shot RecordSynthesis via CAS (PR [#72](https://github.com/rajanrx/outbox-md/issues/72) P2) ([8b4baf6](https://github.com/rajanrx/outbox-md/commit/8b4baf63ab4d07c7bc2942c9e1047a2b048a2498))
+* **council:** give members doc context + apply sources whitelist to the queue (PR [#74](https://github.com/rajanrx/outbox-md/issues/74) P1s) ([71205cc](https://github.com/rajanrx/outbox-md/commit/71205ccef519c41eb55e22806c24c5a62164c777))
+* **council:** no-edit synthesis replies + single-shot RecordSynthesis (PR [#72](https://github.com/rajanrx/outbox-md/issues/72) P1/P2) ([6d97545](https://github.com/rajanrx/outbox-md/commit/6d97545f66a868002177e78d3ca3f76c9f1b1d0b))
+* stale guard on council edit emission + CAS-aware claim prompt (PR [#71](https://github.com/rajanrx/outbox-md/issues/71) P2s) ([89b0d04](https://github.com/rajanrx/outbox-md/commit/89b0d0496f504758d029d2a2905e6ba87ca2aab4))
+* **test:** projects_test uses Agents []string not the removed Agent field (PR [#73](https://github.com/rajanrx/outbox-md/issues/73) P1) ([a9ced17](https://github.com/rajanrx/outbox-md/commit/a9ced176a5be2a02acab645e247b69e423bff7dd))
+* **ui:** AI-processing indicator at the bottom of the thread (salvaged from [#63](https://github.com/rajanrx/outbox-md/issues/63)) ([55bd703](https://github.com/rajanrx/outbox-md/commit/55bd703a8aba4437d904cce15fd6c2dc29a9f0a4))
+* **ui:** don't drop refine/reply feedback on a failed POST (PR [#70](https://github.com/rajanrx/outbox-md/issues/70) P2) ([afcd545](https://github.com/rajanrx/outbox-md/commit/afcd5458562494c4bdb4105f5aec9f5d103904d2))
+* **ui:** keep split-view comment button out of the aria-hidden gutter ([37bc36b](https://github.com/rajanrx/outbox-md/commit/37bc36b758219a1bfeae57c7e295ec36fa27f09a))
+* **ui:** show 'AI processing' at the bottom of the thread, not the card header ([e24163a](https://github.com/rajanrx/outbox-md/commit/e24163a0373f0d2633caf33b5da0e32e0230d374))
+
 ## [0.14.0](https://github.com/rajanrx/outbox-md/compare/v0.13.1...v0.14.0) (2026-07-02)
 
 
