@@ -698,6 +698,14 @@ func (s *Service) PickCandidate(commentID, candidateID, actor string) (domain.Ca
 		return domain.Candidate{}, err
 	}
 	cand.Chosen = true
+	// A pick supersedes whatever the chair's synthesis proposed. Reject any existing
+	// proposed suggestion FIRST: a NON-EDIT pick (reply/reject_comment) must not
+	// leave the chair's stale proposed edit still showing as an Accept/Reject for a
+	// change the human explicitly did not pick (the deadlock case). For an EDIT pick,
+	// the freshly-emitted suggestion below then becomes the only proposed one.
+	if sg, ok, err := s.store.GetSuggestionByComment(commentID); err == nil && ok {
+		_ = s.store.RejectSuggestionIfProposed(sg.ID)
+	}
 	if cand.Verdict == domain.VerdictEdit {
 		if _, err := s.emitSuggestion(c, cand.Content, cand.AgentIdentity); err != nil {
 			return domain.Candidate{}, err
