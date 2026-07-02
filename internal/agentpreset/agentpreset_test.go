@@ -31,6 +31,46 @@ func TestResolveUnknownPreset(t *testing.T) {
 	}
 }
 
+func TestResolveModelInjectsFlag(t *testing.T) {
+	cases := map[string]string{
+		"claude":  "claude --model opus -p {prompt} --allowedTools mcp__outbox-md__*",
+		"codex":   "codex exec --dangerously-bypass-approvals-and-sandbox -m opus {prompt}",
+		"copilot": "copilot --model opus -p {prompt}",
+	}
+	for name, want := range cases {
+		got, ok := ResolveModel(name, "opus")
+		if !ok {
+			t.Fatalf("ResolveModel(%q, opus) should resolve", name)
+		}
+		if got != want {
+			t.Fatalf("ResolveModel(%q, opus) = %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestResolveModelEmptyModelOmitsFlag(t *testing.T) {
+	// An empty (or whitespace) model delegates to Resolve — the plain preset, no flag.
+	for _, model := range []string{"", "   "} {
+		got, ok := ResolveModel("claude", model)
+		if !ok {
+			t.Fatalf("ResolveModel(claude, %q) should resolve", model)
+		}
+		if want := "claude -p {prompt} --allowedTools mcp__outbox-md__*"; got != want {
+			t.Fatalf("ResolveModel(claude, %q) = %q, want the flagless preset %q", model, got, want)
+		}
+	}
+}
+
+func TestResolveModelUnknownPreset(t *testing.T) {
+	if _, ok := ResolveModel("nope", "opus"); ok {
+		t.Fatal("ResolveModel on an unknown preset should not resolve")
+	}
+	// An unknown preset with an EMPTY model also does not resolve (delegates to Resolve).
+	if _, ok := ResolveModel("nope", ""); ok {
+		t.Fatal("ResolveModel(nope, \"\") should not resolve")
+	}
+}
+
 func TestNamesSorted(t *testing.T) {
 	names := Names()
 	want := []string{"claude", "codex", "copilot"}
