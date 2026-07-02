@@ -147,3 +147,25 @@ func (h *Handlers) SubmitReview(commentID, token, lens, verdict, rationale, cont
 	}
 	return h.Svc.SubmitReview(commentID, token, lens, verdict, rationale, content, agentIdentity)
 }
+
+// ListCandidates is the council chair's read path: the candidate set, every
+// member's independent candidate, and the synthesis if one was recorded. It
+// gates on served() like the other reads so it can't reach a hidden doc.
+func (h *Handlers) ListCandidates(commentID string) (service.CouncilView, error) {
+	if !h.served(commentID) {
+		return service.CouncilView{}, fmt.Errorf("comment %s not found", commentID)
+	}
+	return h.Svc.ListCandidates(commentID)
+}
+
+// RecordSynthesis is the council chair's verdict path: it records the chair's
+// roll-up as a Synthesis and, when it carries edit content, emits an ordinary
+// Suggestion the human then accepts unchanged. Token-authed via the service like
+// every write path, so only the claiming council may record. agentIdentity is
+// the chair's identity (stored as the synthesis creator).
+func (h *Handlers) RecordSynthesis(commentID, token, content, dissent string, agreementScore float64, confidence int, agentIdentity string) (domain.Synthesis, error) {
+	if !h.served(commentID) {
+		return domain.Synthesis{}, fmt.Errorf("comment %s not found", commentID)
+	}
+	return h.Svc.RecordSynthesis(commentID, token, dissent, content, agentIdentity, agreementScore, confidence)
+}

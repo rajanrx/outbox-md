@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS syntheses (
   id TEXT PRIMARY KEY,
   candidate_set_id TEXT NOT NULL REFERENCES candidate_sets(id),
   agreement_score REAL NOT NULL DEFAULT 0,
+  confidence INTEGER NOT NULL DEFAULT 0,
   dissent TEXT NOT NULL DEFAULT '',
   suggestion_id TEXT NOT NULL DEFAULT '',
   created_by TEXT NOT NULL DEFAULT '',

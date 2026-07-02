@@ -51,6 +51,9 @@ func migrate(db *sql.DB) error {
 		// Multi-project: docs are keyed by (project, path). A pre-existing database
 		// gets the column here; fresh databases already have it from schema.sql.
 		`ALTER TABLE documents ADD COLUMN project TEXT NOT NULL DEFAULT ''`,
+		// AI Council: the chair's confidence (0..100) in a synthesis. Legacy rows
+		// default to 0; fresh databases already have it from schema.sql.
+		`ALTER TABLE syntheses ADD COLUMN confidence INTEGER NOT NULL DEFAULT 0`,
 	} {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 			return err

@@ -48,6 +48,22 @@ func (s *Store) SetCandidateSetState(id string, state domain.CandidateSetState) 
 	return err
 }
 
+// TryClaimSynthesis atomically transitions a set gathering→synthesized and reports
+// whether THIS call won (exactly one row affected). It is the single-shot gate for
+// RecordSynthesis: concurrent or duplicate chair calls all race on this one UPDATE
+// (writes are serialized by SetMaxOpenConns(1)), so exactly one wins and proceeds
+// to emit — a comment never gets two syntheses / two suggestions. A set already
+// synthesized or decided affects zero rows → the caller loses and is rejected.
+func (s *Store) TryClaimSynthesis(id string) (bool, error) {
+	res, err := s.DB.Exec(`UPDATE candidate_sets SET state=? WHERE id=? AND state=?`,
+		domain.CandidateSetSynthesized, id, domain.CandidateSetGathering)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
 const candidateCols = `id, candidate_set_id, lens, verdict, rationale, content, agent_identity, chosen`
 
 func scanCandidate(scan func(...any) error) (domain.Candidate, error) {
@@ -109,9 +125,9 @@ func (s *Store) RecordSynthesis(syn domain.Synthesis) (domain.Synthesis, error) 
 		syn.ID = domain.NewID()
 	}
 	_, err := s.DB.Exec(
-		`INSERT INTO syntheses(id, candidate_set_id, agreement_score, dissent, suggestion_id, created_by)
-		 VALUES(?,?,?,?,?,?)`,
-		syn.ID, syn.CandidateSetID, syn.AgreementScore, syn.Dissent, syn.SuggestionID, syn.CreatedBy)
+		`INSERT INTO syntheses(id, candidate_set_id, agreement_score, confidence, dissent, suggestion_id, created_by)
+		 VALUES(?,?,?,?,?,?,?)`,
+		syn.ID, syn.CandidateSetID, syn.AgreementScore, syn.Confidence, syn.Dissent, syn.SuggestionID, syn.CreatedBy)
 	return syn, err
 }
 
@@ -119,10 +135,10 @@ func (s *Store) RecordSynthesis(syn domain.Synthesis) (domain.Synthesis, error) 
 func (s *Store) GetSynthesisByComment(commentID string) (domain.Synthesis, bool, error) {
 	var syn domain.Synthesis
 	err := s.DB.QueryRow(
-		`SELECT sy.id, sy.candidate_set_id, sy.agreement_score, sy.dissent, sy.suggestion_id, sy.created_by
+		`SELECT sy.id, sy.candidate_set_id, sy.agreement_score, sy.confidence, sy.dissent, sy.suggestion_id, sy.created_by
 		 FROM syntheses sy JOIN candidate_sets cs ON sy.candidate_set_id = cs.id
 		 WHERE cs.comment_id=? ORDER BY sy.created_at DESC, sy.rowid DESC LIMIT 1`, commentID).
-		Scan(&syn.ID, &syn.CandidateSetID, &syn.AgreementScore, &syn.Dissent, &syn.SuggestionID, &syn.CreatedBy)
+		Scan(&syn.ID, &syn.CandidateSetID, &syn.AgreementScore, &syn.Confidence, &syn.Dissent, &syn.SuggestionID, &syn.CreatedBy)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Synthesis{}, false, nil
 	}

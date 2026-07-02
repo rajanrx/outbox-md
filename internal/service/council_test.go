@@ -1,6 +1,9 @@
 package service
 
 import (
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/rajanrx/outbox-md/internal/domain"
@@ -155,12 +158,18 @@ func TestRecordSynthesisEmitsSuggestionAndSetsState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	syn, err := svc.RecordSynthesis(c.ID, "skeptic dissented", "Hello there", "chair", 0.75)
+	syn, err := svc.RecordSynthesis(c.ID, tok, "skeptic dissented", "Hello there", "chair", 0.75, 80)
 	if err != nil {
 		t.Fatalf("synthesis: %v", err)
 	}
 	if syn.SuggestionID == "" {
 		t.Error("synthesis with edit content should link a suggestion")
+	}
+	if syn.Confidence != 80 {
+		t.Errorf("confidence = %d, want 80", syn.Confidence)
+	}
+	if view, _ := svc.ListCandidates(c.ID); view.Synthesis == nil || view.Synthesis.Confidence != 80 {
+		t.Errorf("confidence not persisted through the view: %+v", view.Synthesis)
 	}
 	view, _ := svc.ListCandidates(c.ID)
 	if view.Set.State != domain.CandidateSetSynthesized || view.Synthesis == nil {
@@ -296,10 +305,97 @@ func TestCouncilEditRejectedWhenStale(t *testing.T) {
 	if _, err := s2.AddVersion(doc2.ID, "changed content", "watch"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc2.RecordSynthesis(c2.ID, "", "howdy world", "chair", 0.9); err == nil {
+	if _, err := svc2.RecordSynthesis(c2.ID, tok2, "", "howdy world", "chair", 0.9, 50); err == nil {
 		t.Fatal("RecordSynthesis emitting a stale edit succeeded; want stale rejection")
 	}
 	if _, ok, _ := s2.GetSuggestionByComment(c2.ID); ok {
 		t.Fatal("stale RecordSynthesis stored a suggestion")
+	}
+}
+
+// TestRecordSynthesisNoEditRepliesAndUnclaims: a no-edit council verdict (empty
+// content) must not strand the comment in 'claimed'. It posts a chair reply and
+// moves the comment to 'replied' (out of the stale-claim recovery loop), records
+// the synthesis, and emits NO suggestion.
+func TestRecordSynthesisNoEditRepliesAndUnclaims(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _, _ string) error { return nil })
+	c, tok := claimedComment(t, s, svc)
+	if _, err := svc.SubmitReview(c.ID, tok, domain.LensCorrectness, domain.VerdictReply, "no change needed", "", "m1"); err != nil {
+		t.Fatal(err)
+	}
+	syn, err := svc.RecordSynthesis(c.ID, tok, "skeptic dissented", "", "chair", 0.6, 70)
+	if err != nil {
+		t.Fatalf("no-edit synthesis: %v", err)
+	}
+	if syn.SuggestionID != "" {
+		t.Fatalf("no-edit synthesis should emit no suggestion, got %q", syn.SuggestionID)
+	}
+	got, _ := s.GetComment(c.ID)
+	if got.Status != domain.CommentReplied {
+		t.Fatalf("status = %q, want replied (out of claimed, so stale recovery can't re-loop)", got.Status)
+	}
+	th, _ := s.ListThread(c.ID)
+	if len(th) == 0 || th[len(th)-1].AuthorIdentity != "chair" || !strings.Contains(th[len(th)-1].Body, "no edit") {
+		t.Fatalf("expected a chair 'no edit' reply as the last thread message, got %+v", th)
+	}
+	if _, ok, _ := s.GetSuggestionByComment(c.ID); ok {
+		t.Fatal("no-edit synthesis stored a suggestion")
+	}
+}
+
+// TestRecordSynthesisIsSingleShot: a second RecordSynthesis on an already-
+// synthesized set is rejected — even with a still-valid token — so one comment
+// never gets two syntheses / two proposed suggestions.
+func TestRecordSynthesisIsSingleShot(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _, _ string) error { return nil })
+	c, tok := claimedComment(t, s, svc)
+	if _, err := svc.SubmitReview(c.ID, tok, domain.LensCorrectness, domain.VerdictEdit, "fix", "Hello there", "m1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.RecordSynthesis(c.ID, tok, "", "Hello there", "chair", 0.9, 90); err != nil {
+		t.Fatalf("first synthesis: %v", err)
+	}
+	if _, err := svc.RecordSynthesis(c.ID, tok, "", "Hello again", "chair", 0.9, 90); err == nil {
+		t.Fatal("second synthesis on a synthesized set should be rejected")
+	}
+	if sg, ok, _ := s.GetSuggestionByComment(c.ID); !ok || sg.ProposedContent != "Hello there" {
+		t.Fatalf("suggestion = %+v ok=%v, want exactly the first", sg, ok)
+	}
+}
+
+// TestRecordSynthesisConcurrentSingleWinner: many chair calls racing on one set
+// (the concurrency the sequential guard alone couldn't cover) must resolve to
+// EXACTLY ONE winner via the TryClaimSynthesis CAS — never two syntheses/emits.
+func TestRecordSynthesisConcurrentSingleWinner(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _, _ string) error { return nil })
+	c, tok := claimedComment(t, s, svc)
+	if _, err := svc.SubmitReview(c.ID, tok, domain.LensCorrectness, domain.VerdictEdit, "fix", "Hello there", "m1"); err != nil {
+		t.Fatal(err)
+	}
+
+	const n = 8
+	var wins int64
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func() {
+			defer wg.Done()
+			if _, err := svc.RecordSynthesis(c.ID, tok, "", "Hello there", "chair", 0.9, 90); err == nil {
+				atomic.AddInt64(&wins, 1)
+			}
+		}()
+	}
+	wg.Wait()
+	if wins != 1 {
+		t.Fatalf("wins = %d, want exactly 1 (CAS must serialize concurrent syntheses)", wins)
+	}
+	if _, ok, _ := s.GetSuggestionByComment(c.ID); !ok {
+		t.Fatal("the winner should have emitted a suggestion")
 	}
 }

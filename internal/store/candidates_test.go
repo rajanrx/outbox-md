@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"testing"
 
 	"github.com/rajanrx/outbox-md/internal/domain"
@@ -77,7 +78,7 @@ func TestCandidateSetRoundTrip(t *testing.T) {
 
 	// Synthesis records and reads back.
 	if _, err := s.RecordSynthesis(domain.Synthesis{
-		CandidateSetID: set.ID, AgreementScore: 0.66, Dissent: "skeptic disagreed",
+		CandidateSetID: set.ID, AgreementScore: 0.66, Confidence: 72, Dissent: "skeptic disagreed",
 		SuggestionID: "sg-1", CreatedBy: "chair",
 	}); err != nil {
 		t.Fatal(err)
@@ -86,7 +87,7 @@ func TestCandidateSetRoundTrip(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("get synthesis: ok=%v err=%v", ok, err)
 	}
-	if syn.AgreementScore != 0.66 || syn.Dissent != "skeptic disagreed" || syn.SuggestionID != "sg-1" {
+	if syn.AgreementScore != 0.66 || syn.Confidence != 72 || syn.Dissent != "skeptic disagreed" || syn.SuggestionID != "sg-1" {
 		t.Errorf("synthesis = %+v", syn)
 	}
 }
@@ -152,5 +153,44 @@ func TestDecisionLogIncludesCandidateAndSynthesis(t *testing.T) {
 	}
 	if !(idx["created"] < idx["comment"] && idx["comment"] < idx["candidate"] && idx["candidate"] < idx["synthesis"]) {
 		t.Errorf("ordering wrong: %v", idx)
+	}
+}
+
+// TestMigrateAddsConfidenceToLegacyDB exercises the ADD COLUMN path a fresh
+// schema.sql never triggers: it builds a syntheses table in the OLD pre-council
+// shape (no confidence column), runs migrate(), and confirms the column now
+// resolves, legacy rows default to 0, and a second migrate() is a no-op.
+func TestMigrateAddsConfidenceToLegacyDB(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	// migrate() ALTERs documents, comments and syntheses; give it minimal tables.
+	for _, ddl := range []string{
+		`CREATE TABLE documents (id TEXT PRIMARY KEY, path TEXT)`,
+		`CREATE TABLE comments (id TEXT PRIMARY KEY)`,
+		// Original pre-confidence shape.
+		`CREATE TABLE syntheses (id TEXT PRIMARY KEY, agreement_score REAL NOT NULL DEFAULT 0)`,
+		`INSERT INTO syntheses(id) VALUES('sy-legacy')`,
+	} {
+		if _, err := db.Exec(ddl); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate on legacy DB: %v", err)
+	}
+	var confidence int
+	if err := db.QueryRow(`SELECT confidence FROM syntheses WHERE id='sy-legacy'`).Scan(&confidence); err != nil {
+		t.Fatalf("confidence column missing after migrate: %v", err)
+	}
+	if confidence != 0 {
+		t.Fatalf("legacy row confidence = %d, want 0", confidence)
+	}
+	// Idempotent: a second migrate() must not error (duplicate column ignored).
+	if err := migrate(db); err != nil {
+		t.Fatalf("re-migrate on existing DB: %v", err)
 	}
 }

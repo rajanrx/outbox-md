@@ -482,11 +482,11 @@ func (s *Service) ListCandidates(commentID string) (CouncilView, error) {
 
 // RecordSynthesis records the chair's roll-up of a candidate set and, when it
 // carries an edit, emits an ordinary Suggestion via the existing path so the
-// human's accept-flow is unchanged. The chair itself is the external runner;
-// this is the server-side record. (No MCP tool / endpoint drives this in the
-// server slice — it ships with the runner PR; it is exercised directly here.)
-func (s *Service) RecordSynthesis(commentID, dissent, content, createdBy string, agreementScore float64) (domain.Synthesis, error) {
-	c, err := s.store.GetComment(commentID)
+// human's accept-flow is unchanged. The chair is the external runner; only the
+// claiming council may record, so it validates the shared claim token like every
+// other write path. confidence (0..100) is the chair's confidence in the verdict.
+func (s *Service) RecordSynthesis(commentID, token, dissent, content, createdBy string, agreementScore float64, confidence int) (domain.Synthesis, error) {
+	c, err := s.requireToken(commentID, token)
 	if err != nil {
 		return domain.Synthesis{}, err
 	}
@@ -494,24 +494,62 @@ func (s *Service) RecordSynthesis(commentID, dissent, content, createdBy string,
 	if err != nil {
 		return domain.Synthesis{}, err
 	}
+	// An edit verdict must reject a stale doc BEFORE claiming the synthesis slot,
+	// so a stale edit never leaves the set synthesized-but-suggestionless.
+	if content != "" {
+		if err := s.checkNotStale(c); err != nil {
+			return domain.Synthesis{}, err
+		}
+	}
+	// Single-shot, concurrency-safe: atomically claim gathering→synthesized. Two
+	// OVERLAPPING chair calls race on this one UPDATE (writes serialized by
+	// SetMaxOpenConns(1)); exactly one wins, and the loser is rejected BEFORE
+	// emitting — so a comment never gets two syntheses or two suggestions (a
+	// sequential retry loses the same way, since the set has left 'gathering').
+	if won, err := s.store.TryClaimSynthesis(set.ID); err != nil {
+		return domain.Synthesis{}, err
+	} else if !won {
+		return domain.Synthesis{}, errors.New("candidate set already synthesized or decided")
+	}
 	suggestionID := ""
 	if content != "" {
+		// Edit verdict → an accept-eligible suggestion (emitSuggestion also runs the
+		// stale guard; the doc was just checked, so it passes) and marks the comment
+		// addressed.
 		sg, err := s.emitSuggestion(c, content, createdBy)
 		if err != nil {
 			return domain.Synthesis{}, err
 		}
 		suggestionID = sg.ID
+	} else {
+		// No-edit verdict (reply/reject/no-consensus): the council concluded
+		// WITHOUT a change. Post the verdict as a chair reply and move the comment
+		// out of 'claimed' (→ replied) so the human sees a terminal outcome and
+		// stale-claim recovery can't re-loop it. comment.updated (not .replied) so
+		// the runner is never re-triggered by the council's own reply.
+		body := fmt.Sprintf("Council verdict: no edit (agreement %.0f%%, confidence %d%%).", agreementScore*100, confidence)
+		if dissent != "" {
+			body += " Dissent: " + dissent
+		}
+		if _, err := s.store.AddThreadMessage(domain.ThreadMessage{
+			CommentID: commentID, AuthorIdentity: createdBy, Body: body,
+		}); err != nil {
+			return domain.Synthesis{}, err
+		}
+		if err := s.store.UpdateCommentStatus(commentID, domain.CommentReplied, c.ClaimToken); err != nil {
+			return domain.Synthesis{}, err
+		}
+		_ = s.store.SetProcessingUntil(commentID, nil)
+		s.fireCommentEvent(webhook.EventCommentUpdated, c)
 	}
 	syn, err := s.store.RecordSynthesis(domain.Synthesis{
-		CandidateSetID: set.ID, AgreementScore: agreementScore, Dissent: dissent,
-		SuggestionID: suggestionID, CreatedBy: createdBy,
+		CandidateSetID: set.ID, AgreementScore: agreementScore, Confidence: confidence,
+		Dissent: dissent, SuggestionID: suggestionID, CreatedBy: createdBy,
 	})
 	if err != nil {
 		return domain.Synthesis{}, err
 	}
-	if err := s.store.SetCandidateSetState(set.ID, domain.CandidateSetSynthesized); err != nil {
-		return domain.Synthesis{}, err
-	}
+	// State is already 'synthesized' — set atomically by TryClaimSynthesis above.
 	return syn, nil
 }
 
