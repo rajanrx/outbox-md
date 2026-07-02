@@ -894,7 +894,7 @@ func TestHumanReplyReopensComment(t *testing.T) {
 	if got, _ := s.GetComment(c.ID); got.Status != domain.CommentOpen {
 		t.Fatalf("status = %q, want open (reply must re-surface it)", got.Status)
 	}
-	open, _ := s.ListOpenComments()
+	open, _ := s.ListOpenComments(time.Now())
 	if len(open) != 1 || open[0].ID != c.ID {
 		t.Fatalf("ListOpenComments = %+v, want the reopened comment", open)
 	}
@@ -909,7 +909,7 @@ func TestHumanReplyReopensComment(t *testing.T) {
 	if got, _ := s.GetComment(c.ID); got.Status != domain.CommentResolved {
 		t.Fatalf("status = %q, want resolved (reply must not reopen a resolved comment)", got.Status)
 	}
-	if open, _ := s.ListOpenComments(); len(open) != 0 {
+	if open, _ := s.ListOpenComments(time.Now()); len(open) != 0 {
 		t.Fatalf("ListOpenComments = %+v, want empty (resolved comment must stay closed)", open)
 	}
 }

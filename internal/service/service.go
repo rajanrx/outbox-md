@@ -233,6 +233,31 @@ func (s *Service) PostComment(docID string, a domain.Anchor, author string) (dom
 	return c, nil
 }
 
+// PendingCommentCount reports how many comments in project still need agent
+// attention right now — the 'open' comments plus any 'claimed' comment whose
+// claim has been abandoned (a stale claim). It is the drain signal for the
+// in-process auto-reply engine: after a run it re-checks this count and, while a
+// run keeps making progress (the count keeps dropping) and work remains,
+// schedules another run so a burst that one run only partly cleared is drained
+// out. The empty project name counts single-folder-mode comments.
+func (s *Service) PendingCommentCount(project string) (int, error) {
+	comments, err := s.store.ListOpenComments(time.Now().UTC())
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, c := range comments {
+		doc, err := s.store.GetDocument(c.DocID)
+		if err != nil {
+			continue
+		}
+		if doc.Project == project {
+			n++
+		}
+	}
+	return n, nil
+}
+
 func (s *Service) Claim(commentIDs []string, agent string) (string, error) {
 	if len(commentIDs) > s.cfg.Agent.BatchSize {
 		return "", fmt.Errorf("batch size exceeded: at most %d comments per claim", s.cfg.Agent.BatchSize)

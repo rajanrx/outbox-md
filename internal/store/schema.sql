@@ -29,6 +29,11 @@ CREATE TABLE IF NOT EXISTS comments (
   claim_token TEXT NOT NULL DEFAULT '',
   post_approval INTEGER NOT NULL DEFAULT 0,
   processing_until TEXT,
+  -- claimed_at is the wall-clock instant the comment last entered 'claimed'
+  -- status (RFC3339Nano, UTC). It is the fresh-claim guard for stale-claim
+  -- recovery: a just-made claim is not re-surfaced by list_open_comments until
+  -- it is older than StaleClaimGrace, closing the claim→mark_processing race.
+  claimed_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS suggestions (

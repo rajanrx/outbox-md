@@ -10,20 +10,36 @@ import (
 func scanComment(scan func(...any) error) (domain.Comment, error) {
 	var c domain.Comment
 	var pa int
-	var pu sql.NullString
+	var pu, ca sql.NullString
 	err := scan(&c.ID, &c.DocID, &c.AgainstVersionID, &c.Anchor.Start, &c.Anchor.End,
-		&c.AuthorIdentity, &c.Owner, &c.Status, &c.ClaimToken, &pa, &pu)
+		&c.AuthorIdentity, &c.Owner, &c.Status, &c.ClaimToken, &pa, &pu, &ca)
 	c.PostApproval = pa != 0
 	if err == nil && pu.Valid && pu.String != "" {
 		if t, perr := time.Parse(time.RFC3339Nano, pu.String); perr == nil {
 			c.ProcessingUntil = &t
 		}
 	}
+	if err == nil && ca.Valid && ca.String != "" {
+		if t, perr := time.Parse(time.RFC3339Nano, ca.String); perr == nil {
+			c.ClaimedAt = &t
+		}
+	}
 	return c, err
 }
 
 const commentCols = `id, doc_id, against_version_id, anchor_start, anchor_end,
-	author_identity, owner, status, claim_token, post_approval, processing_until`
+	author_identity, owner, status, claim_token, post_approval, processing_until, claimed_at`
+
+// StaleClaimGrace is how long a claim may sit un-heart-beated before
+// list_open_comments treats it as ABANDONED and re-surfaces it. It bounds the
+// window in which a just-made claim (before the claiming agent's first
+// mark_processing) is protected from being resurfaced and double-worked. It is
+// set to the full processing window (matching service.DefaultProcessingTTL =
+// 180s) rather than the shorter received-ack: this is strictly safer against
+// double-work (a genuinely stranded claim was made minutes/hours ago, so a
+// larger grace never delays its recovery) while comfortably covering the time a
+// single comment can legitimately be worked before the first heartbeat.
+const StaleClaimGrace = 180 * time.Second
 
 // nullTime renders a *time.Time for storage: a null column when nil, otherwise a
 // UTC RFC3339Nano string (the format scanComment parses back).
@@ -42,9 +58,10 @@ func (s *Store) CreateComment(c domain.Comment) (domain.Comment, error) {
 	if c.PostApproval {
 		pa = 1
 	}
-	_, err := s.DB.Exec(`INSERT INTO comments(`+commentCols+`) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+	_, err := s.DB.Exec(`INSERT INTO comments(`+commentCols+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
 		c.ID, c.DocID, c.AgainstVersionID, c.Anchor.Start, c.Anchor.End,
-		c.AuthorIdentity, c.Owner, c.Status, c.ClaimToken, pa, nullTime(c.ProcessingUntil))
+		c.AuthorIdentity, c.Owner, c.Status, c.ClaimToken, pa,
+		nullTime(c.ProcessingUntil), nullTime(c.ClaimedAt))
 	return c, err
 }
 
@@ -78,8 +95,21 @@ func (s *Store) ListComments(docID string) ([]domain.Comment, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) ListOpenComments() ([]domain.Comment, error) {
-	rows, err := s.DB.Query(`SELECT ` + commentCols + ` FROM comments WHERE status='open' ORDER BY created_at`)
+// ListOpenComments returns the agent work set as of now: every comment that is
+// 'open', PLUS every 'claimed' comment whose claim has been ABANDONED (a stale
+// claim — see domain.Comment.IsStaleClaim). This recovers comments stranded when
+// an agent claimed a burst but finished only some (the rest sit 'claimed' with
+// no live heartbeat): a stale claim re-enters the work set on the next run,
+// while a claim being actively heart-beated (live mark_processing) or made
+// within StaleClaimGrace stays out, so no comment is double-worked. now is
+// injected (not read from the clock here) so the staleness predicate is
+// deterministic under test.
+func (s *Store) ListOpenComments(now time.Time) ([]domain.Comment, error) {
+	// Pull open + claimed rows, then apply the staleness predicate in Go against
+	// the parsed timestamps — this avoids SQL string-comparison pitfalls between
+	// the RFC3339Nano hints and any other column format. The claimed set is small.
+	rows, err := s.DB.Query(`SELECT ` + commentCols +
+		` FROM comments WHERE status IN ('open','claimed') ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -90,14 +120,47 @@ func (s *Store) ListOpenComments() ([]domain.Comment, error) {
 		if err != nil {
 			return nil, err
 		}
+		if c.Status == domain.CommentClaimed && !c.IsStaleClaim(now, StaleClaimGrace) {
+			continue // live or freshly-made claim — not our work
+		}
 		out = append(out, c)
 	}
 	return out, rows.Err()
 }
 
 func (s *Store) UpdateCommentStatus(id string, status domain.CommentStatus, claimToken string) error {
+	// Stamp claimed_at when (re-)entering 'claimed' so stale-claim recovery can
+	// tell a just-made claim from an abandoned one. Other transitions leave it
+	// untouched (it is only read while status == claimed). A re-claim after a
+	// requeue re-stamps it, so the grace resets per claim.
+	if status == domain.CommentClaimed {
+		claimedAt := time.Now().UTC().Format(time.RFC3339Nano)
+		_, err := s.DB.Exec(`UPDATE comments SET status=?, claim_token=?, claimed_at=? WHERE id=?`,
+			status, claimToken, claimedAt, id)
+		return err
+	}
 	_, err := s.DB.Exec(`UPDATE comments SET status=?, claim_token=? WHERE id=?`, status, claimToken, id)
 	return err
+}
+
+// RequeueClaimedCommentsForProject resets every 'claimed' comment in project
+// back to 'open', clearing the claim (token, processing hint, claimed_at) so the
+// comment re-enters the agent work set immediately. It is the store primitive
+// behind `outbox retry`: a claimed-but-unfinished comment is by definition not
+// done, so re-queuing all claims for a project is safe. It returns how many rows
+// were re-queued. claim_token is cleared to ” (not NULL) because scanComment
+// reads it as a plain string; the timestamps are nulled so a fresh claim
+// re-stamps them. The empty project name targets single-folder-mode comments.
+func (s *Store) RequeueClaimedCommentsForProject(project string) (int, error) {
+	res, err := s.DB.Exec(
+		`UPDATE comments SET status=?, claim_token='', processing_until=NULL, claimed_at=NULL
+		 WHERE status=? AND doc_id IN (SELECT id FROM documents WHERE project=?)`,
+		domain.CommentOpen, domain.CommentClaimed, project)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
 }
 
 func (s *Store) UpdateCommentAnchor(id string, a domain.Anchor, status domain.CommentStatus) error {

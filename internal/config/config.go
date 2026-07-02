@@ -5,10 +5,22 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
+
+// DefaultAgentRetries is the number of RETRY attempts after a failed agent run
+// (total attempts = retries + 1). 5 gives the AI/CLI several chances to recover
+// from a transient outage (the `signal: killed` case) before the run is
+// abandoned. 0 disables retries (a single attempt).
+const DefaultAgentRetries = 5
+
+// DefaultAgentTimeout caps a single agent run. It is bumped from the historical
+// 5m — a legitimate council/complex run was being killed at 5m — to 15m.
+const DefaultAgentTimeout = 15 * time.Minute
 
 type Config struct {
 	Agent    AgentConfig    `json:"agent"    yaml:"agent"`
@@ -37,6 +49,42 @@ type Config struct {
 
 type AgentConfig struct {
 	BatchSize int `json:"batchSize" yaml:"batch_size"`
+	// Retries is the number of times a failed auto-reply run is retried (with
+	// backoff) before it is abandoned; total attempts = Retries + 1. Absent ⇒
+	// DefaultAgentRetries (5). An explicit 0 disables retries. Resolve with
+	// ResolveRetries (which clamps a negative value to 0).
+	Retries int `json:"retries" yaml:"retries"`
+	// Timeout caps a single auto-reply run. It is a Go duration string ("15m",
+	// "900s", …); a bare integer is read as minutes. Empty/invalid ⇒
+	// DefaultAgentTimeout (15m). Resolve with ResolveTimeout.
+	Timeout string `json:"timeout" yaml:"timeout"`
+}
+
+// ResolveRetries returns the effective retry count: an unset (zero-value from
+// Defaults, which seeds 5) value keeps the default; a negative value is clamped
+// to 0 (no retry). An explicit 0 is honoured as "no retry".
+func (a AgentConfig) ResolveRetries() int {
+	if a.Retries < 0 {
+		return 0
+	}
+	return a.Retries
+}
+
+// ResolveTimeout parses the configured Timeout into a duration, falling back to
+// DefaultAgentTimeout when it is empty, unparseable, or non-positive. A bare
+// integer (no unit) is interpreted as minutes, so `timeout: 15` means 15m.
+func (a AgentConfig) ResolveTimeout() time.Duration {
+	s := strings.TrimSpace(a.Timeout)
+	if s == "" {
+		return DefaultAgentTimeout
+	}
+	if d, err := time.ParseDuration(s); err == nil && d > 0 {
+		return d
+	}
+	if n, err := strconv.Atoi(s); err == nil && n > 0 {
+		return time.Duration(n) * time.Minute
+	}
+	return DefaultAgentTimeout
 }
 
 type ApprovalConfig struct {
@@ -56,7 +104,9 @@ type WebhookConfig struct {
 // and the floor every loaded config layers over.
 func Defaults() Config {
 	return Config{
-		Agent: AgentConfig{BatchSize: 5},
+		// Retries/Timeout seed the auto-reply resilience defaults; a yaml that omits
+		// them keeps these, an explicit value overrides (0 retries = no retry).
+		Agent: AgentConfig{BatchSize: 5, Retries: DefaultAgentRetries, Timeout: DefaultAgentTimeout.String()},
 		// AutoUpdate defaults to true so an outbox.yaml that omits the key (or has
 		// no yaml at all) keeps self-update on; only an explicit false disables it.
 		AutoUpdate: true,
