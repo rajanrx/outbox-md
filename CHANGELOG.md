@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0](https://github.com/rajanrx/outbox-md/compare/v0.15.0...v0.16.0) (2026-07-02)
+
+
+### Features
+
+* **council:** add candidate round, discussing state, discussion transcript store ([e243b11](https://github.com/rajanrx/outbox-md/commit/e243b11997fe9fb46ea12dbc4d6bc1ca0e9e5cde))
+* **council:** council_rounds/budget/deadlock config keys + settings surfaces ([04794e8](https://github.com/rajanrx/outbox-md/commit/04794e8524715560897060f92400bbe72c515851))
+* **council:** discussion data model + MCP + config (Phase 2A-1) ([072ed99](https://github.com/rajanrx/outbox-md/commit/072ed9946426f2a9d8c07a48efd2a0b4ae9ef33d))
+* **council:** SubmitReview round param, SubmitDiscussion service + MCP tools ([4ce1a9c](https://github.com/rajanrx/outbox-md/commit/4ce1a9c1a87b39c12e0b36ee1ab15b34c99fa569))
+
+
+### Bug Fixes
+
+* **council:** codex preset runs non-interactive + chair grounds verdict in actual candidates ([c4fb5bf](https://github.com/rajanrx/outbox-md/commit/c4fb5bf3b85372937b2d944b87e57a070b15cac7))
+* **council:** codex preset runs non-interactive + chair grounds verdict in recorded candidates ([d657534](https://github.com/rajanrx/outbox-md/commit/d657534c6275c1167149a8efa4d44879958a5739))
+
 ## [0.15.0](https://github.com/rajanrx/outbox-md/compare/v0.14.0...v0.15.0) (2026-07-02)
 
 
