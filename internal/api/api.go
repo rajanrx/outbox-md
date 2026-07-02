@@ -523,9 +523,12 @@ func resolveProjectRoot(svc *service.Service, name string) (string, bool) {
 // outbox.yaml field names (the same keys PUT /api/settings accepts).
 func settingsView(cfg config.Config) map[string]any {
 	return map[string]any{
-		"auto_update": cfg.AutoUpdate,
-		"auto_reply":  cfg.AutoReply,
-		"agent_cmd":   cfg.AgentCmd,
+		"auto_update":                cfg.AutoUpdate,
+		"auto_reply":                 cfg.AutoReply,
+		"agent_cmd":                  cfg.AgentCmd,
+		"council_rounds":             cfg.ResolveCouncilRounds(),
+		"council_budget":             cfg.ResolveCouncilBudget(),
+		"council_deadlock_threshold": cfg.ResolveCouncilDeadlockThreshold(),
 	}
 }
 

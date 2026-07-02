@@ -1031,3 +1031,33 @@ func TestRetryCmdNoDatabase(t *testing.T) {
 		t.Fatalf("missing DB output = %q, want a 'no review database' notice", out.String())
 	}
 }
+
+// TestSettingsSetIntField verifies `outbox settings <int-key> <value>` writes the
+// council guardrail as a bare int and preserves unmanaged keys, and that a
+// non-integer value is rejected.
+func TestSettingsSetIntField(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "outbox.yaml")
+	if err := os.WriteFile(cfgPath, []byte("sources:\n  - docs/specs\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	restore := chdir(t, dir)
+	defer restore()
+
+	var out bytes.Buffer
+	if err := run([]string{"settings", "council_rounds", "3"}, &out); err != nil {
+		t.Fatalf("settings set int: %v", err)
+	}
+	if !strings.Contains(out.String(), "council_rounds = 3") {
+		t.Fatalf("settings set output = %q", out.String())
+	}
+	b, _ := os.ReadFile(cfgPath)
+	if !strings.Contains(string(b), "council_rounds: 3") || !strings.Contains(string(b), "docs/specs") {
+		t.Fatalf("outbox.yaml did not set council_rounds / preserve sources:\n%s", b)
+	}
+
+	// A non-integer value is rejected.
+	if err := run([]string{"settings", "council_rounds", "many"}, &bytes.Buffer{}); err == nil {
+		t.Fatal("settings council_rounds with a non-integer should error")
+	}
+}

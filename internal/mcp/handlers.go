@@ -139,13 +139,25 @@ func (h *Handlers) MarkProcessing(commentID, token string, ttlSeconds int) (stri
 }
 
 // SubmitReview is the council-mode sibling of ProposeSuggestion: it records one
-// member's review as a Candidate instead of a single baseline suggestion. It
-// never resolves or writes disk — picking/accepting stay human-only.
-func (h *Handlers) SubmitReview(commentID, token, lens, verdict, rationale, content, agentIdentity string) (domain.Candidate, error) {
+// member's review as a Candidate instead of a single baseline suggestion. round
+// is the discussion pass (0 = the independent take, >=1 = a discussion revision).
+// It never resolves or writes disk — picking/accepting stay human-only.
+func (h *Handlers) SubmitReview(commentID, token string, round int, lens, verdict, rationale, content, agentIdentity string) (domain.Candidate, error) {
 	if !h.served(commentID) {
 		return domain.Candidate{}, fmt.Errorf("comment %s not found", commentID)
 	}
-	return h.Svc.SubmitReview(commentID, token, lens, verdict, rationale, content, agentIdentity)
+	return h.Svc.SubmitReview(commentID, token, round, lens, verdict, rationale, content, agentIdentity)
+}
+
+// SubmitDiscussion records one attributed message on a comment's council
+// discussion transcript. It gates on served() like every comment-scoped write so
+// an agent can't reach a hidden doc, and is purely additive: it resolves nothing,
+// writes no file, and changes no comment status.
+func (h *Handlers) SubmitDiscussion(commentID, token string, round int, body string, refs []domain.DiscussionRef, agentIdentity string) (domain.DiscussionMessage, error) {
+	if !h.served(commentID) {
+		return domain.DiscussionMessage{}, fmt.Errorf("comment %s not found", commentID)
+	}
+	return h.Svc.SubmitDiscussion(commentID, token, round, body, refs, agentIdentity)
 }
 
 // ListCandidates is the council chair's read path: the candidate set, every

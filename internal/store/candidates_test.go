@@ -167,13 +167,15 @@ func TestMigrateAddsConfidenceToLegacyDB(t *testing.T) {
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(1)
-	// migrate() ALTERs documents, comments and syntheses; give it minimal tables.
+	// migrate() ALTERs documents, comments, syntheses and candidates; give it
+	// minimal tables.
 	for _, ddl := range []string{
 		`CREATE TABLE documents (id TEXT PRIMARY KEY, path TEXT)`,
 		`CREATE TABLE comments (id TEXT PRIMARY KEY)`,
 		// Original pre-confidence shape.
 		`CREATE TABLE syntheses (id TEXT PRIMARY KEY, agreement_score REAL NOT NULL DEFAULT 0)`,
 		`INSERT INTO syntheses(id) VALUES('sy-legacy')`,
+		`CREATE TABLE candidates (id TEXT PRIMARY KEY)`,
 	} {
 		if _, err := db.Exec(ddl); err != nil {
 			t.Fatal(err)

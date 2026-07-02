@@ -25,7 +25,7 @@ func seedCandidate(t *testing.T, s *store.Store, svc *service.Service) (string, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	cd, err := svc.SubmitReview(c.ID, tok, domain.LensCorrectness, domain.VerdictEdit, "fix", "Hello there", "m1")
+	cd, err := svc.SubmitReview(c.ID, tok, 0, domain.LensCorrectness, domain.VerdictEdit, "fix", "Hello there", "m1")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/mattn/go-isatty"
@@ -59,19 +60,31 @@ func pad(used int) string {
 }
 
 // settingsField is one structured (typed) field of outbox.yaml the settings
-// command can tune. Only bool fields exist today (auto_update, auto_reply); the
-// free-text fields (agent_cmd, sources) are shown read-only and never prompted.
+// command can tune. Bool fields (auto_update, auto_reply) and int fields (the
+// council guardrails) are both prompted/settable; the free-text fields
+// (agent_cmd, sources) are shown read-only and never prompted.
 type settingsField struct {
 	key  string // the outbox.yaml key
-	kind string // "bool"
+	kind string // "bool" | "int"
 	desc string // short human description
 	cur  func(config.Config) string
+}
+
+// wkind maps a field's kind string to the settings package write kind.
+func (f settingsField) wkind() settings.Kind {
+	if f.kind == "int" {
+		return settings.KindInt
+	}
+	return settings.KindBool
 }
 
 // structuredFields is the ordered set of tunable outbox.yaml fields.
 var structuredFields = []settingsField{
 	{key: "auto_update", kind: "bool", desc: "self-update on `outbox up`", cur: func(c config.Config) string { return boolStr(c.AutoUpdate) }},
 	{key: "auto_reply", kind: "bool", desc: "spawn the agent CLI on each human comment", cur: func(c config.Config) string { return boolStr(c.AutoReply) }},
+	{key: "council_rounds", kind: "int", desc: "max council discussion rounds (early-exit on consensus)", cur: func(c config.Config) string { return intStr(c.ResolveCouncilRounds()) }},
+	{key: "council_budget", kind: "int", desc: "per-council token budget guardrail", cur: func(c config.Config) string { return intStr(c.ResolveCouncilBudget()) }},
+	{key: "council_deadlock_threshold", kind: "int", desc: "confidence % below which the chair posts \"no consensus\" options", cur: func(c config.Config) string { return intStr(c.ResolveCouncilDeadlockThreshold()) }},
 }
 
 func boolStr(b bool) string {
@@ -80,6 +93,8 @@ func boolStr(b bool) string {
 	}
 	return "false"
 }
+
+func intStr(n int) string { return strconv.Itoa(n) }
 
 // settingsCmd tunes the structured fields of ./outbox.yaml. With no args it runs
 // an interactive walkthrough (Enter keeps the current value); with <key> <value>
@@ -162,7 +177,7 @@ func settingsSet(path, key, value string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := settings.WriteKey(path, key, norm, settings.KindBool); err != nil {
+	if err := settings.WriteKey(path, key, norm, f.wkind()); err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "✓ %s = %s\n", key, norm)
@@ -206,7 +221,8 @@ done:
 	fmt.Fprintf(out, "sources    [%s]  (read-only — edit in outbox.yaml)\n", trunc(strings.Join(cfg.Sources, ", "), 50))
 
 	for k, v := range updates {
-		if err := settings.WriteKey(path, k, v, settings.KindBool); err != nil {
+		f, _ := fieldByKey(k) // k came from structuredFields, so this always resolves
+		if err := settings.WriteKey(path, k, v, f.wkind()); err != nil {
 			return err
 		}
 	}
@@ -245,6 +261,8 @@ func validateField(f settingsField, raw string) (string, error) {
 			return "", fmt.Errorf("%s expects a boolean (true/false, 1/0, yes/no)", f.key)
 		}
 		return boolStr(b), nil
+	case "int":
+		return settings.Validate(settings.KindInt, f.key, raw)
 	default:
 		return "", fmt.Errorf("unsupported field kind %q", f.kind)
 	}

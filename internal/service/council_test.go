@@ -32,12 +32,12 @@ func TestSubmitReviewRequiresValidTokenAndRecordsCandidate(t *testing.T) {
 	c, tok := claimedComment(t, s, svc)
 
 	// Bad token is rejected.
-	if _, err := svc.SubmitReview(c.ID, "wrong", domain.LensCorrectness, domain.VerdictReply, "r", "", "m1"); err == nil {
+	if _, err := svc.SubmitReview(c.ID, "wrong", 0, domain.LensCorrectness, domain.VerdictReply, "r", "", "m1"); err == nil {
 		t.Fatal("expected invalid-token error")
 	}
 
 	// Valid token records a candidate, lazily creating the set.
-	cd, err := svc.SubmitReview(c.ID, tok, domain.LensCorrectness, domain.VerdictReply, "looks fine", "", "m1")
+	cd, err := svc.SubmitReview(c.ID, tok, 0, domain.LensCorrectness, domain.VerdictReply, "looks fine", "", "m1")
 	if err != nil {
 		t.Fatalf("submit: %v", err)
 	}
@@ -67,19 +67,19 @@ func TestSubmitReviewContentRequiredIffEdit(t *testing.T) {
 	c, tok := claimedComment(t, s, svc)
 
 	// edit without content → error.
-	if _, err := svc.SubmitReview(c.ID, tok, domain.LensCorrectness, domain.VerdictEdit, "r", "", "m1"); err == nil {
+	if _, err := svc.SubmitReview(c.ID, tok, 0, domain.LensCorrectness, domain.VerdictEdit, "r", "", "m1"); err == nil {
 		t.Error("edit without content should error")
 	}
 	// edit with content → ok.
-	if _, err := svc.SubmitReview(c.ID, tok, domain.LensCorrectness, domain.VerdictEdit, "r", "Hello there", "m1"); err != nil {
+	if _, err := svc.SubmitReview(c.ID, tok, 0, domain.LensCorrectness, domain.VerdictEdit, "r", "Hello there", "m1"); err != nil {
 		t.Errorf("edit with content should succeed: %v", err)
 	}
 	// reply WITH content → error (strict iff).
-	if _, err := svc.SubmitReview(c.ID, tok, domain.LensSimplicity, domain.VerdictReply, "r", "stuff", "m2"); err == nil {
+	if _, err := svc.SubmitReview(c.ID, tok, 0, domain.LensSimplicity, domain.VerdictReply, "r", "stuff", "m2"); err == nil {
 		t.Error("reply with content should error")
 	}
 	// unknown verdict → error.
-	if _, err := svc.SubmitReview(c.ID, tok, domain.LensSimplicity, "shrug", "r", "", "m3"); err == nil {
+	if _, err := svc.SubmitReview(c.ID, tok, 0, domain.LensSimplicity, "shrug", "r", "", "m3"); err == nil {
 		t.Error("unknown verdict should error")
 	}
 }
@@ -90,7 +90,7 @@ func TestPickCandidateHumanOnlyAndEmitsAcceptEligibleSuggestion(t *testing.T) {
 	svc := New(s, func(_, _, _ string) error { return nil })
 	c, tok := claimedComment(t, s, svc)
 
-	edit, err := svc.SubmitReview(c.ID, tok, domain.LensCorrectness, domain.VerdictEdit, "fix", "Hello there", "m1")
+	edit, err := svc.SubmitReview(c.ID, tok, 0, domain.LensCorrectness, domain.VerdictEdit, "fix", "Hello there", "m1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,10 +138,10 @@ func TestPickRejectsForeignCandidate(t *testing.T) {
 	doc2, _, _ := s.CreateDocument("other.md", "x", "human")
 	c2, _ := svc.PostComment(doc2.ID, domain.Anchor{Start: 0, End: 1}, "human")
 	tok2, _, _ := svc.Claim([]string{c2.ID}, "runner")
-	foreign, _ := svc.SubmitReview(c2.ID, tok2, domain.LensRisk, domain.VerdictReply, "r", "", "m9")
+	foreign, _ := svc.SubmitReview(c2.ID, tok2, 0, domain.LensRisk, domain.VerdictReply, "r", "", "m9")
 
 	// Seed c1 with its own set so it exists.
-	if _, err := svc.SubmitReview(c1.ID, tok1, domain.LensCorrectness, domain.VerdictReply, "r", "", "m1"); err != nil {
+	if _, err := svc.SubmitReview(c1.ID, tok1, 0, domain.LensCorrectness, domain.VerdictReply, "r", "", "m1"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.PickCandidate(c1.ID, foreign.ID, LocalHuman); err == nil {
@@ -154,7 +154,7 @@ func TestRecordSynthesisEmitsSuggestionAndSetsState(t *testing.T) {
 	defer s.Close()
 	svc := New(s, func(_, _, _ string) error { return nil })
 	c, tok := claimedComment(t, s, svc)
-	if _, err := svc.SubmitReview(c.ID, tok, domain.LensCorrectness, domain.VerdictEdit, "fix", "Hello there", "m1"); err != nil {
+	if _, err := svc.SubmitReview(c.ID, tok, 0, domain.LensCorrectness, domain.VerdictEdit, "fix", "Hello there", "m1"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -188,7 +188,7 @@ func TestSubmitReviewRejectsUnknownLens(t *testing.T) {
 	c, tok := claimedComment(t, s, svc)
 
 	// Unknown lens → rejected (mirrors the strict verdict check).
-	if _, err := svc.SubmitReview(c.ID, tok, "garbage", domain.VerdictReply, "r", "", "m1"); err == nil {
+	if _, err := svc.SubmitReview(c.ID, tok, 0, "garbage", domain.VerdictReply, "r", "", "m1"); err == nil {
 		t.Fatal("unknown lens should be rejected")
 	}
 
@@ -197,7 +197,7 @@ func TestSubmitReviewRejectsUnknownLens(t *testing.T) {
 		domain.LensCorrectness, domain.LensCompleteness, domain.LensAmbiguity,
 		domain.LensRisk, domain.LensSimplicity, domain.LensSkeptic,
 	} {
-		if _, err := svc.SubmitReview(c.ID, tok, lens, domain.VerdictReply, "r", "", "m1"); err != nil {
+		if _, err := svc.SubmitReview(c.ID, tok, 0, lens, domain.VerdictReply, "r", "", "m1"); err != nil {
 			t.Errorf("lens %q should be accepted: %v", lens, err)
 		}
 	}
@@ -209,11 +209,11 @@ func TestPickCandidateRejectsSecondPickAfterDecided(t *testing.T) {
 	svc := New(s, func(_, _, _ string) error { return nil })
 	c, tok := claimedComment(t, s, svc)
 
-	first, err := svc.SubmitReview(c.ID, tok, domain.LensCorrectness, domain.VerdictEdit, "fix", "Hello there", "m1")
+	first, err := svc.SubmitReview(c.ID, tok, 0, domain.LensCorrectness, domain.VerdictEdit, "fix", "Hello there", "m1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := svc.SubmitReview(c.ID, tok, domain.LensRisk, domain.VerdictEdit, "alt", "Goodbye now", "m2")
+	second, err := svc.SubmitReview(c.ID, tok, 0, domain.LensRisk, domain.VerdictEdit, "alt", "Goodbye now", "m2")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +277,7 @@ func TestCouncilEditRejectedWhenStale(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	edit, err := svc.SubmitReview(c.ID, tok, domain.LensCorrectness, domain.VerdictEdit, "fix", "howdy world", "m1")
+	edit, err := svc.SubmitReview(c.ID, tok, 0, domain.LensCorrectness, domain.VerdictEdit, "fix", "howdy world", "m1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +299,7 @@ func TestCouncilEditRejectedWhenStale(t *testing.T) {
 	doc2, _, _ := s2.CreateDocument("spec.md", "hello world", "human")
 	c2, _ := svc2.PostComment(doc2.ID, domain.Anchor{Start: 0, End: 5}, "human")
 	tok2, _, _ := svc2.Claim([]string{c2.ID}, "runner")
-	if _, err := svc2.SubmitReview(c2.ID, tok2, domain.LensCorrectness, domain.VerdictEdit, "fix", "howdy world", "m1"); err != nil {
+	if _, err := svc2.SubmitReview(c2.ID, tok2, 0, domain.LensCorrectness, domain.VerdictEdit, "fix", "howdy world", "m1"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s2.AddVersion(doc2.ID, "changed content", "watch"); err != nil {
@@ -322,7 +322,7 @@ func TestRecordSynthesisNoEditRepliesAndUnclaims(t *testing.T) {
 	defer s.Close()
 	svc := New(s, func(_, _, _ string) error { return nil })
 	c, tok := claimedComment(t, s, svc)
-	if _, err := svc.SubmitReview(c.ID, tok, domain.LensCorrectness, domain.VerdictReply, "no change needed", "", "m1"); err != nil {
+	if _, err := svc.SubmitReview(c.ID, tok, 0, domain.LensCorrectness, domain.VerdictReply, "no change needed", "", "m1"); err != nil {
 		t.Fatal(err)
 	}
 	syn, err := svc.RecordSynthesis(c.ID, tok, "skeptic dissented", "", "chair", 0.6, 70)
@@ -353,7 +353,7 @@ func TestRecordSynthesisIsSingleShot(t *testing.T) {
 	defer s.Close()
 	svc := New(s, func(_, _, _ string) error { return nil })
 	c, tok := claimedComment(t, s, svc)
-	if _, err := svc.SubmitReview(c.ID, tok, domain.LensCorrectness, domain.VerdictEdit, "fix", "Hello there", "m1"); err != nil {
+	if _, err := svc.SubmitReview(c.ID, tok, 0, domain.LensCorrectness, domain.VerdictEdit, "fix", "Hello there", "m1"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.RecordSynthesis(c.ID, tok, "", "Hello there", "chair", 0.9, 90); err != nil {
@@ -375,7 +375,7 @@ func TestRecordSynthesisConcurrentSingleWinner(t *testing.T) {
 	defer s.Close()
 	svc := New(s, func(_, _, _ string) error { return nil })
 	c, tok := claimedComment(t, s, svc)
-	if _, err := svc.SubmitReview(c.ID, tok, domain.LensCorrectness, domain.VerdictEdit, "fix", "Hello there", "m1"); err != nil {
+	if _, err := svc.SubmitReview(c.ID, tok, 0, domain.LensCorrectness, domain.VerdictEdit, "fix", "Hello there", "m1"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -397,5 +397,97 @@ func TestRecordSynthesisConcurrentSingleWinner(t *testing.T) {
 	}
 	if _, ok, _ := s.GetSuggestionByComment(c.ID); !ok {
 		t.Fatal("the winner should have emitted a suggestion")
+	}
+}
+
+// TestSubmitReviewTagsRound: the round argument is persisted on the candidate.
+func TestSubmitReviewTagsRound(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _, _ string) error { return nil })
+	c, tok := claimedComment(t, s, svc)
+
+	if _, err := svc.SubmitReview(c.ID, tok, 0, domain.LensCorrectness, domain.VerdictReply, "blind take", "", "m1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SubmitReview(c.ID, tok, 1, domain.LensCorrectness, domain.VerdictReply, "revised", "", "m1"); err != nil {
+		t.Fatal(err)
+	}
+	view, err := svc.ListCandidates(c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Candidates) != 2 || view.Candidates[0].Round != 0 || view.Candidates[1].Round != 1 {
+		t.Fatalf("candidate rounds = %+v, want [0 1]", view.Candidates)
+	}
+}
+
+// TestSubmitDiscussionRejectsBadTokenRecordsAndIsNonMutating: bad token is
+// rejected and records nothing; a valid token records a message WITHOUT resolving
+// the comment, changing its status, or emitting a suggestion.
+func TestSubmitDiscussionRejectsBadTokenRecordsAndIsNonMutating(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _, _ string) error { return nil })
+	c, tok := claimedComment(t, s, svc)
+	statusBefore, _ := s.GetComment(c.ID)
+
+	// Bad token → error, nothing recorded.
+	if _, err := svc.SubmitDiscussion(c.ID, "wrong", 1, "hi", nil, "m1"); err == nil {
+		t.Fatal("expected invalid-token error")
+	}
+	if msgs, _ := s.ListDiscussionByComment(c.ID); len(msgs) != 0 {
+		t.Fatalf("bad-token discussion recorded %d messages", len(msgs))
+	}
+
+	// Valid token records a message with citations.
+	msg, err := svc.SubmitDiscussion(c.ID, tok, 1, "I concur with m1",
+		[]domain.DiscussionRef{{Kind: "member", TargetID: "m1"}}, "m2")
+	if err != nil {
+		t.Fatalf("submit_discussion: %v", err)
+	}
+	if msg.ID == "" || msg.AgentIdentity != "m2" || msg.Round != 1 || len(msg.Refs) != 1 {
+		t.Fatalf("message = %+v", msg)
+	}
+
+	// Non-mutating: comment status unchanged, still not resolved, no suggestion.
+	after, _ := s.GetComment(c.ID)
+	if after.Status != statusBefore.Status {
+		t.Fatalf("comment status changed %q -> %q", statusBefore.Status, after.Status)
+	}
+	if after.Status == domain.CommentResolved {
+		t.Fatal("submit_discussion must not resolve the comment")
+	}
+	if _, ok, _ := s.GetSuggestionByComment(c.ID); ok {
+		t.Fatal("submit_discussion must not emit a suggestion")
+	}
+}
+
+// TestListCandidatesReturnsTranscript: ListCandidates surfaces the discussion
+// transcript (ordered) alongside the candidates.
+func TestListCandidatesReturnsTranscript(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _, _ string) error { return nil })
+	c, tok := claimedComment(t, s, svc)
+
+	if _, err := svc.SubmitReview(c.ID, tok, 0, domain.LensCorrectness, domain.VerdictReply, "take", "", "m1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SubmitDiscussion(c.ID, tok, 1, "first", nil, "m1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SubmitDiscussion(c.ID, tok, 2, "second", nil, "m2"); err != nil {
+		t.Fatal(err)
+	}
+	view, err := svc.ListCandidates(c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Candidates) != 1 {
+		t.Fatalf("candidates = %d, want 1", len(view.Candidates))
+	}
+	if len(view.Discussion) != 2 || view.Discussion[0].Body != "first" || view.Discussion[1].Body != "second" {
+		t.Fatalf("discussion = %+v, want [first second]", view.Discussion)
 	}
 }

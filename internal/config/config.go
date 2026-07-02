@@ -29,6 +29,20 @@ const DefaultAgentTimeout = 15 * time.Minute
 // single-flight behaviour.
 const DefaultAgentConcurrency = 4
 
+// Council guardrails (design §6). These are surfaced in `settings` and read by
+// the future orchestration slice; this slice only carries the config + accessors.
+const (
+	// DefaultCouncilRounds is the max number of discussion rounds a council runs
+	// (early-exit on consensus). 2 lets a member respond to a response.
+	DefaultCouncilRounds = 2
+	// DefaultCouncilBudget is the per-council token budget guardrail; on exhaustion
+	// the chair rules on what exists.
+	DefaultCouncilBudget = 200000
+	// DefaultCouncilDeadlockThreshold is the confidence percentage (0..100) below
+	// which the chair posts "no consensus" ranked options instead of ruling.
+	DefaultCouncilDeadlockThreshold = 50
+)
+
 type Config struct {
 	Agent    AgentConfig    `json:"agent"    yaml:"agent"`
 	Approval ApprovalConfig `json:"approval" yaml:"approval"`
@@ -52,6 +66,46 @@ type Config struct {
 	// token {prompt} is replaced by the instruction prompt as a single argv element
 	// (no shell). Defaults to the Claude Code headless invocation.
 	AgentCmd string `json:"agentCmd" yaml:"agent_cmd"`
+	// CouncilRounds is the max number of discussion rounds a council runs before
+	// the chair rules (early-exit on consensus). Absent/<=0 ⇒ DefaultCouncilRounds
+	// (2). Resolve with ResolveCouncilRounds.
+	CouncilRounds int `json:"councilRounds" yaml:"council_rounds"`
+	// CouncilBudget is the per-council token budget guardrail. Absent/<=0 ⇒
+	// DefaultCouncilBudget (200000). Resolve with ResolveCouncilBudget.
+	CouncilBudget int `json:"councilBudget" yaml:"council_budget"`
+	// CouncilDeadlockThreshold is the confidence percentage (0..100) below which
+	// the chair posts "no consensus" ranked options instead of ruling. Absent/<=0 ⇒
+	// DefaultCouncilDeadlockThreshold (50). Resolve with
+	// ResolveCouncilDeadlockThreshold.
+	CouncilDeadlockThreshold int `json:"councilDeadlockThreshold" yaml:"council_deadlock_threshold"`
+}
+
+// ResolveCouncilRounds returns the effective max discussion rounds: an unset or
+// non-positive value falls back to DefaultCouncilRounds.
+func (c Config) ResolveCouncilRounds() int {
+	if c.CouncilRounds <= 0 {
+		return DefaultCouncilRounds
+	}
+	return c.CouncilRounds
+}
+
+// ResolveCouncilBudget returns the effective per-council token budget: an unset
+// or non-positive value falls back to DefaultCouncilBudget.
+func (c Config) ResolveCouncilBudget() int {
+	if c.CouncilBudget <= 0 {
+		return DefaultCouncilBudget
+	}
+	return c.CouncilBudget
+}
+
+// ResolveCouncilDeadlockThreshold returns the effective deadlock threshold (a
+// confidence %): an unset or non-positive value falls back to
+// DefaultCouncilDeadlockThreshold.
+func (c Config) ResolveCouncilDeadlockThreshold() int {
+	if c.CouncilDeadlockThreshold <= 0 {
+		return DefaultCouncilDeadlockThreshold
+	}
+	return c.CouncilDeadlockThreshold
 }
 
 type AgentConfig struct {
@@ -137,7 +191,13 @@ func Defaults() Config {
 		// even when the engine is off (used the moment auto-reply is turned on).
 		AutoReply: false,
 		AgentCmd:  "claude -p {prompt} --allowedTools mcp__outbox-md__*",
-		Approval:  ApprovalConfig{PostApprovalComments: true},
+		// Council guardrails seed their defaults so a yaml that omits them keeps
+		// these; an explicit positive value overrides (resolve accessors map <=0
+		// back to the default).
+		CouncilRounds:            DefaultCouncilRounds,
+		CouncilBudget:            DefaultCouncilBudget,
+		CouncilDeadlockThreshold: DefaultCouncilDeadlockThreshold,
+		Approval:                 ApprovalConfig{PostApprovalComments: true},
 		// All four governance events are enabled by default. These string
 		// literals mirror the event names emitted by internal/webhook; they are
 		// duplicated here (rather than imported) to keep config free of a webhook
