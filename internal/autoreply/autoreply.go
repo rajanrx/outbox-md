@@ -89,13 +89,24 @@ const DefaultHeartbeatInterval = 60 * time.Second
 // is the instruction substituted for that token.
 type SpawnFunc func(ctx context.Context, dir, agentCmd, prompt string) error
 
-// CommentRef is the minimal handle on an open comment the council orchestration
-// needs: its id. Config.OpenComments returns these (a thin wrapper over the
-// service's ListOpenComments), keeping the autoreply package free of any domain
-// comment shape.
+// CommentRef is the handle on an open comment the council orchestration drives a
+// run over — the id PLUS the review context members need. A freshly-claimed
+// comment is hidden from list_open_comments, and read_doc needs the docId, so the
+// engine must hand members the doc + flagged excerpt + thread up front; they can't
+// discover them via MCP. Config.OpenComments fills these (a thin wrapper over the
+// service), keeping the autoreply package free of any domain comment shape.
 type CommentRef struct {
 	// ID is the comment id the engine claims and drives a council run over.
 	ID string
+	// DocID is the document the comment is on — members read_doc(DocID) for context.
+	DocID string
+	// DocPath is the doc's path (for prompt readability).
+	DocPath string
+	// Excerpt is the anchored text the human flagged.
+	Excerpt string
+	// Thread is the human's feedback, pre-formatted (author: body per line), since
+	// members cannot fetch it themselves from a claimed comment.
+	Thread string
 }
 
 // Target is a project's auto-reply destination: the cwd the agent is spawned in
@@ -674,7 +685,7 @@ func (r *runner) councilPass() {
 		if !won {
 			continue // another council-run holds this comment
 		}
-		r.runCouncilForComment(cr.ID, token)
+		r.runCouncilForComment(cr, token)
 	}
 }
 
@@ -684,7 +695,8 @@ func (r *runner) councilPass() {
 // The heartbeat spanning members AND the chair is the double-council guard — a run
 // of N members then a chair, sequential, can exceed the processing TTL, so the
 // engine (not the members) heartbeats on a ticker for the entire duration.
-func (r *runner) runCouncilForComment(commentID, token string) {
+func (r *runner) runCouncilForComment(cr CommentRef, token string) {
+	commentID := cr.ID
 	stopHeartbeat := r.startHeartbeat(commentID, token)
 	defer stopHeartbeat()
 
@@ -703,7 +715,7 @@ func (r *runner) runCouncilForComment(commentID, token string) {
 	for i, memberCmd := range members {
 		lens := councilLens(i, n)
 		identity := councilMemberIdentity(i)
-		prompt := councilMemberPrompt(commentID, token, identity, lens)
+		prompt := councilMemberPrompt(cr, token, identity, lens)
 		wg.Add(1)
 		sem <- struct{}{}
 		go func(cmd, p string) {
@@ -715,7 +727,7 @@ func (r *runner) runCouncilForComment(commentID, token string) {
 	wg.Wait()
 
 	// Chair after the join: it reads the candidates and records the single verdict.
-	r.spawnCouncil(r.council.chair, councilChairPrompt(commentID, token, councilChairIdentity))
+	r.spawnCouncil(r.council.chair, councilChairPrompt(cr, token, councilChairIdentity))
 }
 
 // startHeartbeat fires one immediate mark_processing (svc.Claim sets claimed_at but
@@ -817,33 +829,45 @@ const councilChairIdentity = "chair"
 
 // councilMemberGuidance is the member prompt template. Explicit argument indices
 // (%[n]s) keep the substitution order-independent: [1]=commentId, [2]=lens,
-// [3]=token, [4]=identity.
-const councilMemberGuidance = `You are council member "%[4]s" reviewing outbox comment %[1]s through the "%[2]s" lens.
+// [3]=token, [4]=identity, [5]=docId, [6]=excerpt, [7]=thread. The doc id +
+// excerpt + thread are embedded because a freshly-claimed comment is hidden from
+// list_open_comments, so the member can't discover them via MCP.
+const councilMemberGuidance = `You are council member "%[4]s" reviewing outbox comment %[1]s on document %[5]s, through the "%[2]s" lens.
+
+The human flagged this excerpt:
+"""
+%[6]s
+"""
+Their feedback (the thread):
+"""
+%[7]s
+"""
 Do exactly this, in order:
-1. read_doc — read the comment's excerpt, its thread, and the surrounding document; understand what the human raised.
+1. read_doc(docId="%[5]s") — read the full current document for the context around that excerpt.
 2. Judge ONLY through the %[2]s lens. Anti-sycophancy: a comment is not an order — disagree when the evidence warrants.
 3. Record your verdict with ONE call:
    submit_review(commentId="%[1]s", token="%[3]s", lens="%[2]s", verdict="edit|reply|reject_comment", rationale="your reasoning", content="the FULL replacement document content — REQUIRED iff verdict=edit, EMPTY otherwise", agentIdentity="%[4]s")
 Do NOT claim, propose_suggestion, reply_in_thread, resolve, accept, or approve — the chair synthesises and the human decides. Submit exactly one review, then stop.`
 
 // councilChairGuidance is the chair prompt template. [1]=commentId, [2]=token,
-// [3]=identity.
-const councilChairGuidance = `You are the council chair (identity "%[3]s") for outbox comment %[1]s.
+// [3]=identity, [4]=docId.
+const councilChairGuidance = `You are the council chair (identity "%[3]s") for outbox comment %[1]s on document %[4]s.
 Do exactly this, in order:
-1. list_candidates — read every member's verdict, rationale, and proposed content for this comment.
+1. list_candidates(commentId="%[1]s") — read every member's verdict, rationale, and proposed content for this comment. (Optionally read_doc(docId="%[4]s") for the surrounding text.)
 2. Synthesise: weigh agreement against dissent, name where the members AGREE and where they DIVERGE, and decide the single best outcome. Anti-sycophancy: the majority is not automatically right.
 3. Record the verdict with ONE call:
    record_synthesis(commentId="%[1]s", token="%[2]s", content="the synthesised FULL replacement content — set iff the verdict is an edit, EMPTY for a no-edit (reply/reject) outcome", dissent="the strongest dissenting view, or empty", agreementScore=<0..1>, confidence=<0..100>, agentIdentity="%[3]s")
 record_synthesis is single-shot: it emits the human-facing suggestion (edit) or a chair reply (no edit). Do NOT resolve, accept, or approve. Record exactly one synthesis, then stop.`
 
-// councilMemberPrompt builds member i's prompt for one comment/run.
-func councilMemberPrompt(commentID, token, identity, lens string) string {
-	return fmt.Sprintf(councilMemberGuidance, commentID, lens, token, identity)
+// councilMemberPrompt builds member i's prompt for one comment/run, embedding the
+// doc id + flagged excerpt + thread so the member has full context without MCP.
+func councilMemberPrompt(cr CommentRef, token, identity, lens string) string {
+	return fmt.Sprintf(councilMemberGuidance, cr.ID, lens, token, identity, cr.DocID, cr.Excerpt, cr.Thread)
 }
 
 // councilChairPrompt builds the chair's prompt for one comment/run.
-func councilChairPrompt(commentID, token, identity string) string {
-	return fmt.Sprintf(councilChairGuidance, commentID, token, identity)
+func councilChairPrompt(cr CommentRef, token, identity string) string {
+	return fmt.Sprintf(councilChairGuidance, cr.ID, token, identity, cr.DocID)
 }
 
 // waveSize is how many agent runs to launch in one wave. It is bounded by the

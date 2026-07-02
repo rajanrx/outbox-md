@@ -410,3 +410,25 @@ func TestCouncilCloseNoGoroutineLeak(t *testing.T) {
 		t.Fatalf("goroutine leak: baseline %d, after run+Close %d", base, got)
 	}
 }
+
+// TestCouncilPromptsCarryDocContext (PR #74 P1): a member is spawned with the
+// docId, flagged excerpt, and thread IN its prompt — a freshly-claimed comment is
+// hidden from list_open_comments and read_doc needs the docId, so without these a
+// member cannot find the doc it is meant to review. The chair prompt carries the
+// docId too.
+func TestCouncilPromptsCarryDocContext(t *testing.T) {
+	cr := CommentRef{
+		ID: "c1", DocID: "doc-42", DocPath: "spec.md",
+		Excerpt: "the flagged sentence", Thread: "human: please tighten this",
+	}
+	member := councilMemberPrompt(cr, "tok", "member-1", domain.LensCorrectness)
+	for _, want := range []string{"doc-42", `read_doc(docId="doc-42")`, "the flagged sentence", "human: please tighten this"} {
+		if !strings.Contains(member, want) {
+			t.Fatalf("member prompt missing %q:\n%s", want, member)
+		}
+	}
+	chair := councilChairPrompt(cr, "tok", councilChairIdentity)
+	if !strings.Contains(chair, "doc-42") {
+		t.Fatalf("chair prompt missing docId:\n%s", chair)
+	}
+}

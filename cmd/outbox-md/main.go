@@ -20,6 +20,7 @@ import (
 	"github.com/rajanrx/outbox-md/internal/api"
 	"github.com/rajanrx/outbox-md/internal/autoreply"
 	"github.com/rajanrx/outbox-md/internal/config"
+	"github.com/rajanrx/outbox-md/internal/domain"
 	"github.com/rajanrx/outbox-md/internal/mcp"
 	"github.com/rajanrx/outbox-md/internal/mcpclients"
 	"github.com/rajanrx/outbox-md/internal/registry"
@@ -571,15 +572,24 @@ func autoReplyNotifier(root string, projects []registry.Project, cfg config.Conf
 			}
 			return token, len(won) == 1, nil
 		},
-		// OpenComments lists the project's open (+ stale-claimed) comments as refs.
+		// OpenComments lists the project's open (+ stale-claimed) comments as refs,
+		// carrying the doc id + flagged excerpt + thread so members have full review
+		// context (a claimed comment is hidden from list_open_comments). The service
+		// applies the sources whitelist, so hidden docs never surface here.
 		OpenComments: func(project string) ([]autoreply.CommentRef, error) {
-			comments, err := svc.OpenCommentsForProject(project)
+			comments, err := svc.OpenCouncilComments(project)
 			if err != nil {
 				return nil, err
 			}
 			refs := make([]autoreply.CommentRef, 0, len(comments))
 			for _, c := range comments {
-				refs = append(refs, autoreply.CommentRef{ID: c.ID})
+				refs = append(refs, autoreply.CommentRef{
+					ID:      c.CommentID,
+					DocID:   c.DocID,
+					DocPath: c.DocPath,
+					Excerpt: c.Excerpt,
+					Thread:  formatCouncilThread(c.Thread),
+				})
 			}
 			return refs, nil
 		},
@@ -596,6 +606,19 @@ func autoReplyNotifier(root string, projects []registry.Project, cfg config.Conf
 // under (one council-run per comment; distinct member/chair identities travel in
 // the prompts, not the claim).
 const councilAgentID = "council"
+
+// formatCouncilThread renders a comment's thread as "author: body" lines for the
+// council member prompt (members can't fetch the thread from a claimed comment).
+func formatCouncilThread(msgs []domain.ThreadMessage) string {
+	if len(msgs) == 0 {
+		return "(no messages yet)"
+	}
+	var b strings.Builder
+	for _, m := range msgs {
+		fmt.Fprintf(&b, "%s: %s\n", m.AuthorIdentity, m.Body)
+	}
+	return strings.TrimSpace(b.String())
+}
 
 // browseURL turns a listen address (e.g. ":8181" or "localhost:9090") into a
 // loopback URL for the browser and the MCP endpoint.
