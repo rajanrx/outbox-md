@@ -5,6 +5,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/rajanrx/outbox-md/internal/domain"
+	"github.com/rajanrx/outbox-md/internal/service"
 )
 
 // NewServer registers the v1-core tools (plus the council-mode submit_review)
@@ -84,6 +85,34 @@ func NewServer(h *Handlers) *mcp.Server {
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in submitReviewIn) (*mcp.CallToolResult, domain.Candidate, error) {
 		cd, err := h.SubmitReview(in.CommentID, in.Token, in.Lens, in.Verdict, in.Rationale, in.Content, in.AgentIdentity)
 		return nil, cd, err
+	})
+
+	type listCandidatesIn struct {
+		CommentID string `json:"commentId" jsonschema:"the comment whose council to read"`
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "list_candidates",
+		Description: "Council chair read: the candidate set plus every member's independent candidate (round, lens, verdict, rationale, edit content, identity) and the synthesis if one was recorded. Use it to weigh the members' takes before recording a verdict.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in listCandidatesIn) (*mcp.CallToolResult, service.CouncilView, error) {
+		v, err := h.ListCandidates(in.CommentID)
+		return nil, v, err
+	})
+
+	type recordSynthesisIn struct {
+		CommentID      string  `json:"commentId"`
+		Token          string  `json:"token" jsonschema:"the claim token from claim_comment"`
+		Content        string  `json:"content,omitempty" jsonschema:"the full replacement content of the chair's verdict; when set, an accept-eligible suggestion is emitted"`
+		Dissent        string  `json:"dissent,omitempty" jsonschema:"the preserved minority/skeptic position"`
+		AgreementScore float64 `json:"agreementScore" jsonschema:"council agreement, 0..1"`
+		Confidence     int     `json:"confidence" jsonschema:"the chair's confidence in the verdict, 0..100"`
+		AgentIdentity  string  `json:"agentIdentity" jsonschema:"the council chair's identity"`
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "record_synthesis",
+		Description: "Council chair verdict: record the roll-up of a candidate set (agreement, confidence, dissent) and — when it carries edit content — emit the accept-eligible suggestion the human reviews. Token-authed: only the claiming council may record. Returns the synthesis, including its emitted suggestionId.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in recordSynthesisIn) (*mcp.CallToolResult, domain.Synthesis, error) {
+		syn, err := h.RecordSynthesis(in.CommentID, in.Token, in.Content, in.Dissent, in.AgreementScore, in.Confidence, in.AgentIdentity)
+		return nil, syn, err
 	})
 
 	type markProcessingIn struct {
