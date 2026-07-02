@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0](https://github.com/rajanrx/outbox-md/compare/v0.13.1...v0.14.0) (2026-07-02)
+
+
+### Features
+
+* **api:** expose version, suggestion against-content, and settings endpoints ([9de7ab7](https://github.com/rajanrx/outbox-md/commit/9de7ab78e44d420c712a1e04f1f3c30f7178574a))
+* **ui:** keep accepted/rejected suggestions as a read-only historical diff ([d508fc8](https://github.com/rajanrx/outbox-md/commit/d508fc81859e8623b2417f7f2b86df886e7aeedc))
+* **ui:** settings panel and header wiring (version badge, gear) ([391cbfa](https://github.com/rajanrx/outbox-md/commit/391cbfad25ac65c7ef1afa6bae16fffde047cc04))
+* **ui:** version badge styling and config/settings API client ([568b6aa](https://github.com/rajanrx/outbox-md/commit/568b6aa19ac29bd0c0bc8135651b05c0df7225cd))
+* **ui:** version badge, read-only accepted diffs, in-app settings page ([60f3ece](https://github.com/rajanrx/outbox-md/commit/60f3ece41d748ed28515438e15c0c9c2a8e5ae4c))
+
+
+### Bug Fixes
+
+* **ui:** flag settings as restart-only; trim trailing blank line (PR [#65](https://github.com/rajanrx/outbox-md/issues/65) P2/P3) ([78299f5](https://github.com/rajanrx/outbox-md/commit/78299f552962bf48afc87ca5f100da0102825166))
+
 ## [0.13.1](https://github.com/rajanrx/outbox-md/compare/v0.13.0...v0.13.1) (2026-07-02)
 
 
