@@ -12,11 +12,117 @@ import (
 
 	"github.com/rajanrx/outbox-md/internal/config"
 	"github.com/rajanrx/outbox-md/internal/domain"
+	"github.com/rajanrx/outbox-md/internal/registry"
 	"github.com/rajanrx/outbox-md/internal/service"
 	"github.com/rajanrx/outbox-md/internal/settings"
 	"github.com/rajanrx/outbox-md/internal/sse"
 	"github.com/rajanrx/outbox-md/internal/store"
 )
+
+// errRegistryRequired is returned by the projects CRUD write endpoints when the
+// server is not registry-backed (single-folder mode) — there is no projects.json
+// to persist to.
+var errRegistryRequired = errors.New("projects API requires registry mode (register projects with `outbox add`)")
+
+// memberDTO is the wire shape of a council member/chair: the structured {agent,
+// model} the Settings page edits (no resolved command, no secrets).
+type memberDTO struct {
+	Agent string `json:"agent"`
+	Model string `json:"model,omitempty"`
+}
+
+// projectDTO is the wire shape of a project for the projects API: name/root/docs
+// plus the structured members and chair.
+type projectDTO struct {
+	Name    string      `json:"name"`
+	Root    string      `json:"root"`
+	Docs    []string    `json:"docs"`
+	Members []memberDTO `json:"members"`
+	Chair   *memberDTO  `json:"chair,omitempty"`
+}
+
+// toProjectDTO maps a registry.Project to its wire shape.
+func toProjectDTO(p registry.Project) projectDTO {
+	docs := p.Docs
+	if len(docs) == 0 {
+		docs = []string{"."}
+	}
+	members := make([]memberDTO, 0, len(p.Members))
+	for _, m := range p.Members {
+		members = append(members, memberDTO{Agent: m.Agent, Model: m.Model})
+	}
+	var chair *memberDTO
+	if p.Chair != nil {
+		chair = &memberDTO{Agent: p.Chair.Agent, Model: p.Chair.Model}
+	}
+	return projectDTO{Name: p.Name, Root: p.Root, Docs: docs, Members: members, Chair: chair}
+}
+
+// toMembers maps a slice of member DTOs to registry members.
+func toMembers(dtos []memberDTO) []registry.Member {
+	out := make([]registry.Member, 0, len(dtos))
+	for _, d := range dtos {
+		out = append(out, registry.Member{Agent: d.Agent, Model: d.Model})
+	}
+	return out
+}
+
+// chairFromDTO maps an optional chair DTO to a registry member (the zero Member,
+// which normalizeMembers treats as "no chair", when nil or empty).
+func chairFromDTO(d *memberDTO) registry.Member {
+	if d == nil {
+		return registry.Member{}
+	}
+	return registry.Member{Agent: d.Agent, Model: d.Model}
+}
+
+// registryFile returns the server's projects.json path and whether the server is
+// registry-backed (single-folder mode has no registry to write to).
+func registryFile(svc *service.Service) (string, bool) {
+	file := svc.RegistryPath()
+	return file, file != ""
+}
+
+// findProject loads the registry file and returns the project with the given name.
+func findProject(file, name string) (registry.Project, bool) {
+	projects, err := registry.List(file)
+	if err != nil {
+		return registry.Project{}, false
+	}
+	for _, p := range projects {
+		if p.Name == name {
+			return p, true
+		}
+	}
+	return registry.Project{}, false
+}
+
+// reloadProjects re-reads the registry file and updates the service's in-memory
+// project list so a GET after a write reflects the change within the same process.
+// A read failure leaves the previous list in place (the file is still source of
+// truth for the CLI and the next restart).
+func reloadProjects(svc *service.Service, file string) {
+	if projects, err := registry.List(file); err == nil {
+		svc.SetProjects(projects)
+	}
+}
+
+// statusForRegistryErr maps a registry error to an HTTP status: validation errors
+// (bad root/docs, missing chair) are 400, an unknown project is 404, and anything
+// else (I/O) is 500.
+func statusForRegistryErr(err error) int {
+	switch {
+	case errors.Is(err, registry.ErrProjectNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, registry.ErrRootNotDir),
+		errors.Is(err, registry.ErrNoDocs),
+		errors.Is(err, registry.ErrBadDocs),
+		errors.Is(err, registry.ErrChairRequired):
+		return http.StatusBadRequest
+	default:
+		return http.StatusInternalServerError
+	}
+}
 
 // NewAPI builds the JSON API.
 func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub) http.Handler {
@@ -71,27 +177,134 @@ func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub) http.Handler {
 		}{Config: svc.Config(), Version: svc.Version()}, nil)
 	})
 
-	// The projects being served: [{name, root, docs}]. Single-folder mode returns
-	// one entry with an empty name; the UI hides the switcher when there is ≤1
-	// project. The per-project agent command is deliberately NOT exposed here (the
-	// UI never needs it). name is the root basename, so labels read as the repo
-	// name (e.g. "outbox-md") rather than the served folder (e.g. "docs").
+	// The projects being served: [{name, root, docs, members, chair}]. Single-folder
+	// mode returns one entry with an empty name; the UI hides the switcher when there
+	// is ≤1 project. members/chair carry the STRUCTURED {agent, model} the Settings
+	// page edits (agent is a preset name or a raw command; there are no secrets). The
+	// resolved spawn command is derived at runtime — not exposed here. name is the
+	// root basename, so labels read as the repo name (e.g. "outbox-md") rather than
+	// the served folder (e.g. "docs").
 	mux.HandleFunc("GET /api/projects", func(w http.ResponseWriter, _ *http.Request) {
-		type projectDTO struct {
-			Name string   `json:"name"`
-			Root string   `json:"root"`
-			Docs []string `json:"docs"`
-		}
 		src := svc.Projects()
 		out := make([]projectDTO, 0, len(src))
 		for _, p := range src {
-			docs := p.Docs
-			if len(docs) == 0 {
-				docs = []string{"."}
-			}
-			out = append(out, projectDTO{Name: p.Name, Root: p.Root, Docs: docs})
+			out = append(out, toProjectDTO(p))
 		}
 		writeJSON(w, out, nil)
+	})
+
+	// POST /api/projects — register a project (root, docs, members, chair) with the
+	// same validation as the `add` CLI (root must be a real dir; ≥2 members ⇒ chair
+	// required), persisting through the registry so the CLI and UI share one
+	// projects.json. Returns 201 + the created project, or a 4xx JSON error.
+	mux.HandleFunc("POST /api/projects", func(w http.ResponseWriter, r *http.Request) {
+		file, ok := registryFile(svc)
+		if !ok {
+			writeJSONError(w, http.StatusConflict, errRegistryRequired)
+			return
+		}
+		var in struct {
+			Root    string      `json:"root"`
+			Docs    []string    `json:"docs"`
+			Members []memberDTO `json:"members"`
+			Chair   *memberDTO  `json:"chair"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			writeJSONError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err))
+			return
+		}
+		p, err := registry.Add(file, in.Root, in.Docs, toMembers(in.Members), chairFromDTO(in.Chair))
+		if err != nil {
+			writeJSONError(w, statusForRegistryErr(err), err)
+			return
+		}
+		reloadProjects(svc, file)
+		writeJSONStatus(w, http.StatusCreated, toProjectDTO(p))
+	})
+
+	// PATCH/PUT /api/projects/{name} — edit a project's docs/members/chair (Name and
+	// Root are immutable). PATCH semantics: only fields present in the body change;
+	// absent fields keep their current value. Send "chair":{"agent":""} (or null) to
+	// clear the chair. The merged desired state is validated + persisted through the
+	// registry. 404 for an unknown project; 4xx for invalid input.
+	editProject := func(w http.ResponseWriter, r *http.Request) {
+		file, ok := registryFile(svc)
+		if !ok {
+			writeJSONError(w, http.StatusConflict, errRegistryRequired)
+			return
+		}
+		name := r.PathValue("name")
+		existing, found := findProject(file, name)
+		if !found {
+			writeJSONError(w, http.StatusNotFound, fmt.Errorf("%w: %q", registry.ErrProjectNotFound, name))
+			return
+		}
+		var raw map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+			writeJSONError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err))
+			return
+		}
+		// Merge the patch onto the existing project: an absent key keeps the current
+		// value; a present key replaces it.
+		docs := existing.Docs
+		if v, ok := raw["docs"]; ok {
+			if err := json.Unmarshal(v, &docs); err != nil {
+				writeJSONError(w, http.StatusBadRequest, fmt.Errorf("docs must be an array of strings: %w", err))
+				return
+			}
+		}
+		members := existing.Members
+		if v, ok := raw["members"]; ok {
+			var dtos []memberDTO
+			if err := json.Unmarshal(v, &dtos); err != nil {
+				writeJSONError(w, http.StatusBadRequest, fmt.Errorf("members must be an array of {agent,model}: %w", err))
+				return
+			}
+			members = toMembers(dtos)
+		}
+		chair := registry.Member{}
+		if existing.Chair != nil {
+			chair = *existing.Chair
+		}
+		if v, ok := raw["chair"]; ok {
+			var cd *memberDTO
+			if err := json.Unmarshal(v, &cd); err != nil {
+				writeJSONError(w, http.StatusBadRequest, fmt.Errorf("chair must be {agent,model} or null: %w", err))
+				return
+			}
+			chair = chairFromDTO(cd) // nil/empty ⇒ clears the chair
+		}
+		p, err := registry.Update(file, name, docs, members, chair)
+		if err != nil {
+			writeJSONError(w, statusForRegistryErr(err), err)
+			return
+		}
+		reloadProjects(svc, file)
+		writeJSON(w, toProjectDTO(p), nil)
+	}
+	mux.HandleFunc("PATCH /api/projects/{name}", editProject)
+	mux.HandleFunc("PUT /api/projects/{name}", editProject)
+
+	// DELETE /api/projects/{name} — unregister a project. 404 when no project matches
+	// the name.
+	mux.HandleFunc("DELETE /api/projects/{name}", func(w http.ResponseWriter, r *http.Request) {
+		file, ok := registryFile(svc)
+		if !ok {
+			writeJSONError(w, http.StatusConflict, errRegistryRequired)
+			return
+		}
+		name := r.PathValue("name")
+		removed, err := registry.Remove(file, name)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err)
+			return
+		}
+		if !removed {
+			writeJSONError(w, http.StatusNotFound, fmt.Errorf("%w: %q", registry.ErrProjectNotFound, name))
+			return
+		}
+		reloadProjects(svc, file)
+		writeJSON(w, map[string]any{"ok": true}, nil)
 	})
 
 	// Read-only folder view built from outbox-md's OWN data: every doc across the
@@ -565,6 +778,14 @@ func writeJSON(w http.ResponseWriter, v any, err error) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+// writeJSONStatus encodes v as JSON with an explicit status code (e.g. 201 for a
+// created resource).
+func writeJSONStatus(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }
 

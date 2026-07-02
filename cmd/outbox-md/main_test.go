@@ -618,6 +618,40 @@ func TestAddAgentCmdRegistersCustomMember(t *testing.T) {
 	}
 }
 
+// TestAddAgentModelSyntax verifies `--agent claude:opus` registers a member with
+// the preset name AND the model, and `--chair codex:o3` sets a chair model; the
+// stored member resolves to the preset command with the model flag injected. A
+// flagless `--agent codex` still works (no model).
+func TestAddAgentModelSyntax(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	root := t.TempDir()
+
+	var out bytes.Buffer
+	if err := run([]string{"add", root, ".", "--agent", "claude:opus", "--agent", "codex", "--chair", "copilot:gpt-5"}, &out); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	list, err := registry.List(filepath.Join(home, ".config", "outbox", "projects.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("registered %d, want 1", len(list))
+	}
+	p := list[0]
+	if len(p.Members) != 2 ||
+		p.Members[0].Agent != "claude" || p.Members[0].Model != "opus" ||
+		p.Members[1].Agent != "codex" || p.Members[1].Model != "" {
+		t.Fatalf("members = %+v, want claude:opus + codex (no model)", p.Members)
+	}
+	if p.Chair == nil || p.Chair.Agent != "copilot" || p.Chair.Model != "gpt-5" {
+		t.Fatalf("chair = %+v, want copilot:gpt-5", p.Chair)
+	}
+	if got := p.MemberCmds()[0]; got != "claude --model opus -p {prompt} --allowedTools mcp__outbox-md__*" {
+		t.Fatalf("resolved claude member = %q, want the model flag injected", got)
+	}
+}
+
 // TestAddZeroDocsFailsWithHelp verifies `outbox add <root>` (no docs) fails with a
 // non-nil error AND prints the add help/examples — a docs arg is mandatory.
 func TestAddZeroDocsFailsWithHelp(t *testing.T) {
@@ -672,7 +706,7 @@ func TestRemoveWholeProjectByName(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := registry.Add(filepath.Join(home, ".config", "outbox", "projects.json"), root, []string{"specs", "api-specs"}, nil, ""); err != nil {
+	if _, err := registry.Add(filepath.Join(home, ".config", "outbox", "projects.json"), root, []string{"specs", "api-specs"}, nil, registry.Member{}); err != nil {
 		t.Fatal(err)
 	}
 	name := filepath.Base(root)
@@ -788,7 +822,7 @@ func TestPathsCmd(t *testing.T) {
 
 	// Register a project → multi-project mode.
 	root := t.TempDir()
-	if _, err := registry.Add(filepath.Join(home, ".config", "outbox", "projects.json"), root, []string{"."}, nil, ""); err != nil {
+	if _, err := registry.Add(filepath.Join(home, ".config", "outbox", "projects.json"), root, []string{"."}, nil, registry.Member{}); err != nil {
 		t.Fatal(err)
 	}
 	var multi bytes.Buffer
@@ -912,7 +946,7 @@ func TestRetryCmdMultiProject(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", home)
 
 	projDir := t.TempDir()
-	p, err := registry.Add(registryPath(), projDir, []string{"."}, nil, "")
+	p, err := registry.Add(registryPath(), projDir, []string{"."}, nil, registry.Member{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -952,7 +986,7 @@ func TestRetryCmdNamedProject(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", home)
 	projDir := t.TempDir()
-	p, err := registry.Add(registryPath(), projDir, []string{"."}, nil, "")
+	p, err := registry.Add(registryPath(), projDir, []string{"."}, nil, registry.Member{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -980,7 +1014,7 @@ func TestRetryCmdUnknownProjectErrors(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", home)
 	projDir := t.TempDir()
-	if _, err := registry.Add(registryPath(), projDir, []string{"."}, nil, ""); err != nil {
+	if _, err := registry.Add(registryPath(), projDir, []string{"."}, nil, registry.Member{}); err != nil {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
