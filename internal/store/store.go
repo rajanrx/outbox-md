@@ -54,6 +54,12 @@ func migrate(db *sql.DB) error {
 		// AI Council: the chair's confidence (0..100) in a synthesis. Legacy rows
 		// default to 0; fresh databases already have it from schema.sql.
 		`ALTER TABLE syntheses ADD COLUMN confidence INTEGER NOT NULL DEFAULT 0`,
+		// Council discussion: a candidate's round (0 = independent take, >=1 =
+		// discussion revision). Legacy rows default to 0; fresh databases already
+		// have it from schema.sql. The discussion_messages table itself is created
+		// by schema.sql (CREATE TABLE IF NOT EXISTS runs on every Open), so a legacy
+		// database gains it there — only this pre-existing table needs an ALTER.
+		`ALTER TABLE candidates ADD COLUMN round INTEGER NOT NULL DEFAULT 0`,
 	} {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 			return err

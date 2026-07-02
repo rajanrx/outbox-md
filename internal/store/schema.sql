@@ -71,12 +71,26 @@ CREATE TABLE IF NOT EXISTS candidate_sets (
 CREATE TABLE IF NOT EXISTS candidates (
   id TEXT PRIMARY KEY,
   candidate_set_id TEXT NOT NULL REFERENCES candidate_sets(id),
+  -- round is which pass a candidate belongs to: 0 = the independent blind take,
+  -- >=1 = a revised position submitted during a discussion round.
+  round INTEGER NOT NULL DEFAULT 0,
   lens TEXT NOT NULL,
   verdict TEXT NOT NULL,
   rationale TEXT NOT NULL DEFAULT '',
   content TEXT NOT NULL DEFAULT '',
   agent_identity TEXT NOT NULL,
   chosen INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+-- Council discussion transcript: attributed, per-round messages hanging off a
+-- candidate set. refs is a JSON array of {kind, targetId} citations (member/kb).
+CREATE TABLE IF NOT EXISTS discussion_messages (
+  id TEXT PRIMARY KEY,
+  candidate_set_id TEXT NOT NULL REFERENCES candidate_sets(id),
+  round INTEGER NOT NULL DEFAULT 0,
+  agent_identity TEXT NOT NULL,
+  body TEXT NOT NULL DEFAULT '',
+  refs TEXT NOT NULL DEFAULT '[]',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS syntheses (

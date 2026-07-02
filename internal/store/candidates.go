@@ -64,12 +64,12 @@ func (s *Store) TryClaimSynthesis(id string) (bool, error) {
 	return n == 1, err
 }
 
-const candidateCols = `id, candidate_set_id, lens, verdict, rationale, content, agent_identity, chosen`
+const candidateCols = `id, candidate_set_id, round, lens, verdict, rationale, content, agent_identity, chosen`
 
 func scanCandidate(scan func(...any) error) (domain.Candidate, error) {
 	var c domain.Candidate
 	var chosen int
-	err := scan(&c.ID, &c.CandidateSetID, &c.Lens, &c.Verdict, &c.Rationale, &c.Content, &c.AgentIdentity, &chosen)
+	err := scan(&c.ID, &c.CandidateSetID, &c.Round, &c.Lens, &c.Verdict, &c.Rationale, &c.Content, &c.AgentIdentity, &chosen)
 	c.Chosen = chosen != 0
 	return c, err
 }
@@ -82,8 +82,8 @@ func (s *Store) AddCandidate(c domain.Candidate) (domain.Candidate, error) {
 	if c.Chosen {
 		chosen = 1
 	}
-	_, err := s.DB.Exec(`INSERT INTO candidates(`+candidateCols+`) VALUES(?,?,?,?,?,?,?,?)`,
-		c.ID, c.CandidateSetID, c.Lens, c.Verdict, c.Rationale, c.Content, c.AgentIdentity, chosen)
+	_, err := s.DB.Exec(`INSERT INTO candidates(`+candidateCols+`) VALUES(?,?,?,?,?,?,?,?,?)`,
+		c.ID, c.CandidateSetID, c.Round, c.Lens, c.Verdict, c.Rationale, c.Content, c.AgentIdentity, chosen)
 	return c, err
 }
 
@@ -96,7 +96,7 @@ func (s *Store) GetCandidate(id string) (domain.Candidate, error) {
 // default datetime('now') has only one-second resolution.
 func (s *Store) ListCandidatesByComment(commentID string) ([]domain.Candidate, error) {
 	rows, err := s.DB.Query(
-		`SELECT c.id, c.candidate_set_id, c.lens, c.verdict, c.rationale, c.content, c.agent_identity, c.chosen
+		`SELECT c.id, c.candidate_set_id, c.round, c.lens, c.verdict, c.rationale, c.content, c.agent_identity, c.chosen
 		 FROM candidates c
 		 JOIN candidate_sets cs ON c.candidate_set_id = cs.id
 		 WHERE cs.comment_id=? ORDER BY c.created_at, c.rowid`, commentID)

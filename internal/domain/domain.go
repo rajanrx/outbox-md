@@ -138,6 +138,7 @@ type CandidateSetState string
 
 const (
 	CandidateSetGathering   CandidateSetState = "gathering"   // candidates still arriving
+	CandidateSetDiscussing  CandidateSetState = "discussing"  // members are debating (discussion rounds)
 	CandidateSetSynthesized CandidateSetState = "synthesized" // chair recorded a synthesis
 	CandidateSetDecided     CandidateSetState = "decided"     // human picked a candidate
 )
@@ -172,12 +173,38 @@ const (
 type Candidate struct {
 	ID             string `json:"id"`
 	CandidateSetID string `json:"candidateSetId"`
-	Lens           string `json:"lens"`
-	Verdict        string `json:"verdict"`
-	Rationale      string `json:"rationale"`
-	Content        string `json:"content"` // full replacement IF verdict == edit (else empty)
-	AgentIdentity  string `json:"agentIdentity"`
-	Chosen         bool   `json:"chosen"` // set by the human-only pick
+	// Round is which pass this candidate belongs to: 0 = the independent, blind
+	// take; >=1 = a revised position submitted during a discussion round. It lets
+	// the transcript and the chair distinguish a first opinion from a considered
+	// revision.
+	Round         int    `json:"round"`
+	Lens          string `json:"lens"`
+	Verdict       string `json:"verdict"`
+	Rationale     string `json:"rationale"`
+	Content       string `json:"content"` // full replacement IF verdict == edit (else empty)
+	AgentIdentity string `json:"agentIdentity"`
+	Chosen        bool   `json:"chosen"` // set by the human-only pick
+}
+
+// DiscussionRef is a citation on a discussion message: who or what the message
+// responds to. Kind is "member" (another council member's candidate/message) or
+// "kb" (a retrieved knowledge-base passage); TargetID identifies the referent.
+type DiscussionRef struct {
+	Kind     string `json:"kind"` // member | kb
+	TargetID string `json:"targetId"`
+}
+
+// DiscussionMessage is one attributed message on a council's discussion
+// transcript: a member's response during a bounded discussion round. It carries
+// its round, the author's identity, the body, and any citations. Messages hang
+// off the CandidateSet additively — they never change the comment or the file.
+type DiscussionMessage struct {
+	ID             string          `json:"id"`
+	CandidateSetID string          `json:"candidateSetId"`
+	Round          int             `json:"round"`
+	AgentIdentity  string          `json:"agentIdentity"`
+	Body           string          `json:"body"`
+	Refs           []DiscussionRef `json:"refs"`
 }
 
 // Synthesis is the chair's roll-up of a candidate set. It only proposes: the
