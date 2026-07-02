@@ -1,7 +1,11 @@
 package autoreply
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -441,6 +445,202 @@ func TestDrainDisabledWithoutCounter(t *testing.T) {
 	time.Sleep(80 * time.Millisecond)
 	if got := atomic.LoadInt64(&spawns); got != 1 {
 		t.Fatalf("spawns = %d, want 1 (drain disabled when PendingCount is nil)", got)
+	}
+}
+
+// --- retry resilience ---
+
+// TestRetrySucceedsAfterTransientFailures: a run that fails K<N times then
+// succeeds must ultimately succeed — the retries ride out a transient AI/CLI
+// outage. Exactly K+1 spawns happen (K failures + the success), no more.
+func TestRetrySucceedsAfterTransientFailures(t *testing.T) {
+	var spawns int32
+	e := New(Config{
+		Enabled:      true,
+		Debounce:     testDebounce,
+		Retries:      5,
+		RetryBackoff: time.Millisecond,
+		Spawn: func(context.Context, string, string, string) error {
+			if atomic.AddInt32(&spawns, 1) <= 2 {
+				return errors.New("signal: killed")
+			}
+			return nil
+		},
+	})
+	e.Fire(webhook.EventCommentCreated, webhook.Event{})
+	waitFor(t, func() bool { return atomic.LoadInt32(&spawns) == 3 })
+	time.Sleep(30 * time.Millisecond)
+	if got := atomic.LoadInt32(&spawns); got != 3 {
+		t.Fatalf("spawns = %d, want 3 (2 failures + 1 success, then stop)", got)
+	}
+}
+
+// TestRetryGivesUpBounded: a run that fails every attempt gives up after exactly
+// retries+1 attempts — bounded, never an infinite loop.
+func TestRetryGivesUpBounded(t *testing.T) {
+	var spawns int32
+	e := New(Config{
+		Enabled:      true,
+		Debounce:     testDebounce,
+		Retries:      3,
+		RetryBackoff: time.Millisecond,
+		Spawn: func(context.Context, string, string, string) error {
+			atomic.AddInt32(&spawns, 1)
+			return errors.New("down")
+		},
+	})
+	e.Fire(webhook.EventCommentCreated, webhook.Event{})
+	waitFor(t, func() bool { return atomic.LoadInt32(&spawns) == 4 })
+	time.Sleep(40 * time.Millisecond)
+	if got := atomic.LoadInt32(&spawns); got != 4 {
+		t.Fatalf("spawns = %d, want 4 (retries=3 ⇒ 4 attempts, then give up)", got)
+	}
+}
+
+// TestRetriesRespectCancelledContext: Close() cancels the engine context, so an
+// in-flight retry backoff wakes and the loop stops instead of running the full N.
+func TestRetriesRespectCancelledContext(t *testing.T) {
+	var spawns int32
+	e := New(Config{
+		Enabled:      true,
+		Debounce:     testDebounce,
+		Retries:      10,
+		RetryBackoff: time.Second, // long: the 2nd attempt would only fire after 1s
+		Spawn: func(context.Context, string, string, string) error {
+			atomic.AddInt32(&spawns, 1)
+			return errors.New("down")
+		},
+	})
+	e.Fire(webhook.EventCommentCreated, webhook.Event{})
+	waitFor(t, func() bool { return atomic.LoadInt32(&spawns) == 1 })
+	e.Close() // cancel mid-backoff — the loop must abandon the remaining retries
+	time.Sleep(1200 * time.Millisecond)
+	if got := atomic.LoadInt32(&spawns); got != 1 {
+		t.Fatalf("spawns = %d, want 1 (Close must stop the retry loop, not run all 11)", got)
+	}
+}
+
+// TestNoRetryWhenZero: Retries=0 is honoured literally as "no retry" — a single
+// failing attempt, no more.
+func TestNoRetryWhenZero(t *testing.T) {
+	var spawns int32
+	e := New(Config{
+		Enabled:      true,
+		Debounce:     testDebounce,
+		Retries:      0,
+		RetryBackoff: time.Millisecond,
+		Spawn: func(context.Context, string, string, string) error {
+			atomic.AddInt32(&spawns, 1)
+			return errors.New("down")
+		},
+	})
+	e.Fire(webhook.EventCommentCreated, webhook.Event{})
+	waitFor(t, func() bool { return atomic.LoadInt32(&spawns) == 1 })
+	time.Sleep(30 * time.Millisecond)
+	if got := atomic.LoadInt32(&spawns); got != 1 {
+		t.Fatalf("spawns = %d, want 1 (Retries=0 ⇒ no retry)", got)
+	}
+}
+
+// TestTimeoutTakenFromConfig: a configured timeout is used verbatim (not the
+// default), and a zero timeout falls back to DefaultTimeout (15m).
+func TestTimeoutTakenFromConfig(t *testing.T) {
+	if got := New(Config{Timeout: 42 * time.Second}).timeout; got != 42*time.Second {
+		t.Fatalf("timeout = %v, want 42s (config value)", got)
+	}
+	if got := New(Config{}).timeout; got != DefaultTimeout {
+		t.Fatalf("zero timeout = %v, want DefaultTimeout %v", got, DefaultTimeout)
+	}
+	if DefaultTimeout != 15*time.Minute {
+		t.Fatalf("DefaultTimeout = %v, want 15m", DefaultTimeout)
+	}
+}
+
+// TestSpawnCLILogsGate: the default exec spawn mirrors the agent's output to the
+// log only when logs=true; logs=false suppresses that output stream (the command
+// still runs and its exit status is unaffected).
+func TestSpawnCLILogsGate(t *testing.T) {
+	run := func(logs bool) string {
+		var buf bytes.Buffer
+		old := log.Writer()
+		flags := log.Flags()
+		log.SetOutput(&buf)
+		log.SetFlags(0)
+		defer func() { log.SetOutput(old); log.SetFlags(flags) }()
+		if err := SpawnCLIFunc(logs)(context.Background(), "", "echo outbox-marker", ""); err != nil {
+			t.Fatalf("echo spawn failed: %v", err)
+		}
+		return buf.String()
+	}
+	if out := run(true); !strings.Contains(out, "outbox-marker") {
+		t.Fatalf("logs=true should mirror agent output, got %q", out)
+	}
+	if out := run(false); strings.Contains(out, "outbox-marker") {
+		t.Fatalf("logs=false must suppress the agent output stream, got %q", out)
+	}
+}
+
+// TestStartupSweepDrainsBacklog: Sweep kicks a drain for a project that has
+// pending work at boot (no human event), and skips a project with none.
+func TestStartupSweepDrainsBacklog(t *testing.T) {
+	var aRuns, bRuns int64
+	var aRemaining int64 = 2
+	e := New(Config{
+		Enabled:    true,
+		Debounce:   testDebounce,
+		DrainDelay: time.Millisecond,
+		Targets: map[string]Target{
+			"alpha": {Root: "/repos/alpha", AgentCmd: "a {prompt}"},
+			"beta":  {Root: "/repos/beta", AgentCmd: "b {prompt}"},
+		},
+		Spawn: func(_ context.Context, dir, _, _ string) error {
+			if dir == "/repos/alpha" {
+				atomic.AddInt64(&aRuns, 1)
+				for {
+					n := atomic.LoadInt64(&aRemaining)
+					if n == 0 || atomic.CompareAndSwapInt64(&aRemaining, n, n-1) {
+						return nil
+					}
+				}
+			}
+			atomic.AddInt64(&bRuns, 1)
+			return nil
+		},
+		PendingCount: func(project string) (int, error) {
+			if project == "alpha" {
+				return int(atomic.LoadInt64(&aRemaining)), nil
+			}
+			return 0, nil // beta has no backlog
+		},
+	})
+
+	e.Sweep()
+	waitFor(t, func() bool { return atomic.LoadInt64(&aRemaining) == 0 })
+	time.Sleep(50 * time.Millisecond)
+	if got := atomic.LoadInt64(&aRuns); got != 2 {
+		t.Fatalf("alpha sweep runs = %d, want 2 (drained its backlog at startup)", got)
+	}
+	if got := atomic.LoadInt64(&bRuns); got != 0 {
+		t.Fatalf("beta sweep runs = %d, want 0 (no backlog ⇒ not swept)", got)
+	}
+}
+
+// TestSweepDisabledEngineNoop: a disabled engine never sweeps.
+func TestSweepDisabledEngineNoop(t *testing.T) {
+	var spawns int32
+	e := New(Config{
+		Enabled:      false,
+		Targets:      map[string]Target{"alpha": {Root: "/repos/alpha"}},
+		PendingCount: func(string) (int, error) { return 5, nil },
+		Spawn: func(context.Context, string, string, string) error {
+			atomic.AddInt32(&spawns, 1)
+			return nil
+		},
+	})
+	e.Sweep()
+	time.Sleep(30 * time.Millisecond)
+	if got := atomic.LoadInt32(&spawns); got != 0 {
+		t.Fatalf("disabled engine swept %d times, want 0", got)
 	}
 }
 
