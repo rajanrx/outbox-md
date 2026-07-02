@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0](https://github.com/rajanrx/outbox-md/compare/v0.16.0...v0.17.0) (2026-07-02)
+
+
+### Features
+
+* **web:** dedicated Settings page (projects, models, council, automation) ([c22e545](https://github.com/rajanrx/outbox-md/commit/c22e5457898d4884c07bde3966dcdd832c1049fb))
+* **web:** dedicated settings page + nav ([40aa1ad](https://github.com/rajanrx/outbox-md/commit/40aa1ad58e1a606c7a3c54759681161ab6115309))
+* **web:** settings API client + types ([60da898](https://github.com/rajanrx/outbox-md/commit/60da89843f70c0290f33a84181300d481d9bd2a1))
+* **web:** surface CLI notice on a 409 project write ([092256e](https://github.com/rajanrx/outbox-md/commit/092256ecedfe22e029353ec8b773cb47794c4af1))
+
+
+### Bug Fixes
+
+* **web:** settings section save preserves other section's unsaved edits + resync project on CRUD (PR [#80](https://github.com/rajanrx/outbox-md/issues/80) P2s) ([4aeb13d](https://github.com/rajanrx/outbox-md/commit/4aeb13daa24e565d9a9521c7f0ee3068ae2c3f29))
+* **web:** use a real gear (cog) icon for Settings, not a sun/asterisk ([672dade](https://github.com/rajanrx/outbox-md/commit/672dadeddeb71a32fad7ccb54573ba1e77642e25))
+
 ## [0.16.0](https://github.com/rajanrx/outbox-md/compare/v0.15.0...v0.16.0) (2026-07-02)
 
 
