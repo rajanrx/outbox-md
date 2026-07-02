@@ -253,3 +253,53 @@ func TestListCandidatesErrorsWhenNoSet(t *testing.T) {
 		t.Fatal("expected error for comment with no candidate set")
 	}
 }
+
+// TestCouncilEditRejectedWhenStale: a council edit outcome obeys the same
+// stale-version guard as a direct Propose. After the doc advances under the
+// council (v1→v2, like a watcher-imported edit) with the comment still at v1,
+// PickCandidate and RecordSynthesis on an edit are rejected and store NO
+// suggestion — and PickCandidate must not leave the set decided-but-suggestionless.
+func TestCouncilEditRejectedWhenStale(t *testing.T) {
+	// PickCandidate path.
+	svc, s := newSvc(t)
+	doc, _, _ := s.CreateDocument("spec.md", "hello world", "human")
+	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
+	tok, _, err := svc.Claim([]string{c.ID}, "runner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	edit, err := svc.SubmitReview(c.ID, tok, domain.LensCorrectness, domain.VerdictEdit, "fix", "howdy world", "m1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddVersion(doc.ID, "hello brave new world", "watch"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.PickCandidate(c.ID, edit.ID, LocalHuman); err == nil {
+		t.Fatal("PickCandidate on a stale edit succeeded; want stale rejection")
+	}
+	if _, ok, _ := s.GetSuggestionByComment(c.ID); ok {
+		t.Fatal("stale PickCandidate stored a suggestion; must reject before storage")
+	}
+	if set, ok, _ := s.GetCandidateSetByComment(c.ID); ok && set.State == domain.CandidateSetDecided {
+		t.Fatal("stale PickCandidate left the set decided-but-suggestionless")
+	}
+
+	// RecordSynthesis path (fresh doc/comment).
+	svc2, s2 := newSvc(t)
+	doc2, _, _ := s2.CreateDocument("spec.md", "hello world", "human")
+	c2, _ := svc2.PostComment(doc2.ID, domain.Anchor{Start: 0, End: 5}, "human")
+	tok2, _, _ := svc2.Claim([]string{c2.ID}, "runner")
+	if _, err := svc2.SubmitReview(c2.ID, tok2, domain.LensCorrectness, domain.VerdictEdit, "fix", "howdy world", "m1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s2.AddVersion(doc2.ID, "changed content", "watch"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc2.RecordSynthesis(c2.ID, "", "howdy world", "chair", 0.9); err == nil {
+		t.Fatal("RecordSynthesis emitting a stale edit succeeded; want stale rejection")
+	}
+	if _, ok, _ := s2.GetSuggestionByComment(c2.ID); ok {
+		t.Fatal("stale RecordSynthesis stored a suggestion")
+	}
+}

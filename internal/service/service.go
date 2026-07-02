@@ -551,6 +551,14 @@ func (s *Service) PickCandidate(commentID, candidateID, actor string) (domain.Ca
 	if cand.CandidateSetID != set.ID {
 		return domain.Candidate{}, errors.New("candidate does not belong to this comment")
 	}
+	// Reject a stale EDIT pick BEFORE mutating state, so it can't leave the set
+	// decided-but-suggestionless (emitSuggestion guards too, but that fires after
+	// the MarkCandidateChosen/SetState writes below).
+	if cand.Verdict == domain.VerdictEdit {
+		if err := s.checkNotStale(c); err != nil {
+			return domain.Candidate{}, err
+		}
+	}
 	if err := s.store.MarkCandidateChosen(cand.ID); err != nil {
 		return domain.Candidate{}, err
 	}
@@ -571,6 +579,13 @@ func (s *Service) PickCandidate(commentID, candidateID, actor string) (domain.Ca
 // so the human accepts a council outcome exactly like a single-agent one. It
 // does NOT write disk or accept anything.
 func (s *Service) emitSuggestion(c domain.Comment, content, createdBy string) (domain.Suggestion, error) {
+	// Same stale-version guard as Propose: a council edit must not become an
+	// accept-eligible suggestion built against a version the doc has moved past
+	// (another accept, or a watcher-imported on-disk edit). Without this, council
+	// mode reopens exactly the stale-suggestion hole Propose closes.
+	if err := s.checkNotStale(c); err != nil {
+		return domain.Suggestion{}, err
+	}
 	sg, err := s.store.CreateSuggestion(domain.Suggestion{
 		CommentID: c.ID, AgainstVersionID: c.AgainstVersionID,
 		ProposedContent: content, State: domain.SuggestionProposed, CreatedBy: createdBy,
