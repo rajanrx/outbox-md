@@ -854,7 +854,7 @@ Do NOT claim, propose_suggestion, reply_in_thread, resolve, accept, or approve �
 const councilChairGuidance = `You are the council chair (identity "%[3]s") for outbox comment %[1]s on document %[4]s.
 Do exactly this, in order:
 1. list_candidates(commentId="%[1]s") — read every member's verdict, rationale, and proposed content for this comment. (Optionally read_doc(docId="%[4]s") for the surrounding text.)
-2. Synthesise: weigh agreement against dissent, name where the members AGREE and where they DIVERGE, and decide the single best outcome. Anti-sycophancy: the majority is not automatically right.
+2. Synthesise STRICTLY from the candidates list_candidates returned — nothing else. A member that recorded no candidate did NOT participate: do NOT invent, quote, count, or attribute a position to it, and do NOT claim unanimity or "no dissent" when only some members reported. If N members were expected but fewer recorded, base the verdict on those present and say so. Weigh agreement against dissent, name where the recorded members AGREE and where they DIVERGE, and decide the single best outcome. Anti-sycophancy: the majority is not automatically right.
 3. Record the verdict with ONE call:
    record_synthesis(commentId="%[1]s", token="%[2]s", content="the synthesised FULL replacement content — set iff the verdict is an edit, EMPTY for a no-edit (reply/reject) outcome", dissent="the strongest dissenting view, or empty", agreementScore=<0..1>, confidence=<0..100>, agentIdentity="%[3]s")
 record_synthesis is single-shot: it emits the human-facing suggestion (edit) or a chair reply (no edit). Do NOT resolve, accept, or approve. Record exactly one synthesis, then stop.`

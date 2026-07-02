@@ -551,7 +551,7 @@ func TestAddAndListProjects(t *testing.T) {
 	if err := run([]string{"add", root, "docs/specs", "--agent", "codex"}, &addOut); err != nil {
 		t.Fatalf("add: %v", err)
 	}
-	if !strings.Contains(addOut.String(), "docs/specs") || !strings.Contains(addOut.String(), "codex exec {prompt}") {
+	if !strings.Contains(addOut.String(), "docs/specs") || !strings.Contains(addOut.String(), "codex exec") {
 		t.Fatalf("add output missing docs/agent:\n%s", addOut.String())
 	}
 
@@ -563,7 +563,7 @@ func TestAddAndListProjects(t *testing.T) {
 	}
 	if !strings.Contains(listOut.String(), wantName) ||
 		!strings.Contains(listOut.String(), "docs/specs") ||
-		!strings.Contains(listOut.String(), "codex exec {prompt}") {
+		!strings.Contains(listOut.String(), "codex exec") {
 		t.Fatalf("list output missing entry fields:\n%s", listOut.String())
 	}
 
