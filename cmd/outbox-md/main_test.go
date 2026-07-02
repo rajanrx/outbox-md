@@ -592,28 +592,29 @@ func TestAddRejectsDocsTraversal(t *testing.T) {
 // TestAddAgentCmdOverridesPreset verifies --agent-cmd wins over --agent: the
 // stored per-project agent command is the explicit --agent-cmd string, not the
 // preset it would otherwise resolve.
-func TestAddAgentCmdOverridesPreset(t *testing.T) {
+// TestAddAgentCmdRegistersCustomMember: --agent-cmd registers a member by raw
+// command. In the council model --agent and --agent-cmd both APPEND members (they
+// don't "override"), so a single custom-command agent is expressed with
+// --agent-cmd on its own — one member, single-agent mode (not council).
+func TestAddAgentCmdRegistersCustomMember(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	root := t.TempDir()
 
 	var out bytes.Buffer
-	if err := run([]string{"add", root, ".", "--agent", "claude", "--agent-cmd", "custom {prompt}"}, &out); err != nil {
+	if err := run([]string{"add", root, ".", "--agent-cmd", "custom {prompt}"}, &out); err != nil {
 		t.Fatalf("add: %v", err)
 	}
 	if !strings.Contains(out.String(), "custom {prompt}") {
-		t.Fatalf("add output should use the --agent-cmd override:\n%s", out.String())
+		t.Fatalf("add output should show the custom command:\n%s", out.String())
 	}
-	if strings.Contains(out.String(), "--allowedTools") {
-		t.Fatalf("add output must NOT use the claude preset when --agent-cmd is set:\n%s", out.String())
-	}
-	// Confirm the stored registry entry carries the explicit command.
+	// Stored as a single custom-command member; single-agent mode, no council.
 	list, err := registry.List(filepath.Join(home, ".config", "outbox", "projects.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list) != 1 || list[0].AgentCmd() != "custom {prompt}" {
-		t.Fatalf("stored agent = %+v, want custom {prompt}", list)
+	if len(list) != 1 || list[0].AgentCmd() != "custom {prompt}" || list[0].IsCouncil() {
+		t.Fatalf("stored = %+v, want a single custom-command member (no council)", list)
 	}
 }
 
