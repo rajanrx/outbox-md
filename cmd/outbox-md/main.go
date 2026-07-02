@@ -20,6 +20,7 @@ import (
 	"github.com/rajanrx/outbox-md/internal/api"
 	"github.com/rajanrx/outbox-md/internal/autoreply"
 	"github.com/rajanrx/outbox-md/internal/config"
+	"github.com/rajanrx/outbox-md/internal/domain"
 	"github.com/rajanrx/outbox-md/internal/mcp"
 	"github.com/rajanrx/outbox-md/internal/mcpclients"
 	"github.com/rajanrx/outbox-md/internal/registry"
@@ -526,7 +527,15 @@ func autoReplyNotifier(root string, projects []registry.Project, cfg config.Conf
 	// whose root is the served dir — preserving the original single-cwd behaviour.
 	targets := make(map[string]autoreply.Target, len(projects))
 	for _, p := range projects {
-		targets[p.Name] = autoreply.Target{Root: p.Root, AgentCmd: p.AgentCmd()}
+		// Members + Chair drive council mode (>= 2 members + a chair); AgentCmd is the
+		// single-agent fallback (the lone member, or the global default). A council
+		// Target only actually runs the council when the seams below are wired too.
+		targets[p.Name] = autoreply.Target{
+			Root:     p.Root,
+			AgentCmd: p.AgentCmd(),
+			Members:  p.Members(),
+			Chair:    p.Chair,
+		}
 	}
 	return autoreply.New(autoreply.Config{
 		Enabled:  true,
@@ -549,7 +558,66 @@ func autoReplyNotifier(root string, projects []registry.Project, cfg config.Conf
 		// is impossible here (main always builds one), but the engine also tolerates
 		// a nil counter by disabling the drain.
 		PendingCount: func(project string) (int, error) { return svc.PendingCommentCount(project) },
+		// Council orchestration seams. All three wired ⇒ a project with >= 2 members
+		// and a chair runs the council (engine claims each open comment, fans the
+		// lensed members out, heartbeats for the whole run, then the chair synthesises).
+		// Single-agent projects ignore these entirely.
+		//
+		// Claim claims ONE comment via the store CAS under a fixed "council" agent id,
+		// returning the shared token and whether this run won it (won ⇒ len == 1).
+		Claim: func(commentID string) (string, bool, error) {
+			token, won, err := svc.Claim([]string{commentID}, councilAgentID)
+			if err != nil {
+				return "", false, err
+			}
+			return token, len(won) == 1, nil
+		},
+		// OpenComments lists the project's open (+ stale-claimed) comments as refs,
+		// carrying the doc id + flagged excerpt + thread so members have full review
+		// context (a claimed comment is hidden from list_open_comments). The service
+		// applies the sources whitelist, so hidden docs never surface here.
+		OpenComments: func(project string) ([]autoreply.CommentRef, error) {
+			comments, err := svc.OpenCouncilComments(project)
+			if err != nil {
+				return nil, err
+			}
+			refs := make([]autoreply.CommentRef, 0, len(comments))
+			for _, c := range comments {
+				refs = append(refs, autoreply.CommentRef{
+					ID:      c.CommentID,
+					DocID:   c.DocID,
+					DocPath: c.DocPath,
+					Excerpt: c.Excerpt,
+					Thread:  formatCouncilThread(c.Thread),
+				})
+			}
+			return refs, nil
+		},
+		// Heartbeat re-marks the claimed comment as processing (default TTL) for the
+		// whole council run so it never goes stale mid-run (→ double-council).
+		Heartbeat: func(commentID, token string) error {
+			_, err := svc.MarkProcessing(commentID, token, 0)
+			return err
+		},
 	})
+}
+
+// councilAgentID is the fixed agent identity the engine claims council comments
+// under (one council-run per comment; distinct member/chair identities travel in
+// the prompts, not the claim).
+const councilAgentID = "council"
+
+// formatCouncilThread renders a comment's thread as "author: body" lines for the
+// council member prompt (members can't fetch the thread from a claimed comment).
+func formatCouncilThread(msgs []domain.ThreadMessage) string {
+	if len(msgs) == 0 {
+		return "(no messages yet)"
+	}
+	var b strings.Builder
+	for _, m := range msgs {
+		fmt.Fprintf(&b, "%s: %s\n", m.AuthorIdentity, m.Body)
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // browseURL turns a listen address (e.g. ":8181" or "localhost:9090") into a

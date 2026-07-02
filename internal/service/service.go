@@ -245,17 +245,68 @@ func (s *Service) PendingCommentCount(project string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	restricted := s.SourcesRestricted()
 	n := 0
 	for _, c := range comments {
 		doc, err := s.store.GetDocument(c.DocID)
-		if err != nil {
+		if err != nil || doc.Project != project {
 			continue
 		}
-		if doc.Project == project {
-			n++
+		// Same sources whitelist as the read/write/council paths: a comment on a doc
+		// hidden by narrowed sources must NOT count as pending, else it keeps
+		// triggering/draining runs for work the council will never (rightly) touch.
+		if restricted && !s.ProjectServes(doc.Project, doc.Path) {
+			continue
 		}
+		n++
 	}
 	return n, nil
+}
+
+// CouncilComment is a project's open comment plus the review context the council
+// orchestration hands its members: the doc to read, the flagged excerpt, and the
+// human's thread. A freshly-claimed comment is hidden from list_open_comments and
+// read_doc needs the docId, so members can't fetch these themselves — the engine
+// embeds them in the member prompt.
+type CouncilComment struct {
+	CommentID string
+	DocID     string
+	DocPath   string
+	Excerpt   string
+	Thread    []domain.ThreadMessage
+}
+
+// OpenCouncilComments returns the open (+ recovered stale-claimed) comments a
+// council pass drives for a project, each with review context. It applies the
+// SAME sources whitelist as the HTTP/MCP read/write paths (SourcesRestricted &&
+// !ProjectServes) — so the council never claims, heartbeats, or reviews a comment
+// on a doc hidden by narrowed sources. Excerpt/thread are best-effort (a failed
+// lookup just leaves the field empty; read_doc still gives the member the doc).
+func (s *Service) OpenCouncilComments(project string) ([]CouncilComment, error) {
+	comments, err := s.store.ListOpenComments(time.Now().UTC())
+	if err != nil {
+		return nil, err
+	}
+	restricted := s.SourcesRestricted()
+	out := make([]CouncilComment, 0, len(comments))
+	for _, c := range comments {
+		doc, err := s.store.GetDocument(c.DocID)
+		if err != nil || doc.Project != project {
+			continue
+		}
+		if restricted && !s.ProjectServes(doc.Project, doc.Path) {
+			continue
+		}
+		cc := CouncilComment{CommentID: c.ID, DocID: c.DocID, DocPath: doc.Path}
+		if ver, err := s.store.GetVersion(c.AgainstVersionID); err == nil {
+			cc.Excerpt = anchor.Excerpt(ver.Content, c.Anchor.Start, c.Anchor.End)
+		}
+		if th, err := s.store.ListThread(c.ID); err == nil {
+			cc.Thread = th
+		}
+		out = append(out, cc)
+	}
+	return out, nil
 }
 
 // Claim atomically claims a batch of comments for one agent run and returns the

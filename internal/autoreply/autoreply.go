@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rajanrx/outbox-md/internal/domain"
 	"github.com/rajanrx/outbox-md/internal/webhook"
 )
 
@@ -75,20 +76,62 @@ const DefaultDrainDelay = 500 * time.Millisecond
 // count). It resets on the next human trigger.
 const DefaultMaxDrains = 20
 
+// DefaultHeartbeatInterval is how often a council run re-marks its claimed comment
+// as processing (mark_processing) for the whole duration of the run. It MUST be
+// well under the store's StaleClaimGrace / processing TTL (180s) so the comment
+// never goes stale mid-run and a fresh trigger's council-run reclaims it —
+// double-council. 60s gives three heartbeats per TTL window.
+const DefaultHeartbeatInterval = 60 * time.Second
+
 // SpawnFunc runs the agent once. It is a seam so tests inject a fake instead of
 // shelling out to a real `claude`. dir is the working directory (the project
 // root); agentCmd is the command template with a literal {prompt} token; prompt
 // is the instruction substituted for that token.
 type SpawnFunc func(ctx context.Context, dir, agentCmd, prompt string) error
 
+// CommentRef is the handle on an open comment the council orchestration drives a
+// run over — the id PLUS the review context members need. A freshly-claimed
+// comment is hidden from list_open_comments, and read_doc needs the docId, so the
+// engine must hand members the doc + flagged excerpt + thread up front; they can't
+// discover them via MCP. Config.OpenComments fills these (a thin wrapper over the
+// service), keeping the autoreply package free of any domain comment shape.
+type CommentRef struct {
+	// ID is the comment id the engine claims and drives a council run over.
+	ID string
+	// DocID is the document the comment is on — members read_doc(DocID) for context.
+	DocID string
+	// DocPath is the doc's path (for prompt readability).
+	DocPath string
+	// Excerpt is the anchored text the human flagged.
+	Excerpt string
+	// Thread is the human's feedback, pre-formatted (author: body per line), since
+	// members cannot fetch it themselves from a claimed comment.
+	Thread string
+}
+
 // Target is a project's auto-reply destination: the cwd the agent is spawned in
-// (the project root) and the agent command template for that project.
+// (the project root), the single-agent command template, and — for council
+// projects — the member commands and the chair command.
 type Target struct {
 	// Root is the cwd the agent is spawned in — the project's repo root.
 	Root string
-	// AgentCmd is the per-project agent command template ({prompt} token). Empty
-	// ⇒ the engine's default command is used.
+	// AgentCmd is the per-project single-agent command template ({prompt} token).
+	// Empty ⇒ the engine's default command is used. In council mode it is unused
+	// (the members/chair below drive the run).
 	AgentCmd string
+	// Members are the council member command templates ({prompt} token). Two or more
+	// members with a non-empty Chair puts this project in council mode. Fewer ⇒
+	// single-agent mode via AgentCmd, exactly as before.
+	Members []string
+	// Chair is the council chair command template ({prompt} token). Required for
+	// council mode; unused (empty) in single-agent mode.
+	Chair string
+}
+
+// isCouncil reports whether this target should run as a council: two or more
+// members AND a chair to synthesise them.
+func (t Target) isCouncil() bool {
+	return len(t.Members) >= 2 && strings.TrimSpace(t.Chair) != ""
 }
 
 // Config configures an Engine.
@@ -154,6 +197,35 @@ type Config struct {
 	// Claim atomicity (store CAS) guarantees two runs never process the same
 	// comment, so extra parallel agents are safe.
 	Concurrency int
+
+	// --- Council orchestration (only used when a project's Target isCouncil) ---
+	//
+	// The three callbacks below are the service seams the engine drives a council
+	// run through. All three must be non-nil for a project to actually run as a
+	// council; when any is nil (e.g. tests that don't wire them) even a council
+	// Target falls back to the single-agent spawn, so a partially-wired Config never
+	// crashes.
+
+	// Claim claims exactly ONE open comment for the council run via the store's CAS,
+	// returning the shared claim token and whether this run WON the claim. A false
+	// win means another council-run already holds the comment (or it is no longer
+	// claimable) — the caller SKIPS it, keeping one council-run per comment and
+	// interoperating with the fan-out claim + stale-recovery. Wraps svc.Claim with a
+	// fixed "council" agent id. Nil ⇒ council disabled (single-agent fallback).
+	Claim func(commentID string) (token string, won bool, err error)
+	// OpenComments lists the open (+ stale-claimed) comments for a project right now
+	// — the comments a triggering council pass drives. Wraps the service's
+	// ListOpenComments, filtered to the project. Nil ⇒ council disabled.
+	OpenComments func(project string) ([]CommentRef, error)
+	// Heartbeat re-marks a claimed comment as processing for the whole duration of a
+	// council run (members THEN chair, sequential), so a long run can never exceed
+	// the processing TTL and let the comment go stale mid-run (→ double-council). The
+	// engine calls it once immediately after the claim and then on a ticker
+	// (HeartbeatInterval). Wraps svc.MarkProcessing. Nil ⇒ council disabled.
+	Heartbeat func(commentID, token string) error
+	// HeartbeatInterval is the council heartbeat period. Zero ⇒
+	// DefaultHeartbeatInterval (60s), which is < the 180s TTL.
+	HeartbeatInterval time.Duration
 }
 
 // Engine implements webhook.Notifier. It routes each triggering event to a
@@ -177,6 +249,13 @@ type Engine struct {
 	drainDelay   time.Duration
 	maxDrains    int
 	concurrency  int
+
+	// Council seams (see Config). All three non-nil ⇒ council projects run the
+	// council; any nil ⇒ single-agent fallback everywhere.
+	claim             func(commentID string) (string, bool, error)
+	openComments      func(project string) ([]CommentRef, error)
+	heartbeat         func(commentID, token string) error
+	heartbeatInterval time.Duration
 
 	// ctx is the engine-wide lifecycle context; cancel (via Close) stops in-flight
 	// retry backoff and prevents a retry loop from spanning a shutdown.
@@ -206,13 +285,17 @@ func New(cfg Config) *Engine {
 		retryBackoff: cfg.RetryBackoff,
 		logs:         cfg.Logs,
 		spawn:        cfg.Spawn,
-		pendingCount: cfg.PendingCount,
-		drainDelay:   cfg.DrainDelay,
-		maxDrains:    cfg.MaxDrains,
-		concurrency:  cfg.Concurrency,
-		ctx:          ctx,
-		cancel:       cancel,
-		runners:      make(map[string]*runner),
+		pendingCount:      cfg.PendingCount,
+		drainDelay:        cfg.DrainDelay,
+		maxDrains:         cfg.MaxDrains,
+		concurrency:       cfg.Concurrency,
+		claim:             cfg.Claim,
+		openComments:      cfg.OpenComments,
+		heartbeat:         cfg.Heartbeat,
+		heartbeatInterval: cfg.HeartbeatInterval,
+		ctx:               ctx,
+		cancel:            cancel,
+		runners:           make(map[string]*runner),
 	}
 	if e.resolve == nil {
 		e.resolve = defaultResolve
@@ -250,7 +333,17 @@ func New(cfg Config) *Engine {
 	if e.concurrency < 1 {
 		e.concurrency = 1
 	}
+	if e.heartbeatInterval <= 0 {
+		e.heartbeatInterval = DefaultHeartbeatInterval
+	}
 	return e
+}
+
+// councilEnabled reports whether the engine has the full set of council seams
+// wired. When any is nil, even a council-shaped Target falls back to the
+// single-agent spawn, so a partially-wired Config never crashes.
+func (e *Engine) councilEnabled() bool {
+	return e.claim != nil && e.openComments != nil && e.heartbeat != nil
 }
 
 // Close stops the engine's retry loops: it cancels the engine context so any
@@ -368,6 +461,16 @@ func (e *Engine) runnerFor(project string) *runner {
 	if e.pendingCount != nil {
 		r.pendingCount = func() (int, error) { return e.pendingCount(project) }
 	}
+	// Council mode: a project with >= 2 members + a chair, AND all council seams
+	// wired, runs the council instead of the single-agent spawn. Otherwise the
+	// runner keeps the single-agent path bit-for-bit.
+	if t, ok := e.targets[project]; ok && t.isCouncil() && e.councilEnabled() {
+		r.council = &councilConfig{members: t.Members, chair: strings.TrimSpace(t.Chair)}
+		r.claim = e.claim
+		r.heartbeat = e.heartbeat
+		r.heartbeatInterval = e.heartbeatInterval
+		r.openComments = func() ([]CommentRef, error) { return e.openComments(project) }
+	}
 	e.runners[project] = r
 	return r
 }
@@ -398,10 +501,26 @@ type runner struct {
 	// once per wave. Always >= 1 (floored in New). 1 = single-flight.
 	concurrency int
 
+	// council is non-nil only for a council project with all seams wired; when set
+	// execute drives the council loop instead of the single-agent drain loop. The
+	// seams below are the council orchestration callbacks (bound in runnerFor).
+	council           *councilConfig
+	claim             func(commentID string) (string, bool, error)
+	openComments      func() ([]CommentRef, error)
+	heartbeat         func(commentID, token string) error
+	heartbeatInterval time.Duration
+
 	mu      sync.Mutex
 	timer   *time.Timer
 	running bool
 	pending bool
+}
+
+// councilConfig holds a project's council members and chair (immutable for the
+// runner's lifetime).
+type councilConfig struct {
+	members []string
+	chair   string
 }
 
 // pending work count for this runner's project; 0 when no counter is wired (the
@@ -462,6 +581,21 @@ func (r *runner) execute() {
 	r.running = true
 	r.mu.Unlock()
 
+	// Council projects run the council orchestration; everything else keeps the
+	// single-agent drain loop bit-for-bit. Both honour the identical single-flight
+	// contract: they own the r.running flag until they release it under r.mu.
+	if r.council != nil {
+		r.runCouncilLoop()
+		return
+	}
+	r.runDrainLoop()
+}
+
+// runDrainLoop is the single-agent execute body: the bounded wave + drain loop.
+// It is unchanged from the original execute — extracted verbatim so the council
+// branch can sit alongside it without touching the single-agent path. It owns the
+// r.running flag (set by the caller) and releases it under r.mu at exit.
+func (r *runner) runDrainLoop() {
 	drains := 0
 	for {
 		before := r.remaining()
@@ -499,6 +633,241 @@ func (r *runner) execute() {
 		r.mu.Unlock()
 		return
 	}
+}
+
+// runCouncilLoop drives a council project's execute. It mirrors runDrainLoop's
+// single-flight contract exactly: it runs one council pass, then — under r.mu —
+// either honours a fresh human trigger that arrived during the pass (loop again)
+// or releases r.running. The "check pending, else clear running, all under one
+// lock" is load-bearing: a defer-release would drop a trigger that set pending
+// after an early unlock (lost wakeup). A council pass fully processes every
+// comment it claims (each ends synthesized/replied, leaving the open set), so
+// there is no progress-based drain — one pass clears the current backlog and the
+// pending flag catches anything new.
+func (r *runner) runCouncilLoop() {
+	for {
+		r.councilPass()
+
+		r.mu.Lock()
+		if r.pending {
+			r.pending = false
+			r.mu.Unlock()
+			continue
+		}
+		r.running = false
+		r.mu.Unlock()
+		return
+	}
+}
+
+// councilPass claims and drives a council run for each open comment the project
+// owns right now. It claims each comment ONCE via the store CAS (r.claim): a lost
+// claim (won == false) means another council-run already holds it, so this pass
+// SKIPS it — one council-run per comment, interoperating with the fan-out claim +
+// stale-recovery. Comments are processed sequentially so exactly one council run
+// (with its single heartbeat ticker) is active at a time; member fan-out WITHIN a
+// comment is what the concurrency pool bounds.
+func (r *runner) councilPass() {
+	comments, err := r.openComments()
+	if err != nil {
+		log.Printf("auto-reply: council could not list open comments, skipping pass: %v", err)
+		return
+	}
+	for _, cr := range comments {
+		if r.ctx != nil && r.ctx.Err() != nil {
+			return // engine shutting down — stop claiming new work
+		}
+		token, won, err := r.claim(cr.ID)
+		if err != nil {
+			log.Printf("auto-reply: council claim of %s failed: %v", cr.ID, err)
+			continue
+		}
+		if !won {
+			continue // another council-run holds this comment
+		}
+		r.runCouncilForComment(cr, token)
+	}
+}
+
+// runCouncilForComment runs the full council over one claimed comment: it keeps
+// the comment marked processing for the WHOLE run (heartbeat), fans the members
+// out concurrently (bounded by concurrency) and JOINS them, then spawns the chair.
+// The heartbeat spanning members AND the chair is the double-council guard — a run
+// of N members then a chair, sequential, can exceed the processing TTL, so the
+// engine (not the members) heartbeats on a ticker for the entire duration.
+func (r *runner) runCouncilForComment(cr CommentRef, token string) {
+	commentID := cr.ID
+	stopHeartbeat := r.startHeartbeat(commentID, token)
+	defer stopHeartbeat()
+
+	members := r.council.members
+	n := len(members)
+
+	// Fan the members out concurrently, bounded by the pool size. A semaphore caps
+	// in-flight spawns at concurrency (1 ⇒ serial); the WaitGroup joins ALL members
+	// before the chair runs.
+	limit := r.concurrency
+	if limit < 1 {
+		limit = 1
+	}
+	sem := make(chan struct{}, limit)
+	var wg sync.WaitGroup
+	for i, memberCmd := range members {
+		lens := councilLens(i, n)
+		identity := councilMemberIdentity(i)
+		prompt := councilMemberPrompt(cr, token, identity, lens)
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(cmd, p string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			r.spawnCouncil(cmd, p)
+		}(memberCmd, prompt)
+	}
+	wg.Wait()
+
+	// Chair after the join: it reads the candidates and records the single verdict.
+	r.spawnCouncil(r.council.chair, councilChairPrompt(cr, token, councilChairIdentity))
+}
+
+// startHeartbeat fires one immediate mark_processing (svc.Claim sets claimed_at but
+// NOT ProcessingUntil, so this closes the reclaim window right after the claim),
+// then re-marks on a ticker (heartbeatInterval, < the 180s TTL) for the whole run.
+// It returns a stop func (idempotent) that the caller defers; the ticker goroutine
+// also exits on engine Close (ctxDone), so Close leaves no timer/goroutine leak.
+func (r *runner) startHeartbeat(commentID, token string) func() {
+	if r.heartbeat == nil {
+		return func() {}
+	}
+	// Immediate beat so the comment is marked processing between claim and first tick.
+	if err := r.heartbeat(commentID, token); err != nil {
+		log.Printf("auto-reply: council heartbeat (initial) for %s failed: %v", commentID, err)
+	}
+	interval := r.heartbeatInterval
+	if interval <= 0 {
+		interval = DefaultHeartbeatInterval
+	}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-r.ctxDone():
+				return
+			case <-t.C:
+				if err := r.heartbeat(commentID, token); err != nil {
+					log.Printf("auto-reply: council heartbeat for %s failed: %v", commentID, err)
+				}
+			}
+		}
+	}()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			close(stop)
+			<-done // join the ticker goroutine so Close leaves nothing running
+		})
+	}
+}
+
+// spawnCouncil runs one council agent (a member or the chair) once, under the
+// per-run timeout derived from the engine context. Council spawns are not retried
+// (unlike single-agent runOnce): a member that fails simply contributes no
+// candidate, and the chair synthesises whatever candidates exist. A panic in the
+// spawn is recovered (a misbehaving driver can never crash the server) and a
+// non-zero exit/timeout is logged, never fatal.
+func (r *runner) spawnCouncil(agentCmd, prompt string) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			log.Printf("auto-reply: recovered from panic in council spawn: %v", rec)
+		}
+	}()
+	base := r.ctx
+	if base == nil {
+		base = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(base, r.timeout)
+	defer cancel()
+	if err := r.spawn(ctx, r.dir, agentCmd, prompt); err != nil {
+		log.Printf("auto-reply: council agent run failed: %v", err)
+	}
+}
+
+// councilLenses cycles the six §4 review lenses in a stable order. Member i is
+// assigned councilLenses[i % 6], EXCEPT the last member, which is forced to the
+// skeptic lens so every council always covers the skeptic (see councilLens).
+var councilLenses = []string{
+	domain.LensCorrectness,
+	domain.LensCompleteness,
+	domain.LensAmbiguity,
+	domain.LensRisk,
+	domain.LensSimplicity,
+	domain.LensSkeptic,
+}
+
+// councilLens assigns member i (of n) a lens, cycling councilLenses and forcing
+// the LAST member to the skeptic so the skeptic is always covered. For n <= 6 this
+// yields distinct lenses (e.g. n=3 → correctness, completeness, skeptic).
+func councilLens(i, n int) string {
+	if i == n-1 {
+		return domain.LensSkeptic
+	}
+	return councilLenses[i%len(councilLenses)]
+}
+
+// councilMemberIdentity is the stable per-member agent identity used for
+// submit_review attribution (member-1, member-2, …), distinct per member.
+func councilMemberIdentity(i int) string { return fmt.Sprintf("member-%d", i+1) }
+
+// councilChairIdentity is the chair's stable agent identity for record_synthesis.
+const councilChairIdentity = "chair"
+
+// councilMemberGuidance is the member prompt template. Explicit argument indices
+// (%[n]s) keep the substitution order-independent: [1]=commentId, [2]=lens,
+// [3]=token, [4]=identity, [5]=docId, [6]=excerpt, [7]=thread. The doc id +
+// excerpt + thread are embedded because a freshly-claimed comment is hidden from
+// list_open_comments, so the member can't discover them via MCP.
+const councilMemberGuidance = `You are council member "%[4]s" reviewing outbox comment %[1]s on document %[5]s, through the "%[2]s" lens.
+
+The human flagged this excerpt:
+"""
+%[6]s
+"""
+Their feedback (the thread):
+"""
+%[7]s
+"""
+Do exactly this, in order:
+1. read_doc(docId="%[5]s") — read the full current document for the context around that excerpt.
+2. Judge ONLY through the %[2]s lens. Anti-sycophancy: a comment is not an order — disagree when the evidence warrants.
+3. Record your verdict with ONE call:
+   submit_review(commentId="%[1]s", token="%[3]s", lens="%[2]s", verdict="edit|reply|reject_comment", rationale="your reasoning", content="the FULL replacement document content — REQUIRED iff verdict=edit, EMPTY otherwise", agentIdentity="%[4]s")
+Do NOT claim, propose_suggestion, reply_in_thread, resolve, accept, or approve — the chair synthesises and the human decides. Submit exactly one review, then stop.`
+
+// councilChairGuidance is the chair prompt template. [1]=commentId, [2]=token,
+// [3]=identity, [4]=docId.
+const councilChairGuidance = `You are the council chair (identity "%[3]s") for outbox comment %[1]s on document %[4]s.
+Do exactly this, in order:
+1. list_candidates(commentId="%[1]s") — read every member's verdict, rationale, and proposed content for this comment. (Optionally read_doc(docId="%[4]s") for the surrounding text.)
+2. Synthesise: weigh agreement against dissent, name where the members AGREE and where they DIVERGE, and decide the single best outcome. Anti-sycophancy: the majority is not automatically right.
+3. Record the verdict with ONE call:
+   record_synthesis(commentId="%[1]s", token="%[2]s", content="the synthesised FULL replacement content — set iff the verdict is an edit, EMPTY for a no-edit (reply/reject) outcome", dissent="the strongest dissenting view, or empty", agreementScore=<0..1>, confidence=<0..100>, agentIdentity="%[3]s")
+record_synthesis is single-shot: it emits the human-facing suggestion (edit) or a chair reply (no edit). Do NOT resolve, accept, or approve. Record exactly one synthesis, then stop.`
+
+// councilMemberPrompt builds member i's prompt for one comment/run, embedding the
+// doc id + flagged excerpt + thread so the member has full context without MCP.
+func councilMemberPrompt(cr CommentRef, token, identity, lens string) string {
+	return fmt.Sprintf(councilMemberGuidance, cr.ID, lens, token, identity, cr.DocID, cr.Excerpt, cr.Thread)
+}
+
+// councilChairPrompt builds the chair's prompt for one comment/run.
+func councilChairPrompt(cr CommentRef, token, identity string) string {
+	return fmt.Sprintf(councilChairGuidance, cr.ID, token, identity, cr.DocID)
 }
 
 // waveSize is how many agent runs to launch in one wave. It is bounded by the
