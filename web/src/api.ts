@@ -108,7 +108,10 @@ export async function getThread(commentId: string): Promise<ThreadMessage[]> {
 }
 export async function reply(commentId: string, body: string): Promise<unknown> {
   const r = await fetch(`/api/comments/${commentId}/reply`, { method: "POST", body: JSON.stringify({ body }) });
-  return r.ok ? r.json().catch(() => null) : null;
+  // Throw on non-OK so callers never mistake a 404/500 for success — which would
+  // silently drop the user's reply / refine feedback. (r.ok + empty body is fine.)
+  if (!r.ok) throw new Error(`reply failed (HTTP ${r.status})`);
+  return r.json().catch(() => null);
 }
 export async function resolve(commentId: string): Promise<unknown> {
   const r = await fetch(`/api/comments/${commentId}/resolve`, { method: "POST" });

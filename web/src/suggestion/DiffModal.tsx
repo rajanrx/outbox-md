@@ -42,6 +42,7 @@ export function DiffModal({ open, commentId, currentContent, title, onClose, onC
   const [drafts, setDrafts] = useState<LineDraft[]>([]);
   const [editing, setEditing] = useState<{ key: string; id?: string; value: string } | null>(null);
   const [sent, setSent] = useState(false);
+  const [refineError, setRefineError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -130,12 +131,17 @@ export function DiffModal({ open, commentId, currentContent, title, onClose, onC
   const onRefine = async () => {
     if (!canRefine(drafts)) return;
     setBusy(true);
+    setRefineError(null);
     try {
       await reply(commentId, formatRefineMessage(drafts));
       setDrafts([]);
       setEditing(null);
       setSent(true);
       onChange();
+    } catch {
+      // The reply POST failed — keep the drafts so the user's inline feedback is
+      // never silently dropped. Surface it; they can retry.
+      setRefineError("Couldn't send — your notes are kept. Try again.");
     } finally {
       setBusy(false);
     }
@@ -237,6 +243,7 @@ export function DiffModal({ open, commentId, currentContent, title, onClose, onC
                 >
                   Refine ({drafts.length})
                 </button>
+                {refineError && <span className="refine-error" role="alert">{refineError}</span>}
                 <button disabled={busy} onClick={() => act(() => rejectSuggestion(commentId))}>
                   Reject
                 </button>
