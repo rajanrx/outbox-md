@@ -106,7 +106,7 @@ Examples:
 	"retry": `outbox retry — re-queue stranded (claimed-but-unfinished) comments back to open.
 
 Usage:
-  outbox retry [project]
+  outbox retry [-dir <folder>] [project]
 
 Resets every 'claimed' comment back to 'open' (clearing its claim), so it
 re-enters the agent work set. A running server picks the re-queued comments up on
@@ -114,12 +114,16 @@ its next trigger or startup sweep; a stopped server processes them on next boot.
 It operates on the review database directly, so it works whether or not the
 server is running.
 
-  (no arg)      re-queue ALL registered projects (single-folder mode: the served dir)
-  <project>     re-queue only that registered project (multi-project mode)
+  (no arg)        re-queue ALL registered projects (single-folder mode: the served dir)
+  <project>       re-queue only that registered project (multi-project mode)
+  -dir <folder>   single-folder mode: locate the DB under this served dir, matching
+                  serve/up (flag > OUTBOX_DIR > "."; default "."). Needed when the
+                  server was started with 'outbox up -dir <folder>'.
 
 Examples:
   outbox retry                        # re-queue every project's stranded comments
   outbox retry app                    # re-queue only the project named "app"
+  outbox retry -dir docs              # single-folder DB started with 'outbox up -dir docs'
 `,
 	"list": `outbox list — list registered projects (alias: outbox projects).
 
