@@ -1,6 +1,7 @@
 package service
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/rajanrx/outbox-md/internal/domain"
@@ -307,5 +308,59 @@ func TestCouncilEditRejectedWhenStale(t *testing.T) {
 	}
 	if _, ok, _ := s2.GetSuggestionByComment(c2.ID); ok {
 		t.Fatal("stale RecordSynthesis stored a suggestion")
+	}
+}
+
+// TestRecordSynthesisNoEditRepliesAndUnclaims: a no-edit council verdict (empty
+// content) must not strand the comment in 'claimed'. It posts a chair reply and
+// moves the comment to 'replied' (out of the stale-claim recovery loop), records
+// the synthesis, and emits NO suggestion.
+func TestRecordSynthesisNoEditRepliesAndUnclaims(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _, _ string) error { return nil })
+	c, tok := claimedComment(t, s, svc)
+	if _, err := svc.SubmitReview(c.ID, tok, domain.LensCorrectness, domain.VerdictReply, "no change needed", "", "m1"); err != nil {
+		t.Fatal(err)
+	}
+	syn, err := svc.RecordSynthesis(c.ID, tok, "skeptic dissented", "", "chair", 0.6, 70)
+	if err != nil {
+		t.Fatalf("no-edit synthesis: %v", err)
+	}
+	if syn.SuggestionID != "" {
+		t.Fatalf("no-edit synthesis should emit no suggestion, got %q", syn.SuggestionID)
+	}
+	got, _ := s.GetComment(c.ID)
+	if got.Status != domain.CommentReplied {
+		t.Fatalf("status = %q, want replied (out of claimed, so stale recovery can't re-loop)", got.Status)
+	}
+	th, _ := s.ListThread(c.ID)
+	if len(th) == 0 || th[len(th)-1].AuthorIdentity != "chair" || !strings.Contains(th[len(th)-1].Body, "no edit") {
+		t.Fatalf("expected a chair 'no edit' reply as the last thread message, got %+v", th)
+	}
+	if _, ok, _ := s.GetSuggestionByComment(c.ID); ok {
+		t.Fatal("no-edit synthesis stored a suggestion")
+	}
+}
+
+// TestRecordSynthesisIsSingleShot: a second RecordSynthesis on an already-
+// synthesized set is rejected — even with a still-valid token — so one comment
+// never gets two syntheses / two proposed suggestions.
+func TestRecordSynthesisIsSingleShot(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _, _ string) error { return nil })
+	c, tok := claimedComment(t, s, svc)
+	if _, err := svc.SubmitReview(c.ID, tok, domain.LensCorrectness, domain.VerdictEdit, "fix", "Hello there", "m1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.RecordSynthesis(c.ID, tok, "", "Hello there", "chair", 0.9, 90); err != nil {
+		t.Fatalf("first synthesis: %v", err)
+	}
+	if _, err := svc.RecordSynthesis(c.ID, tok, "", "Hello again", "chair", 0.9, 90); err == nil {
+		t.Fatal("second synthesis on a synthesized set should be rejected")
+	}
+	if sg, ok, _ := s.GetSuggestionByComment(c.ID); !ok || sg.ProposedContent != "Hello there" {
+		t.Fatalf("suggestion = %+v ok=%v, want exactly the first", sg, ok)
 	}
 }

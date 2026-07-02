@@ -494,13 +494,42 @@ func (s *Service) RecordSynthesis(commentID, token, dissent, content, createdBy 
 	if err != nil {
 		return domain.Synthesis{}, err
 	}
+	// Single-shot: a set is synthesized at most once. A retry / duplicate chair
+	// call with the still-valid claim token would otherwise emit a SECOND
+	// suggestion and a SECOND synthesis. Reject once the set has left 'gathering'.
+	if set.State != domain.CandidateSetGathering {
+		return domain.Synthesis{}, errors.New("candidate set already synthesized or decided")
+	}
 	suggestionID := ""
 	if content != "" {
+		// Edit verdict → an accept-eligible suggestion (emitSuggestion runs the
+		// stale guard and marks the comment addressed). It is called before the
+		// state flip below, so a stale edit rejects with nothing persisted.
 		sg, err := s.emitSuggestion(c, content, createdBy)
 		if err != nil {
 			return domain.Synthesis{}, err
 		}
 		suggestionID = sg.ID
+	} else {
+		// No-edit verdict (reply/reject/no-consensus): the council concluded
+		// WITHOUT a change. Post the verdict as a chair reply and move the comment
+		// out of 'claimed' (→ replied) so the human sees a terminal outcome and
+		// stale-claim recovery can't re-loop it. comment.updated (not .replied) so
+		// the runner is never re-triggered by the council's own reply.
+		body := fmt.Sprintf("Council verdict: no edit (agreement %.0f%%, confidence %d%%).", agreementScore*100, confidence)
+		if dissent != "" {
+			body += " Dissent: " + dissent
+		}
+		if _, err := s.store.AddThreadMessage(domain.ThreadMessage{
+			CommentID: commentID, AuthorIdentity: createdBy, Body: body,
+		}); err != nil {
+			return domain.Synthesis{}, err
+		}
+		if err := s.store.UpdateCommentStatus(commentID, domain.CommentReplied, c.ClaimToken); err != nil {
+			return domain.Synthesis{}, err
+		}
+		_ = s.store.SetProcessingUntil(commentID, nil)
+		s.fireCommentEvent(webhook.EventCommentUpdated, c)
 	}
 	syn, err := s.store.RecordSynthesis(domain.Synthesis{
 		CandidateSetID: set.ID, AgreementScore: agreementScore, Confidence: confidence,
