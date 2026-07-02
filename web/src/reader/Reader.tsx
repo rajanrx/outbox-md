@@ -1,11 +1,5 @@
 import { useEffect } from "react";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import rehypeHighlight from "rehype-highlight";
-import "highlight.js/styles/github.css";
-import { rehypeSourcePos } from "./rehypeSourcePos";
-import { rehypeHeadingIds } from "./rehypeHeadingIds";
-import { MermaidBlock } from "./mermaid";
+import { MarkdownView } from "./MarkdownView";
 import "./reader.css";
 
 export function Reader({ content, rootRef }: {
@@ -43,20 +37,7 @@ export function Reader({ content, rootRef }: {
 
   return (
     <div ref={rootRef} className="reader markdown-body" onClick={onClick}>
-      <Markdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeSourcePos, rehypeHeadingIds, rehypeHighlight]}
-        components={{
-          code(props: any) {
-            const cls: string = props.className || "";
-            const text = String(props.children ?? "");
-            if (cls.includes("language-mermaid")) return <MermaidBlock chart={text} />;
-            return <code className={cls}>{props.children}</code>;
-          },
-        }}
-      >
-        {content}
-      </Markdown>
+      <MarkdownView content={content} />
     </div>
   );
 }
