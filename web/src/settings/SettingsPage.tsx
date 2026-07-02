@@ -407,6 +407,18 @@ function OutboxYamlSections({
     return () => { live = false; };
   }, [proj]);
 
+  // Resync the selected project when the project list changes (add/remove via
+  // CRUD). If the current selection was removed, fall back to initialProject or
+  // the first remaining project — so the sections never query a deleted project,
+  // and the selector-hidden single-project case still targets a valid one.
+  useEffect(() => {
+    setProj((cur) => {
+      const names = projects.map((p) => p.name);
+      if (names.includes(cur)) return cur;
+      return names.includes(initialProject) ? initialProject : (names[0] ?? "");
+    });
+  }, [projects, initialProject]);
+
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) => {
     setValues((prev) => (prev ? { ...prev, [k]: v } : prev));
     setCouncil((s) => (s.saved || s.error ? idleSave : s));
@@ -422,7 +434,16 @@ function OutboxYamlSections({
       const patch: Partial<Settings> = {};
       for (const k of keys) (patch as Record<string, unknown>)[k] = values[k];
       const next = await putSettings(patch, proj);
-      setValues(next);
+      // Merge back ONLY the keys we just saved. putSettings returns the FULL
+      // settings, so a blind setValues(next) would overwrite unsaved edits in the
+      // OTHER section with the server's stale copy of those keys (e.g. saving
+      // Automation would silently discard an unsaved council_rounds edit).
+      setValues((prev) => {
+        if (!prev) return next;
+        const merged = { ...prev } as Record<string, unknown>;
+        for (const k of keys) merged[k as string] = (next as Record<string, unknown>)[k as string];
+        return merged as Settings;
+      });
       setState({ busy: false, saved: true, error: null });
     } catch (e) {
       setState({ busy: false, saved: false, error: e instanceof Error ? e.message : "save failed" });

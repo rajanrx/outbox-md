@@ -109,6 +109,44 @@ describe("SettingsPage", () => {
     expect(queryByText("+ Add project")).toBeNull();
   });
 
+  it("preserves an unsaved Council edit when saving the Automation section (P2)", async () => {
+    const { getByText, container } = render(
+      <SettingsPage projects={multi} initialProject="repo" version="dev" onBack={noop} onProjectsChanged={noop} />,
+    );
+    await waitFor(() => expect(container.querySelector('input[type="number"]')).not.toBeNull());
+    // Edit council_rounds (first number input in the Council section) but do NOT save it.
+    const council = getByText("Council").closest("section") as HTMLElement;
+    const rounds = within(council).getAllByRole("spinbutton")[0] as HTMLInputElement;
+    fireEvent.change(rounds, { target: { value: "7" } });
+    expect(rounds.value).toBe("7");
+    // Save the OTHER section. Its putSettings response carries the OLD council_rounds;
+    // the unsaved edit must survive (only the saved keys merge back).
+    const automation = getByText("Automation").closest("section") as HTMLElement;
+    fireEvent.click(within(automation).getByText("Save"));
+    await waitFor(() => expect(api.putSettings).toHaveBeenCalled());
+    await waitFor(() =>
+      expect((within(council).getAllByRole("spinbutton")[0] as HTMLInputElement).value).toBe("7"),
+    );
+  });
+
+  it("resyncs the selected project when the current one is removed (P2)", async () => {
+    const two: Project[] = [
+      { name: "repoA", root: "/a", docs: ["."], members: [], chair: null },
+      { name: "repoB", root: "/b", docs: ["."], members: [], chair: null },
+    ];
+    const { rerender } = render(
+      <SettingsPage projects={two} initialProject="repoA" version="dev" onBack={noop} onProjectsChanged={noop} />,
+    );
+    await waitFor(() => expect(api.getSettings).toHaveBeenCalledWith("repoA"));
+    (api.getSettings as ReturnType<typeof vi.fn>).mockClear();
+    // repoA removed via CRUD → only repoB remains. proj must resync to a valid
+    // project instead of keeping /api/settings?project=repoA (the deleted one).
+    rerender(
+      <SettingsPage projects={[two[1]]} initialProject="repoA" version="dev" onBack={noop} onProjectsChanged={noop} />,
+    );
+    await waitFor(() => expect(api.getSettings).toHaveBeenCalledWith("repoB"));
+  });
+
   it("blocks save with a chair-required error for 2+ members", async () => {
     const twoMembers: Project[] = [
       { name: "repo", root: "/repo", docs: ["docs"], members: [{ agent: "claude" }, { agent: "codex" }], chair: null },
