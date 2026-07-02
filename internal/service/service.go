@@ -258,6 +258,29 @@ func (s *Service) PendingCommentCount(project string) (int, error) {
 	return n, nil
 }
 
+// OpenCommentsForProject returns the open (+ recovered stale-claimed) comments
+// belonging to a project right now — the set a council pass drives. It mirrors
+// PendingCommentCount's project filter (comment → its document → doc.Project) but
+// returns the comments themselves. The staleness/now semantics match
+// ListOpenComments, so a comment surfaced here is one an agent may claim.
+func (s *Service) OpenCommentsForProject(project string) ([]domain.Comment, error) {
+	comments, err := s.store.ListOpenComments(time.Now().UTC())
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.Comment, 0, len(comments))
+	for _, c := range comments {
+		doc, err := s.store.GetDocument(c.DocID)
+		if err != nil {
+			continue
+		}
+		if doc.Project == project {
+			out = append(out, c)
+		}
+	}
+	return out, nil
+}
+
 // Claim atomically claims a batch of comments for one agent run and returns the
 // shared claim token PLUS the subset of ids actually WON. With a bounded pool of
 // N agents per project (fan-out), two agents can race to claim the same comment;

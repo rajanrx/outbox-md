@@ -526,7 +526,15 @@ func autoReplyNotifier(root string, projects []registry.Project, cfg config.Conf
 	// whose root is the served dir — preserving the original single-cwd behaviour.
 	targets := make(map[string]autoreply.Target, len(projects))
 	for _, p := range projects {
-		targets[p.Name] = autoreply.Target{Root: p.Root, AgentCmd: p.AgentCmd()}
+		// Members + Chair drive council mode (>= 2 members + a chair); AgentCmd is the
+		// single-agent fallback (the lone member, or the global default). A council
+		// Target only actually runs the council when the seams below are wired too.
+		targets[p.Name] = autoreply.Target{
+			Root:     p.Root,
+			AgentCmd: p.AgentCmd(),
+			Members:  p.Members(),
+			Chair:    p.Chair,
+		}
 	}
 	return autoreply.New(autoreply.Config{
 		Enabled:  true,
@@ -549,8 +557,45 @@ func autoReplyNotifier(root string, projects []registry.Project, cfg config.Conf
 		// is impossible here (main always builds one), but the engine also tolerates
 		// a nil counter by disabling the drain.
 		PendingCount: func(project string) (int, error) { return svc.PendingCommentCount(project) },
+		// Council orchestration seams. All three wired ⇒ a project with >= 2 members
+		// and a chair runs the council (engine claims each open comment, fans the
+		// lensed members out, heartbeats for the whole run, then the chair synthesises).
+		// Single-agent projects ignore these entirely.
+		//
+		// Claim claims ONE comment via the store CAS under a fixed "council" agent id,
+		// returning the shared token and whether this run won it (won ⇒ len == 1).
+		Claim: func(commentID string) (string, bool, error) {
+			token, won, err := svc.Claim([]string{commentID}, councilAgentID)
+			if err != nil {
+				return "", false, err
+			}
+			return token, len(won) == 1, nil
+		},
+		// OpenComments lists the project's open (+ stale-claimed) comments as refs.
+		OpenComments: func(project string) ([]autoreply.CommentRef, error) {
+			comments, err := svc.OpenCommentsForProject(project)
+			if err != nil {
+				return nil, err
+			}
+			refs := make([]autoreply.CommentRef, 0, len(comments))
+			for _, c := range comments {
+				refs = append(refs, autoreply.CommentRef{ID: c.ID})
+			}
+			return refs, nil
+		},
+		// Heartbeat re-marks the claimed comment as processing (default TTL) for the
+		// whole council run so it never goes stale mid-run (→ double-council).
+		Heartbeat: func(commentID, token string) error {
+			_, err := svc.MarkProcessing(commentID, token, 0)
+			return err
+		},
 	})
 }
+
+// councilAgentID is the fixed agent identity the engine claims council comments
+// under (one council-run per comment; distinct member/chair identities travel in
+// the prompts, not the claim).
+const councilAgentID = "council"
 
 // browseURL turns a listen address (e.g. ":8181" or "localhost:9090") into a
 // loopback URL for the browser and the MCP endpoint.
