@@ -415,14 +415,14 @@ func validateDocs(absRoot string, docs []string) ([]string, error) {
 			d = "."
 		}
 		d = filepath.Clean(d)
-		// filepath.IsLocal rejects an absolute path, an empty path, and any ".."
-		// traversal that would escape the root — lexically, BEFORE any os.Stat. It is
-		// the stdlib path-containment sanitizer that CodeQL's go/path-injection query
-		// recognises, so the os.Stat below can only ever touch a path INSIDE absRoot
-		// (filepath.Clean keeps a leading "..", so a bare IsAbs check would let
-		// "../escape" through to a stat outside root). The resolved-symlink
-		// containment check further down is the deeper, symlink-aware guard.
-		if !filepath.IsLocal(d) {
+		// Reject an absolute path or ANY ".." before os.Stat, so the stat can only
+		// touch a path inside absRoot. strings.Contains(d, "..") is the containsDotDot
+		// barrier CodeQL's go/path-injection query models as a sanitizer (filepath.
+		// Clean keeps a leading "..", so a bare IsAbs check would let "../escape"
+		// through to a stat outside root; IsLocal is correct but CodeQL doesn't model
+		// it). The resolved-symlink containment check further down is the deeper,
+		// symlink-aware guard.
+		if filepath.IsAbs(d) || strings.Contains(d, "..") {
 			return nil, fmt.Errorf("%w: %q must be a relative path inside the project root", ErrBadDocs, d)
 		}
 		specDir := filepath.Join(absRoot, d)
