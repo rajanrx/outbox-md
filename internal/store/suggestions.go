@@ -22,7 +22,7 @@ func (s *Store) GetSuggestionByComment(commentID string) (domain.Suggestion, boo
 	var sg domain.Suggestion
 	err := s.DB.QueryRow(
 		`SELECT id, comment_id, against_version_id, proposed_content, state, created_by
-		 FROM suggestions WHERE comment_id=? ORDER BY created_at DESC LIMIT 1`, commentID).
+		 FROM suggestions WHERE comment_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1`, commentID).
 		Scan(&sg.ID, &sg.CommentID, &sg.AgainstVersionID, &sg.ProposedContent, &sg.State, &sg.CreatedBy)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Suggestion{}, false, nil
@@ -79,7 +79,7 @@ func (s *Store) ListPendingSuggestions() ([]PendingSuggestion, error) {
 		  AND s.id = (
 			SELECT id FROM suggestions s2
 			WHERE s2.comment_id = s.comment_id
-			ORDER BY created_at DESC LIMIT 1
+			ORDER BY created_at DESC, rowid DESC LIMIT 1
 		  )
 		ORDER BY d.path`, domain.SuggestionProposed, domain.CommentResolved, domain.CommentDetached)
 	if err != nil {
