@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -280,14 +281,18 @@ func Add(file, root string, docs []string, agentCmd string) (Project, error) {
 	return p, nil
 }
 
-// equalDocs reports whether two cleaned docs lists are identical (same entries in
-// the same order) — the idempotency key alongside root.
+// equalDocs reports whether two cleaned docs lists are the same SET — order does
+// not matter, so `add root a b` then `add root b a` is idempotent, not a dup.
 func equalDocs(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	for i := range a {
-		if a[i] != b[i] {
+	as := append([]string(nil), a...)
+	bs := append([]string(nil), b...)
+	sort.Strings(as)
+	sort.Strings(bs)
+	for i := range as {
+		if as[i] != bs[i] {
 			return false
 		}
 	}

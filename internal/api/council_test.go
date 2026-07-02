@@ -21,7 +21,7 @@ func seedCandidate(t *testing.T, s *store.Store, svc *service.Service) (string, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	tok, err := svc.Claim([]string{c.ID}, "runner")
+	tok, _, err := svc.Claim([]string{c.ID}, "runner")
 	if err != nil {
 		t.Fatal(err)
 	}

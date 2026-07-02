@@ -421,7 +421,8 @@ func buildServer(root string, projects []registry.Project, autoReplyFlag, logs b
 		engine = e
 		sinks = append(sinks, e)
 		log.Printf("auto-reply: on (default agent: %s; per-project roots + agents from the registry; "+
-			"retries=%d timeout=%s logs=%t)", cfg.AgentCmd, cfg.Agent.ResolveRetries(), cfg.Agent.ResolveTimeout(), logs)
+			"retries=%d timeout=%s concurrency=%d logs=%t)", cfg.AgentCmd, cfg.Agent.ResolveRetries(),
+			cfg.Agent.ResolveTimeout(), cfg.Agent.ResolveConcurrency(), logs)
 	}
 	svc.SetWebhook(webhook.Fanout(sinks...))
 	// Per-project runtime sources: each served project → its OWN loaded config, so
@@ -537,6 +538,9 @@ func autoReplyNotifier(root string, projects []registry.Project, cfg config.Conf
 		// explicit agent.retries: 0 is honoured as no-retry.
 		Retries: cfg.Agent.ResolveRetries(),
 		Timeout: cfg.Agent.ResolveTimeout(),
+		// Fan-out: run up to N agent processes at once per project (default 4).
+		// Claim atomicity (store CAS) keeps two agents off the same comment.
+		Concurrency: cfg.Agent.ResolveConcurrency(),
 		// Gate the agent's output/thinking stream on the -logs flag (default on).
 		Logs: logs,
 		// Drain a partly-cleared burst: after each run the engine re-checks how

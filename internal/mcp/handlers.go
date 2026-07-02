@@ -96,10 +96,15 @@ func (h *Handlers) served(commentID string) bool {
 	return h.Svc.ProjectServes(doc.Project, doc.Path)
 }
 
-func (h *Handlers) ClaimComment(ids []string, agent string) (string, error) {
+// ClaimComment claims the requested comments and returns the shared claim token
+// PLUS the subset actually WON. Under fan-out (N concurrent agents per project)
+// two agents can request the same id; the claim is a per-id compare-and-swap, so
+// at most one wins and the loser simply sees that id absent from the returned
+// set. The agent must process ONLY the won ids and move on from the rest.
+func (h *Handlers) ClaimComment(ids []string, agent string) (string, []string, error) {
 	for _, id := range ids {
 		if !h.served(id) {
-			return "", fmt.Errorf("comment %s not found", id)
+			return "", nil, fmt.Errorf("comment %s not found", id)
 		}
 	}
 	return h.Svc.Claim(ids, agent)

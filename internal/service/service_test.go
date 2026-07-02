@@ -73,9 +73,9 @@ func TestConcurrentAcceptsSerialize(t *testing.T) {
 	doc, _, _ := s.CreateDocument("spec.md", "base", "human")
 	c1, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 4}, "human")
 	c2, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 4}, "human")
-	t1, _ := svc.Claim([]string{c1.ID}, "agent")
+	t1, _, _ := svc.Claim([]string{c1.ID}, "agent")
 	_, _ = svc.Propose(c1.ID, t1, "AAA", "agent") // both against the base version
-	t2, _ := svc.Claim([]string{c2.ID}, "agent")
+	t2, _, _ := svc.Claim([]string{c2.ID}, "agent")
 	_, _ = svc.Propose(c2.ID, t2, "BBB", "agent")
 
 	var wg sync.WaitGroup
@@ -114,7 +114,7 @@ func TestAcceptRewritesFileAndReanchors(t *testing.T) {
 	cWorld, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 6, End: 11}, "human") // "world"
 	cHello, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")  // "Hello"
 
-	tok, _ := svc.Claim([]string{cHello.ID}, "agent")
+	tok, _, _ := svc.Claim([]string{cHello.ID}, "agent")
 	if _, err := svc.Propose(cHello.ID, tok, "Say Hello world", "agent"); err != nil {
 		t.Fatal(err)
 	}
@@ -151,9 +151,9 @@ func TestAcceptRejectsStaleSuggestion(t *testing.T) {
 
 	c1, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
 	c2, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 6, End: 11}, "human")
-	t1, _ := svc.Claim([]string{c1.ID}, "agent")
+	t1, _, _ := svc.Claim([]string{c1.ID}, "agent")
 	_, _ = svc.Propose(c1.ID, t1, "AAA", "agent") // against v1
-	t2, _ := svc.Claim([]string{c2.ID}, "agent")
+	t2, _, _ := svc.Claim([]string{c2.ID}, "agent")
 	_, _ = svc.Propose(c2.ID, t2, "BBB", "agent") // against v1
 
 	if _, err := svc.Accept(c1.ID); err != nil {
@@ -192,7 +192,7 @@ func TestDuplicateAcceptSameCommentStaysConsistent(t *testing.T) {
 	svc := New(s, func(_, _, _ string) error { return nil })
 	doc, _, _ := s.CreateDocument("spec.md", "base", "human")
 	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 4}, "human")
-	tok, _ := svc.Claim([]string{c.ID}, "agent")
+	tok, _, _ := svc.Claim([]string{c.ID}, "agent")
 	_, _ = svc.Propose(c.ID, tok, "AAA", "agent")
 
 	var wg sync.WaitGroup
@@ -223,7 +223,7 @@ func TestAcceptRejectsRepeatedAccept(t *testing.T) {
 	svc := New(s, func(_, _, _ string) error { return nil })
 	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
 	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
-	tok, _ := svc.Claim([]string{c.ID}, "agent")
+	tok, _, _ := svc.Claim([]string{c.ID}, "agent")
 	_, _ = svc.Propose(c.ID, tok, "Howdy world", "agent")
 	if _, err := svc.Accept(c.ID); err != nil {
 		t.Fatal(err)
@@ -245,7 +245,7 @@ func TestAcceptFailedWriteDoesNotAdvanceDB(t *testing.T) {
 	svc := New(s, func(_, _, _ string) error { return errors.New("disk full") })
 	doc, v1, _ := s.CreateDocument("spec.md", "Hello world", "human")
 	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
-	tok, _ := svc.Claim([]string{c.ID}, "agent")
+	tok, _, _ := svc.Claim([]string{c.ID}, "agent")
 	_, _ = svc.Propose(c.ID, tok, "Howdy world", "agent")
 	if _, err := svc.Accept(c.ID); err == nil {
 		t.Fatal("expected write error")
@@ -275,7 +275,7 @@ func TestMarkProcessingRequiresToken(t *testing.T) {
 	svc := New(s, func(_, _, _ string) error { return nil })
 	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
 	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
-	tok, _ := svc.Claim([]string{c.ID}, "agent")
+	tok, _, _ := svc.Claim([]string{c.ID}, "agent")
 
 	if _, err := svc.MarkProcessing(c.ID, "wrong-token", 0); err == nil {
 		t.Fatal("expected error for invalid claim token")
@@ -293,7 +293,7 @@ func TestMarkProcessingSetsFutureDeadline(t *testing.T) {
 	svc := New(s, func(_, _, _ string) error { return nil })
 	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
 	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
-	tok, _ := svc.Claim([]string{c.ID}, "agent")
+	tok, _, _ := svc.Claim([]string{c.ID}, "agent")
 
 	before := time.Now()
 	until, err := svc.MarkProcessing(c.ID, tok, 0) // ttl<=0 → default
@@ -323,7 +323,7 @@ func TestMarkProcessingHeartbeatExtends(t *testing.T) {
 	svc := New(s, func(_, _, _ string) error { return nil })
 	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
 	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
-	tok, _ := svc.Claim([]string{c.ID}, "agent")
+	tok, _, _ := svc.Claim([]string{c.ID}, "agent")
 
 	first, _ := svc.MarkProcessing(c.ID, tok, 30*time.Second)
 	second, _ := svc.MarkProcessing(c.ID, tok, 120*time.Second)
@@ -402,7 +402,7 @@ func TestReplyAndProposeClearProcessing(t *testing.T) {
 
 	// Reply clears it.
 	cReply, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
-	tokReply, _ := svc.Claim([]string{cReply.ID}, "agent")
+	tokReply, _, _ := svc.Claim([]string{cReply.ID}, "agent")
 	if _, err := svc.MarkProcessing(cReply.ID, tokReply, 0); err != nil {
 		t.Fatal(err)
 	}
@@ -415,7 +415,7 @@ func TestReplyAndProposeClearProcessing(t *testing.T) {
 
 	// Propose clears it.
 	cProp, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 6, End: 11}, "human")
-	tokProp, _ := svc.Claim([]string{cProp.ID}, "agent")
+	tokProp, _, _ := svc.Claim([]string{cProp.ID}, "agent")
 	if _, err := svc.MarkProcessing(cProp.ID, tokProp, 0); err != nil {
 		t.Fatal(err)
 	}
@@ -462,7 +462,7 @@ func TestRejectSuggestionReopens(t *testing.T) {
 	svc := New(s, func(_, _, _ string) error { return nil })
 	doc, _, _ := s.CreateDocument("spec.md", "Hello world", "human")
 	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
-	tok, _ := svc.Claim([]string{c.ID}, "agent")
+	tok, _, _ := svc.Claim([]string{c.ID}, "agent")
 	_, _ = svc.Propose(c.ID, tok, "Howdy world", "agent")
 	if err := svc.RejectSuggestion(c.ID); err != nil {
 		t.Fatal(err)
@@ -529,7 +529,7 @@ func TestAcceptOnApprovedDocAccumulatesAmendmentWithoutWritingDisk(t *testing.T)
 	}
 
 	// Agent proposes a change; accepting it must NOT write disk or move the baseline.
-	tok, _ := svc.Claim([]string{c.ID}, "agent")
+	tok, _, _ := svc.Claim([]string{c.ID}, "agent")
 	if _, err := svc.Propose(c.ID, tok, "amended baseline", "agent"); err != nil {
 		t.Fatal(err)
 	}
@@ -569,7 +569,7 @@ func proposeAgainstCurrent(t *testing.T, svc *Service, docID, content string) st
 	if err != nil {
 		t.Fatal(err)
 	}
-	tok, err := svc.Claim([]string{c.ID}, "agent")
+	tok, _, err := svc.Claim([]string{c.ID}, "agent")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -821,13 +821,13 @@ func TestClaimRejectsOverBatchSize(t *testing.T) {
 	c2, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 1, End: 2}, "human")
 	c3, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 2, End: 3}, "human")
 
-	if _, err := svc.Claim([]string{c1.ID, c2.ID, c3.ID}, "agent"); err == nil {
+	if _, _, err := svc.Claim([]string{c1.ID, c2.ID, c3.ID}, "agent"); err == nil {
 		t.Fatal("claiming 3 with batch_size 2 should be rejected")
 	}
 	if got, _ := s.GetComment(c1.ID); got.Status != domain.CommentOpen {
 		t.Errorf("c1 status = %s, want open (over-batch claim must claim nothing)", got.Status)
 	}
-	if _, err := svc.Claim([]string{c1.ID, c2.ID}, "agent"); err != nil {
+	if _, _, err := svc.Claim([]string{c1.ID, c2.ID}, "agent"); err != nil {
 		t.Fatalf("within-cap claim failed: %v", err)
 	}
 }
@@ -879,7 +879,7 @@ func TestHumanReplyReopensComment(t *testing.T) {
 	c, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 5}, "human")
 
 	// Agent claims and replies → status moves to 'replied' (out of the open queue).
-	tok, _ := svc.Claim([]string{c.ID}, "agent")
+	tok, _, _ := svc.Claim([]string{c.ID}, "agent")
 	if err := svc.Reply(c.ID, tok, "done, see edit", "agent"); err != nil {
 		t.Fatal(err)
 	}
@@ -990,7 +990,7 @@ func TestAgentActionsFireSSEEvents(t *testing.T) {
 	}
 
 	// Agent reply → comment.updated, carrying the comment's identity.
-	tok, _ := svc.Claim([]string{cReply.ID}, "agent")
+	tok, _, _ := svc.Claim([]string{cReply.ID}, "agent")
 	if err := svc.Reply(cReply.ID, tok, "addressed it", "agent"); err != nil {
 		t.Fatal(err)
 	}
@@ -1007,7 +1007,7 @@ func TestAgentActionsFireSSEEvents(t *testing.T) {
 	if e := fn.next(t); e.Event != webhook.EventCommentCreated {
 		t.Fatalf("setup event = %q, want %q", e.Event, webhook.EventCommentCreated)
 	}
-	tok2, _ := svc.Claim([]string{cProp.ID}, "agent")
+	tok2, _, _ := svc.Claim([]string{cProp.ID}, "agent")
 	if _, err := svc.Propose(cProp.ID, tok2, "earth", "agent"); err != nil {
 		t.Fatal(err)
 	}

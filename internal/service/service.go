@@ -258,17 +258,32 @@ func (s *Service) PendingCommentCount(project string) (int, error) {
 	return n, nil
 }
 
-func (s *Service) Claim(commentIDs []string, agent string) (string, error) {
+// Claim atomically claims a batch of comments for one agent run and returns the
+// shared claim token PLUS the subset of ids actually WON. With a bounded pool of
+// N agents per project (fan-out), two agents can race to claim the same comment;
+// each id is claimed via a compare-and-swap (store.ClaimCommentCAS) so at most
+// one wins. An id lost to a concurrent claim — or no longer claimable — is simply
+// omitted from the returned set (a skip, not a fatal error), so the caller
+// processes only what it actually holds and moves on from the rest. A genuine
+// store error aborts the whole claim. The staleness/now semantics match
+// ListOpenComments, so the claimable set equals the set the agent was offered.
+func (s *Service) Claim(commentIDs []string, agent string) (string, []string, error) {
 	if len(commentIDs) > s.cfg.Agent.BatchSize {
-		return "", fmt.Errorf("batch size exceeded: at most %d comments per claim", s.cfg.Agent.BatchSize)
+		return "", nil, fmt.Errorf("batch size exceeded: at most %d comments per claim", s.cfg.Agent.BatchSize)
 	}
 	token := domain.NewID()
+	now := time.Now().UTC()
+	claimed := make([]string, 0, len(commentIDs))
 	for _, id := range commentIDs {
-		if err := s.store.UpdateCommentStatus(id, domain.CommentClaimed, token); err != nil {
-			return "", err
+		won, err := s.store.ClaimCommentCAS(id, token, now, store.StaleClaimGrace)
+		if err != nil {
+			return "", nil, err
+		}
+		if won {
+			claimed = append(claimed, id)
 		}
 	}
-	return token, nil
+	return token, claimed, nil
 }
 
 // MarkProcessing records an ephemeral, self-expiring hint that the claiming
@@ -328,9 +343,46 @@ func (s *Service) requireToken(commentID, token string) (domain.Comment, error) 
 	return c, nil
 }
 
+// checkNotStale returns a clear, versioned error when comment c was read/claimed
+// against a version older than its document's current version — i.e. the doc
+// changed since the agent read it, so any suggestion built now is stale. It is
+// the earliest point to reject (at propose time), so the agent never wastes a
+// proposal on outdated content. A best-effort ordinal lookup enriches the
+// message ("v3→v5"); if a lookup fails the message still names the version ids.
+func (s *Service) checkNotStale(c domain.Comment) error {
+	doc, err := s.store.GetDocument(c.DocID)
+	if err != nil {
+		return err
+	}
+	if c.AgainstVersionID == doc.CurrentVersionID {
+		return nil
+	}
+	from, to := c.AgainstVersionID, doc.CurrentVersionID
+	if v, err := s.store.GetVersion(c.AgainstVersionID); err == nil {
+		from = fmt.Sprintf("v%d", v.Ordinal)
+	}
+	if v, err := s.store.GetVersion(doc.CurrentVersionID); err == nil {
+		to = fmt.Sprintf("v%d", v.Ordinal)
+	}
+	return fmt.Errorf("document changed since you read it (%s→%s); re-read the document and re-propose against its current content", from, to)
+}
+
 func (s *Service) Propose(commentID, token, content, agent string) (domain.Suggestion, error) {
 	c, err := s.requireToken(commentID, token)
 	if err != nil {
+		return domain.Suggestion{}, err
+	}
+	// Pre-post staleness gate: reject the propose if the document has moved on
+	// since the agent read/claimed it. The comment's AgainstVersionID is the
+	// version the agent saw (Accept's rebase keeps sibling comments in lockstep
+	// with the current pointer; a watcher-imported on-disk edit adds a version but
+	// does NOT rebase — the genuine stale case). If it no longer equals the doc's
+	// current version, the agent is proposing against outdated content, which
+	// Accept would later reject anyway. Fail EARLY and loudly so the agent
+	// re-reads and re-proposes against current content — never silently store a
+	// suggestion built on stale text. This matters more under fan-out + live
+	// editing, where the doc can change mid-run.
+	if err := s.checkNotStale(c); err != nil {
 		return domain.Suggestion{}, err
 	}
 	sg, err := s.store.CreateSuggestion(domain.Suggestion{
@@ -499,6 +551,14 @@ func (s *Service) PickCandidate(commentID, candidateID, actor string) (domain.Ca
 	if cand.CandidateSetID != set.ID {
 		return domain.Candidate{}, errors.New("candidate does not belong to this comment")
 	}
+	// Reject a stale EDIT pick BEFORE mutating state, so it can't leave the set
+	// decided-but-suggestionless (emitSuggestion guards too, but that fires after
+	// the MarkCandidateChosen/SetState writes below).
+	if cand.Verdict == domain.VerdictEdit {
+		if err := s.checkNotStale(c); err != nil {
+			return domain.Candidate{}, err
+		}
+	}
 	if err := s.store.MarkCandidateChosen(cand.ID); err != nil {
 		return domain.Candidate{}, err
 	}
@@ -519,6 +579,13 @@ func (s *Service) PickCandidate(commentID, candidateID, actor string) (domain.Ca
 // so the human accepts a council outcome exactly like a single-agent one. It
 // does NOT write disk or accept anything.
 func (s *Service) emitSuggestion(c domain.Comment, content, createdBy string) (domain.Suggestion, error) {
+	// Same stale-version guard as Propose: a council edit must not become an
+	// accept-eligible suggestion built against a version the doc has moved past
+	// (another accept, or a watcher-imported on-disk edit). Without this, council
+	// mode reopens exactly the stale-suggestion hole Propose closes.
+	if err := s.checkNotStale(c); err != nil {
+		return domain.Suggestion{}, err
+	}
 	sg, err := s.store.CreateSuggestion(domain.Suggestion{
 		CommentID: c.ID, AgainstVersionID: c.AgainstVersionID,
 		ProposedContent: content, State: domain.SuggestionProposed, CreatedBy: createdBy,

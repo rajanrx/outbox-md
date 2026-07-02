@@ -21,7 +21,7 @@ func TestHandlersDriveTheLoop(t *testing.T) {
 	if len(open) != 1 {
 		t.Fatalf("open = %d, want 1", len(open))
 	}
-	tok, err := h.ClaimComment([]string{c.ID}, "agent")
+	tok, _, err := h.ClaimComment([]string{c.ID}, "agent")
 	if err != nil || tok == "" {
 		t.Fatalf("claim: tok=%q err=%v", tok, err)
 	}
@@ -108,7 +108,7 @@ func TestMCPSurfaceRespectsSourcesWhitelist(t *testing.T) {
 	}
 
 	// Write handlers refuse the hidden-doc comment too — no discover-then-mutate.
-	if _, err := h.ClaimComment([]string{outC.ID}, "agent"); err == nil {
+	if _, _, err := h.ClaimComment([]string{outC.ID}, "agent"); err == nil {
 		t.Fatal("ClaimComment on hidden-doc comment: want error, got nil")
 	}
 	if err := h.ReplyInThread(outC.ID, "tok", "hi", "agent"); err == nil {
@@ -154,7 +154,7 @@ func TestMCPSurfaceRespectsPerProjectSources(t *testing.T) {
 	if _, err := hh.ReadDoc(inDoc.ID); err != nil {
 		t.Fatalf("ReadDoc on whitelisted doc: unexpected error %v", err)
 	}
-	if _, err := hh.ClaimComment([]string{secretC.ID}, "agent"); err == nil {
+	if _, _, err := hh.ClaimComment([]string{secretC.ID}, "agent"); err == nil {
 		t.Fatal("ClaimComment on narrowed-out doc's comment: want error, got nil")
 	}
 	if _, err := hh.ProposeSuggestion(secretC.ID, "tok", "x", "agent"); err == nil {
@@ -198,7 +198,7 @@ func TestMCPSurfaceGatesOnDocsUnionWithEmptySources(t *testing.T) {
 	if _, err := hh.ReadDoc(inDoc.ID); err != nil {
 		t.Fatalf("ReadDoc on in-docs doc: unexpected error %v", err)
 	}
-	if _, err := hh.ClaimComment([]string{staleC.ID}, "agent"); err == nil {
+	if _, _, err := hh.ClaimComment([]string{staleC.ID}, "agent"); err == nil {
 		t.Fatal("ClaimComment on out-of-docs stale doc's comment: want error, got nil")
 	}
 }

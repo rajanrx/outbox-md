@@ -143,6 +143,55 @@ func (s *Store) UpdateCommentStatus(id string, status domain.CommentStatus, clai
 	return err
 }
 
+// ClaimCommentCAS atomically claims commentID for token, succeeding only if the
+// row is still CLAIMABLE right now: it is 'open', OR it is a 'claimed' row whose
+// claim has gone stale (abandoned — see domain.Comment.IsStaleClaim). It is the
+// concurrency-safe claim primitive behind service.Claim: with a bounded pool of
+// N agents running per project, two agents must NEVER both win the same comment.
+//
+// The task's reference SQL folds the staleness test into the UPDATE's WHERE as a
+// literal time predicate. We deliberately do NOT do that: claim timestamps are
+// stored as RFC3339Nano strings whose trailing-zero trimming makes SQL
+// string-comparison unsound (exactly why ListOpenComments computes staleness in
+// Go, not SQL). Instead we (1) read the row, (2) decide claimability in Go via
+// the SAME IsStaleClaim/StaleClaimGrace/now semantics ListOpenComments uses — so
+// the claimable set equals the set an agent was offered — then (3) issue a
+// conditional UPDATE guarded by a compare-and-swap on the EXACT prior
+// (status, claim_token) we read. That CAS is the atomicity: any concurrent
+// winner (or an interleaved accept/reply/resolve) changes at least one of those
+// two columns, so the loser's UPDATE matches zero rows. The UPDATE is a
+// standalone autocommit statement (no read snapshot held across it), so its
+// WHERE re-evaluates against committed state; SetMaxOpenConns(1) serializes the
+// two writes, so the loser sees a clean 0 rows-affected, never SQLITE_BUSY.
+//
+// It returns won=true iff this call claimed the row (rows-affected == 1); won=false
+// means the row was not claimable or was lost to a concurrent claim (a skip, not
+// an error). A genuine store error is returned as err.
+func (s *Store) ClaimCommentCAS(commentID, token string, now time.Time, grace time.Duration) (bool, error) {
+	c, err := s.GetComment(commentID)
+	if err != nil {
+		return false, err
+	}
+	claimable := c.Status == domain.CommentOpen ||
+		(c.Status == domain.CommentClaimed && c.IsStaleClaim(now, grace))
+	if !claimable {
+		return false, nil
+	}
+	claimedAt := now.UTC().Format(time.RFC3339Nano)
+	res, err := s.DB.Exec(
+		`UPDATE comments SET status=?, claim_token=?, claimed_at=?
+		 WHERE id=? AND status=? AND claim_token=?`,
+		domain.CommentClaimed, token, claimedAt, commentID, c.Status, c.ClaimToken)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}
+
 // RequeueClaimedCommentsForProject resets every 'claimed' comment in project
 // back to 'open', clearing the claim (token, processing hint, claimed_at) so the
 // comment re-enters the agent work set immediately. It is the store primitive

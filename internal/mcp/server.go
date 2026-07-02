@@ -41,13 +41,18 @@ func NewServer(h *Handlers) *mcp.Server {
 	}
 	type claimOut struct {
 		Token string `json:"token"`
+		// Claimed is the subset of the requested ids this call actually won. Under
+		// fan-out (multiple agents at once) another agent may claim an id first; a
+		// lost id is absent here. Process ONLY these ids with this token; skip the
+		// rest — they are being handled by another agent.
+		Claimed []string `json:"claimed"`
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "claim_comment",
-		Description: "Claim one or more comments for processing; returns a claim token.",
+		Description: "Claim one or more comments for processing; returns a claim token and the subset of ids actually won (others were claimed by a concurrent agent — process only the won ids).",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in claimIn) (*mcp.CallToolResult, claimOut, error) {
-		tok, err := h.ClaimComment(in.CommentIDs, in.Agent)
-		return nil, claimOut{Token: tok}, err
+		tok, claimed, err := h.ClaimComment(in.CommentIDs, in.Agent)
+		return nil, claimOut{Token: tok, Claimed: claimed}, err
 	})
 
 	type proposeIn struct {
@@ -134,8 +139,8 @@ func NewServer(h *Handlers) *mcp.Server {
 
 const processOutboxGuidance = `You are processing the outbox for a Markdown spec in outbox-md. Work the queue IN ORDER and do not exceed the configured batch size.
 1. Call ` + "`list_open_comments`" + ` — each item includes the anchored ` + "`excerpt`" + ` (the text the human flagged) and the ` + "`thread`" + ` (their feedback).
-2. For a comment you'll act on, call ` + "`read_doc`" + ` for full context, then ` + "`claim_comment`" + ` to get a token.
-2b. Right after claiming, call ` + "`mark_processing`" + ` (with the comment id + token) so the human sees the comment is being worked on. On a long run, call it again periodically to heartbeat (it self-expires after ~180s). It writes nothing and resolves nothing — it's just a live "AI processing…" hint that clears when you reply/propose.
+2. For a comment you'll act on, call ` + "`read_doc`" + ` for full context, then ` + "`claim_comment`" + `. It returns ` + "`claimed`" + ` — the subset of ids you actually WON — plus a token. Under fan-out other agents claim concurrently, so process ONLY the ids in ` + "`claimed`" + `: if a comment you intended to work on is absent from ` + "`claimed`" + `, another agent won it — SKIP it (do not act on it; its token checks would fail).
+2b. Right after claiming, call ` + "`mark_processing`" + ` for a comment you WON (its id + the token) so the human sees it's being worked on. On a long run, call it again periodically to heartbeat (it self-expires after ~180s). It writes nothing and resolves nothing — just a live "AI processing…" hint that clears when you reply/propose.
 3. Respond with EITHER ` + "`propose_suggestion`" + ` (a tracked-change edit — provide the FULL replacement document content) OR ` + "`reply_in_thread`" + ` (to counter, clarify, or discuss) — using the claim token and your agent identity. In council mode, submit a lensed review with ` + "`submit_review`" + ` instead (its verdict/rationale and edit content become one candidate among N); the human picks.
 4. You CANNOT resolve comments, pick a candidate, or approve documents — those are human-only. Never attempt them.
 Keep edits minimal and faithful to the feedback; the human reviews every suggestion before it touches the file.`

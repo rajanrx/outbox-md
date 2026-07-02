@@ -22,6 +22,13 @@ const DefaultAgentRetries = 5
 // 5m — a legitimate council/complex run was being killed at 5m — to 15m.
 const DefaultAgentTimeout = 15 * time.Minute
 
+// DefaultAgentConcurrency is how many agent runs the auto-reply engine may run
+// AT ONCE per project (fan-out). 4 lets a burst of comments be worked in
+// parallel instead of one-at-a-time; claim atomicity (store CAS) guarantees two
+// agents never process the same comment. 1 reproduces the historical
+// single-flight behaviour.
+const DefaultAgentConcurrency = 4
+
 type Config struct {
 	Agent    AgentConfig    `json:"agent"    yaml:"agent"`
 	Approval ApprovalConfig `json:"approval" yaml:"approval"`
@@ -58,6 +65,10 @@ type AgentConfig struct {
 	// "900s", …); a bare integer is read as minutes. Empty/invalid ⇒
 	// DefaultAgentTimeout (15m). Resolve with ResolveTimeout.
 	Timeout string `json:"timeout" yaml:"timeout"`
+	// Concurrency is how many agent runs may execute AT ONCE per project. Absent ⇒
+	// DefaultAgentConcurrency (4). 1 = single-flight (today's behaviour). Values
+	// below 1 are clamped to 1. Resolve with ResolveConcurrency.
+	Concurrency int `json:"concurrency" yaml:"concurrency"`
 }
 
 // ResolveRetries returns the effective retry count: an unset (zero-value from
@@ -68,6 +79,17 @@ func (a AgentConfig) ResolveRetries() int {
 		return 0
 	}
 	return a.Retries
+}
+
+// ResolveConcurrency returns the effective per-project fan-out: an unset value
+// (zero) keeps the Defaults()-seeded 4; any value below 1 is clamped to 1
+// (single-flight). It is the count of agent runs allowed in flight at once per
+// project.
+func (a AgentConfig) ResolveConcurrency() int {
+	if a.Concurrency < 1 {
+		return 1
+	}
+	return a.Concurrency
 }
 
 // ResolveTimeout parses the configured Timeout into a duration, falling back to
@@ -106,7 +128,7 @@ func Defaults() Config {
 	return Config{
 		// Retries/Timeout seed the auto-reply resilience defaults; a yaml that omits
 		// them keeps these, an explicit value overrides (0 retries = no retry).
-		Agent: AgentConfig{BatchSize: 5, Retries: DefaultAgentRetries, Timeout: DefaultAgentTimeout.String()},
+		Agent: AgentConfig{BatchSize: 5, Retries: DefaultAgentRetries, Timeout: DefaultAgentTimeout.String(), Concurrency: DefaultAgentConcurrency},
 		// AutoUpdate defaults to true so an outbox.yaml that omits the key (or has
 		// no yaml at all) keeps self-update on; only an explicit false disables it.
 		AutoUpdate: true,
@@ -278,6 +300,10 @@ type Coverage struct {
 // is exactly the predicate importMarkdown applies, so the served set equals the
 // imported set (no import/serve drift).
 func (cv Coverage) Covers(key string) bool {
+	// Normalize the key ONCE so both predicates see the same path: underDocs
+	// cleans internally but SourcesMatch only slashes, so a "./"/"../"/"//" key
+	// could diverge between the two checks. Both re-normalize idempotently.
+	key = path.Clean(filepath.ToSlash(key))
 	return underDocs(cv.Docs, key) && SourcesMatch(cv.Sources, key)
 }
 

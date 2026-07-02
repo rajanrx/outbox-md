@@ -272,8 +272,8 @@ func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub) http.Handler {
 					return
 				}
 			}
-			tok, err := svc.Claim(in.CommentIDs, "dev-agent")
-			writeJSON(w, map[string]any{"token": tok}, err)
+			tok, claimed, err := svc.Claim(in.CommentIDs, "dev-agent")
+			writeJSON(w, map[string]any{"token": tok, "claimed": claimed}, err)
 		})
 		mux.HandleFunc("POST /api/dev/propose", func(w http.ResponseWriter, r *http.Request) {
 			var in struct {

@@ -146,6 +146,14 @@ type Config struct {
 	// MaxDrains hard-caps consecutive drain runs per human trigger. Zero ⇒
 	// DefaultMaxDrains.
 	MaxDrains int
+	// Concurrency is the size of the per-project agent pool: how many agent runs
+	// may execute AT ONCE for one project on a trigger/drain/sweep. Each run is a
+	// full agent process (with its own retry + timeout). Zero or negative ⇒ 1
+	// (single-flight — today's behaviour), so a zero-value Config keeps the
+	// historical semantics; the config layer supplies the production default (4).
+	// Claim atomicity (store CAS) guarantees two runs never process the same
+	// comment, so extra parallel agents are safe.
+	Concurrency int
 }
 
 // Engine implements webhook.Notifier. It routes each triggering event to a
@@ -168,6 +176,7 @@ type Engine struct {
 	pendingCount func(project string) (int, error)
 	drainDelay   time.Duration
 	maxDrains    int
+	concurrency  int
 
 	// ctx is the engine-wide lifecycle context; cancel (via Close) stops in-flight
 	// retry backoff and prevents a retry loop from spanning a shutdown.
@@ -200,6 +209,7 @@ func New(cfg Config) *Engine {
 		pendingCount: cfg.PendingCount,
 		drainDelay:   cfg.DrainDelay,
 		maxDrains:    cfg.MaxDrains,
+		concurrency:  cfg.Concurrency,
 		ctx:          ctx,
 		cancel:       cancel,
 		runners:      make(map[string]*runner),
@@ -233,6 +243,12 @@ func New(cfg Config) *Engine {
 	}
 	if e.maxDrains <= 0 {
 		e.maxDrains = DefaultMaxDrains
+	}
+	// Floor concurrency to 1 (single-flight). The engine takes this literally so a
+	// zero-value Config → single-flight; the config layer supplies the production
+	// default (4). Never default to 4 here or the zero value would silently fan out.
+	if e.concurrency < 1 {
+		e.concurrency = 1
 	}
 	return e
 }
@@ -345,6 +361,7 @@ func (e *Engine) runnerFor(project string) *runner {
 		ctx:          e.ctx,
 		drainDelay:   e.drainDelay,
 		maxDrains:    e.maxDrains,
+		concurrency:  e.concurrency,
 	}
 	// Bind the per-project pending counter so the runner can drain the queue after
 	// a partial run. Left nil ⇒ the runner skips the drain (one run per trigger).
@@ -377,6 +394,9 @@ type runner struct {
 	pendingCount func() (int, error)
 	drainDelay   time.Duration
 	maxDrains    int
+	// concurrency is the per-project pool size: how many agent runs execute at
+	// once per wave. Always >= 1 (floored in New). 1 = single-flight.
+	concurrency int
 
 	mu      sync.Mutex
 	timer   *time.Timer
@@ -410,20 +430,28 @@ func (r *runner) trigger() {
 	r.timer = time.AfterFunc(r.debounce, func() { go r.execute() })
 }
 
-// execute runs the agent with single-flight semantics. If a run is already in
-// progress it sets pending and returns; the in-flight loop drains pending and
-// runs once more, so concurrent triggers never start a second process.
+// execute drives one project's drain loop. Exactly ONE execute loop runs per
+// project at a time (single-flight over the LOOP, guarded by r.running); a
+// trigger arriving mid-loop sets pending so the loop runs one more wave, so
+// concurrent triggers never start a second loop.
 //
-// On top of single-flight it runs a BOUNDED internal drain: a single agent run
-// may clear only part of a burst (the LLM stops or hits its cap), leaving the
-// rest open/stale-claimed. So after a run — when no fresh human trigger is
-// waiting — it re-checks the pending count and, if the run made PROGRESS (the
-// count went down) and work remains, runs again after a short delay. It stops
-// the instant a run makes no progress (so a comment the agent genuinely can't
-// advance can never loop forever) or the count hits zero, and is hard-capped by
-// maxDrains. A fresh human trigger takes priority over and resets the drain. The
-// drain is internal (never event-driven), so it does not touch the
-// no-self-retrigger invariant.
+// Within the loop each iteration is a WAVE: up to `concurrency` agent runs
+// launched at once (each a full agent process with its own retry + timeout),
+// then joined. With concurrency=1 a wave is a single run — bit-for-bit the old
+// single-flight behaviour. Claim atomicity (store CAS) guarantees two runs in a
+// wave never process the same comment, so extra parallel agents are safe.
+//
+// On top of the pool it runs a BOUNDED internal drain: a wave may clear only
+// part of a burst (each agent stops or hits its cap), leaving the rest
+// open/stale-claimed. So after a wave — when no fresh human trigger is waiting —
+// it re-checks the pending count and, if the WAVE made PROGRESS (the count went
+// down) and work remains, runs another wave after a short delay. Progress is
+// measured per WAVE (count before vs after the whole wave), not per run, so
+// concurrent runs are accounted correctly. It stops the instant a wave makes no
+// progress (so work the agents genuinely can't advance can never loop forever)
+// or the count hits zero, and is hard-capped by maxDrains. A fresh human trigger
+// takes priority over and resets the drain. The drain is internal (never
+// event-driven), so it does not touch the no-self-retrigger invariant.
 func (r *runner) execute() {
 	r.mu.Lock()
 	if r.running {
@@ -437,9 +465,9 @@ func (r *runner) execute() {
 	drains := 0
 	for {
 		before := r.remaining()
-		r.runOnce()
+		r.runWave(before)
 
-		// A fresh human trigger arrived during the run — honor it first and reset
+		// A fresh human trigger arrived during the wave — honor it first and reset
 		// the drain budget (human activity restarts the drain accounting).
 		r.mu.Lock()
 		if r.pending {
@@ -450,7 +478,7 @@ func (r *runner) execute() {
 		}
 		r.mu.Unlock()
 
-		// Internal bounded drain: only when the run made progress and work remains.
+		// Internal bounded drain: only when the wave made progress and work remains.
 		after := r.remaining()
 		if after > 0 && after < before && drains < r.maxDrains {
 			drains++
@@ -471,6 +499,49 @@ func (r *runner) execute() {
 		r.mu.Unlock()
 		return
 	}
+}
+
+// waveSize is how many agent runs to launch in one wave. It is bounded by the
+// pool size (concurrency) and, when a pending counter is wired, by the actual
+// work outstanding (before) — so a partly-cleared burst does not spawn idle
+// agents. It is floored at 1: a trigger always runs at least once even when the
+// counter reads zero (e.g. the human comment was already handled, or no counter
+// is wired at all — in which case before is 0 and the wave is `concurrency`
+// runs, preserving one-run-per-trigger at concurrency=1).
+func (r *runner) waveSize(before int) int {
+	n := r.concurrency
+	if n < 1 {
+		n = 1
+	}
+	if r.pendingCount != nil && before < n {
+		n = before
+	}
+	if n < 1 {
+		n = 1
+	}
+	return n
+}
+
+// runWave launches waveSize(before) agent runs concurrently and waits for all of
+// them. Each run is an independent runOnce (retry + per-run timeout). The runs
+// share only immutable runner fields and r.spawn (which is safe to call
+// concurrently — the default spawns separate processes), so the wave is
+// race-clean; all mutable loop/drain state stays in the single execute loop.
+func (r *runner) runWave(before int) {
+	n := r.waveSize(before)
+	if n == 1 {
+		r.runOnce()
+		return
+	}
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func() {
+			defer wg.Done()
+			r.runOnce()
+		}()
+	}
+	wg.Wait()
 }
 
 // runOnce drives one logical run: it invokes the agent and, on failure, RETRIES
