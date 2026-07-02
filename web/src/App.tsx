@@ -87,7 +87,14 @@ export default function App() {
   };
 
   const refresh = useCallback(async () => {
-    if (docId) setView(await getDoc(docId));
+    if (!docId) return;
+    const next = await getDoc(docId);
+    // Diff before render: only replace the view when the fetched doc actually
+    // changed. Returning the previous reference lets React bail out of the
+    // re-render, so the fallback poll (and no-op SSE events) can't flicker the
+    // reader's pane by re-setting identical content.
+    setView((prev) =>
+      prev && JSON.stringify(prev) === JSON.stringify(next) ? prev : next);
   }, [docId]);
 
   // Latest refresh + open doc behind refs so the mount-once SSE effect always
@@ -97,6 +104,9 @@ export default function App() {
   useEffect(() => { refreshRef.current = refresh; }, [refresh]);
   const docIdRef = useRef(docId);
   useEffect(() => { docIdRef.current = docId; }, [docId]);
+  // The live EventSource, held behind a ref so the fallback poll can check its
+  // health (readyState) without re-subscribing to the stream.
+  const esRef = useRef<EventSource | null>(null);
 
   // Open-thread live refresh: each Card fetches its own thread and only reloads
   // on comment.id change, so bump this on every relevant SSE event (below) and
@@ -108,6 +118,7 @@ export default function App() {
   // EventSource auto-reconnects; ": connected"/": ping" comment frames are ignored.
   useEffect(() => {
     const es = new EventSource("/api/events");
+    esRef.current = es;
     // On (re)connect, refresh immediately — a dropped-then-restored stream may
     // have missed events, and waiting for the 15s fallback poll would lag the UI.
     es.onopen = () => { refreshRef.current?.(); setThreadTick((t) => t + 1); };
@@ -138,7 +149,7 @@ export default function App() {
       listDocs().then((d) => setDocs(d ?? []));
     };
     es.addEventListener("docs.changed", onDocsChanged);
-    return () => es.close();
+    return () => { es.close(); esRef.current = null; };
   }, []);
 
   useEffect(() => { listDocs().then((d) => setDocs(d ?? [])); }, []);
@@ -189,9 +200,13 @@ export default function App() {
   useEffect(() => {
     if (!docId) return;
     refresh();
-    // SSE (above) is the primary live-update path; this slow poll is just a
-    // fallback for missed/dropped events (e.g. a brief stream drop).
-    const t = setInterval(refresh, 15000);
+    // SSE (above) is the primary live-update path; this slow poll is only a
+    // fallback for a dropped stream. Gate it on SSE health: when the stream is
+    // OPEN (the normal case) the interval is a no-op, so it never re-fetches and
+    // never flickers. It only refreshes while the stream is down/reconnecting.
+    const t = setInterval(() => {
+      if (esRef.current?.readyState !== EventSource.OPEN) refresh();
+    }, 15000);
     return () => clearInterval(t);
   }, [docId, refresh]);
 
