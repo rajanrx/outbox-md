@@ -6,7 +6,7 @@ import { Margin } from "./comments/Margin";
 import { BaselineDiff } from "./governance/BaselineDiff";
 import { DecisionLog } from "./log/DecisionLog";
 import { Modal } from "./Modal";
-import { SettingsPanel } from "./settings/SettingsPanel";
+import { SettingsPage } from "./settings/SettingsPage";
 import "./governance/governance.css";
 
 const PanelLeftIcon = () => (
@@ -53,7 +53,11 @@ export default function App() {
   const [showLog, setShowLog] = useState(false);
   // Which approval action is awaiting confirmation in the modal (null = closed).
   const [confirm, setConfirm] = useState<null | "approve" | "reapprove">(null);
-  const [showSettings, setShowSettings] = useState(false);
+  // Top-level view: the docs reader or the dedicated Settings page. Restored from
+  // the URL (?settings) so a reload keeps the page, mirroring ?doc= routing.
+  const [showSettings, setShowSettings] = useState(
+    () => new URLSearchParams(window.location.search).has("settings"),
+  );
   // Build version for the header badge ("dev" for local builds).
   const [version, setVersion] = useState("");
   const [commentsW, setCommentsW] = useState(() => {
@@ -170,12 +174,13 @@ export default function App() {
   useEffect(() => { getConfig().then((c) => setVersion(c?.version ?? "")); }, []);
   // Load the registered projects; keep the stored selection if it is still valid,
   // otherwise fall back to the first project (single-folder mode → empty name).
-  useEffect(() => {
-    listProjects().then((ps) => {
-      setProjects(ps);
-      setProject((cur) => (ps.some((p) => p.name === cur) ? cur : ps[0]?.name ?? ""));
-    });
+  // Exposed as a callback so the Settings page can refresh it after a CRUD write.
+  const loadProjects = useCallback(async () => {
+    const ps = await listProjects();
+    setProjects(ps);
+    setProject((cur) => (ps.some((p) => p.name === cur) ? cur : ps[0]?.name ?? ""));
   }, []);
+  useEffect(() => { loadProjects(); }, [loadProjects]);
   useEffect(() => { localStorage.setItem(PROJECT_KEY, project); }, [project]);
 
   // Show the switcher only with 2+ projects — single-folder UX stays uncluttered.
@@ -196,9 +201,29 @@ export default function App() {
     const match = wantPath ? visibleDocs.find((x) => x.path === wantPath) : undefined;
     setDocId(match ? match.id : visibleDocs[0].id);
   }, [visibleDocs, docId]);
-  // Reflect the open document in the URL (?doc=<path>) so refresh restores it.
-  // replaceState (not pushState) to avoid history-stack spam.
+  // Open the dedicated Settings page and push ?settings so a reload / back button
+  // works; closing restores the docs view (the ?doc= reflect effect below re-adds
+  // the doc query on the next render).
+  const openSettings = useCallback(() => {
+    setShowSettings(true);
+    window.history.pushState(null, "", `${window.location.pathname}?settings`);
+  }, []);
+  const closeSettings = useCallback(() => {
+    setShowSettings(false);
+    window.history.replaceState(null, "", window.location.pathname);
+  }, []);
+  // Sync the view with browser back/forward navigation.
   useEffect(() => {
+    const onPop = () => setShowSettings(new URLSearchParams(window.location.search).has("settings"));
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  // Reflect the open document in the URL (?doc=<path>) so refresh restores it.
+  // replaceState (not pushState) to avoid history-stack spam. Skipped while the
+  // Settings page owns the URL (?settings).
+  useEffect(() => {
+    if (showSettings) return;
     if (!docId) return;
     const path = docs.find((d) => d.id === docId)?.path;
     if (!path) return;
@@ -211,7 +236,7 @@ export default function App() {
     const enc = encodeURIComponent(path).replace(/%2F/g, "/");
     const hash = keepHash ? window.location.hash : "";
     window.history.replaceState(null, "", `${window.location.pathname}?doc=${enc}${hash}`);
-  }, [docId, docs]);
+  }, [docId, docs, showSettings]);
   useEffect(() => {
     if (!docId) return;
     refresh();
@@ -232,6 +257,18 @@ export default function App() {
   const unresolved = view?.comments?.filter((c) => c.status !== "resolved").length ?? 0;
   const openCount = unresolved;
   const gateTitle = unresolved ? `Resolve all ${unresolved} comment(s) first` : "";
+
+  if (showSettings) {
+    return (
+      <SettingsPage
+        projects={projects}
+        initialProject={project}
+        version={version}
+        onBack={closeSettings}
+        onProjectsChanged={loadProjects}
+      />
+    );
+  }
 
   return (
     <div className="app-shell">
@@ -278,16 +315,9 @@ export default function App() {
           <button className="gov-btn ghost" onClick={() => setShowLog((v) => !v)}>History</button>
         )}
         <div className="spacer" />
-        <button className="icon-btn" title="Settings" aria-label="Settings" onClick={() => setShowSettings(true)}><GearIcon /></button>
+        <button className="icon-btn" title="Settings" aria-label="Settings" onClick={openSettings}><GearIcon /></button>
         <button className={"icon-btn" + (treeOpen ? " on" : "")} title="Toggle files" onClick={() => setTreeOpen((v) => !v)}><PanelLeftIcon /></button>
         <button className={"icon-btn" + (commentsOpen ? " on" : "")} title="Toggle comments" onClick={() => setCommentsOpen((v) => !v)}><PanelRightIcon /></button>
-        {showSettings && (
-          <SettingsPanel
-            project={project}
-            projectLabel={multiProject ? (project || "(root)") : undefined}
-            onClose={() => setShowSettings(false)}
-          />
-        )}
         {showBaseline && view && (
           <BaselineDiff baseline={view.baselineContent} current={view.content} onClose={() => setShowBaseline(false)} />
         )}
