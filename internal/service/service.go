@@ -494,17 +494,28 @@ func (s *Service) RecordSynthesis(commentID, token, dissent, content, createdBy 
 	if err != nil {
 		return domain.Synthesis{}, err
 	}
-	// Single-shot: a set is synthesized at most once. A retry / duplicate chair
-	// call with the still-valid claim token would otherwise emit a SECOND
-	// suggestion and a SECOND synthesis. Reject once the set has left 'gathering'.
-	if set.State != domain.CandidateSetGathering {
+	// An edit verdict must reject a stale doc BEFORE claiming the synthesis slot,
+	// so a stale edit never leaves the set synthesized-but-suggestionless.
+	if content != "" {
+		if err := s.checkNotStale(c); err != nil {
+			return domain.Synthesis{}, err
+		}
+	}
+	// Single-shot, concurrency-safe: atomically claim gathering→synthesized. Two
+	// OVERLAPPING chair calls race on this one UPDATE (writes serialized by
+	// SetMaxOpenConns(1)); exactly one wins, and the loser is rejected BEFORE
+	// emitting — so a comment never gets two syntheses or two suggestions (a
+	// sequential retry loses the same way, since the set has left 'gathering').
+	if won, err := s.store.TryClaimSynthesis(set.ID); err != nil {
+		return domain.Synthesis{}, err
+	} else if !won {
 		return domain.Synthesis{}, errors.New("candidate set already synthesized or decided")
 	}
 	suggestionID := ""
 	if content != "" {
-		// Edit verdict → an accept-eligible suggestion (emitSuggestion runs the
-		// stale guard and marks the comment addressed). It is called before the
-		// state flip below, so a stale edit rejects with nothing persisted.
+		// Edit verdict → an accept-eligible suggestion (emitSuggestion also runs the
+		// stale guard; the doc was just checked, so it passes) and marks the comment
+		// addressed.
 		sg, err := s.emitSuggestion(c, content, createdBy)
 		if err != nil {
 			return domain.Synthesis{}, err
@@ -538,9 +549,7 @@ func (s *Service) RecordSynthesis(commentID, token, dissent, content, createdBy 
 	if err != nil {
 		return domain.Synthesis{}, err
 	}
-	if err := s.store.SetCandidateSetState(set.ID, domain.CandidateSetSynthesized); err != nil {
-		return domain.Synthesis{}, err
-	}
+	// State is already 'synthesized' — set atomically by TryClaimSynthesis above.
 	return syn, nil
 }
 

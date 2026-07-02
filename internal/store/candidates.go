@@ -48,6 +48,22 @@ func (s *Store) SetCandidateSetState(id string, state domain.CandidateSetState) 
 	return err
 }
 
+// TryClaimSynthesis atomically transitions a set gathering→synthesized and reports
+// whether THIS call won (exactly one row affected). It is the single-shot gate for
+// RecordSynthesis: concurrent or duplicate chair calls all race on this one UPDATE
+// (writes are serialized by SetMaxOpenConns(1)), so exactly one wins and proceeds
+// to emit — a comment never gets two syntheses / two suggestions. A set already
+// synthesized or decided affects zero rows → the caller loses and is rejected.
+func (s *Store) TryClaimSynthesis(id string) (bool, error) {
+	res, err := s.DB.Exec(`UPDATE candidate_sets SET state=? WHERE id=? AND state=?`,
+		domain.CandidateSetSynthesized, id, domain.CandidateSetGathering)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
 const candidateCols = `id, candidate_set_id, lens, verdict, rationale, content, agent_identity, chosen`
 
 func scanCandidate(scan func(...any) error) (domain.Candidate, error) {

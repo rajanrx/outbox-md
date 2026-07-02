@@ -2,6 +2,8 @@ package service
 
 import (
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/rajanrx/outbox-md/internal/domain"
@@ -362,5 +364,38 @@ func TestRecordSynthesisIsSingleShot(t *testing.T) {
 	}
 	if sg, ok, _ := s.GetSuggestionByComment(c.ID); !ok || sg.ProposedContent != "Hello there" {
 		t.Fatalf("suggestion = %+v ok=%v, want exactly the first", sg, ok)
+	}
+}
+
+// TestRecordSynthesisConcurrentSingleWinner: many chair calls racing on one set
+// (the concurrency the sequential guard alone couldn't cover) must resolve to
+// EXACTLY ONE winner via the TryClaimSynthesis CAS — never two syntheses/emits.
+func TestRecordSynthesisConcurrentSingleWinner(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _, _ string) error { return nil })
+	c, tok := claimedComment(t, s, svc)
+	if _, err := svc.SubmitReview(c.ID, tok, domain.LensCorrectness, domain.VerdictEdit, "fix", "Hello there", "m1"); err != nil {
+		t.Fatal(err)
+	}
+
+	const n = 8
+	var wins int64
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func() {
+			defer wg.Done()
+			if _, err := svc.RecordSynthesis(c.ID, tok, "", "Hello there", "chair", 0.9, 90); err == nil {
+				atomic.AddInt64(&wins, 1)
+			}
+		}()
+	}
+	wg.Wait()
+	if wins != 1 {
+		t.Fatalf("wins = %d, want exactly 1 (CAS must serialize concurrent syntheses)", wins)
+	}
+	if _, ok, _ := s.GetSuggestionByComment(c.ID); !ok {
+		t.Fatal("the winner should have emitted a suggestion")
 	}
 }
