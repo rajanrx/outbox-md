@@ -51,7 +51,7 @@ function scrollReaderToAnchor(root: HTMLElement, source: string, anchor: { start
   pane.scrollTo({ top: pane.scrollTop + (rect.top - paneRect.top) - 140, behavior: "smooth" });
 }
 
-export function Margin({ docId, content, docPath, rootRef, comments, reloadKey = 0, onChange }: {
+export function Margin({ docId, content, docPath, rootRef, comments, reloadKey = 0, deadlockThreshold = 50, onChange }: {
   docId: string;
   content: string;
   docPath: string;
@@ -60,6 +60,8 @@ export function Margin({ docId, content, docPath, rootRef, comments, reloadKey =
   // Bumped on each SSE event for the open doc; forwarded to the open Card so its
   // thread re-fetches in place (not just the comment list).
   reloadKey?: number;
+  // Council deadlock threshold from /api/config, forwarded to each Card.
+  deadlockThreshold?: number;
   onChange: () => void;
 }) {
   const [pending, setPending] = useState<{ start: number; end: number } | null>(null);
@@ -264,6 +266,7 @@ export function Margin({ docId, content, docPath, rootRef, comments, reloadKey =
           pinned={pinned.has(c.id)}
           offscreen={offscreen.has(c.id)}
           reloadKey={reloadKey}
+          deadlockThreshold={deadlockThreshold}
           onActivate={() => setFocused(c.id)}
           onJump={() => jumpTo(c)}
           onTogglePin={() => togglePin(c.id)}

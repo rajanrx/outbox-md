@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getThread, reply, resolve, getSuggestion, type Comment, type ThreadMessage, type Suggestion } from "../api";
+import { getThread, reply, resolve, getSuggestion, getCandidates, pickCandidate, type Comment, type ThreadMessage, type Suggestion, type CouncilView } from "../api";
 import { unifiedDiff, type Row } from "../suggestion/diff";
 import { DiffRows, counts } from "../suggestion/DiffRows";
 import { DiffModal } from "../suggestion/DiffModal";
+import { CouncilModal } from "./CouncilModal";
+import { distinctMembers, finalPositions, isDeadlock, isDiscussing, maxRound, severity } from "./council";
 
 // excerptRows keeps the first ~maxChanges changed (ins/del) lines of a unified
 // diff, along with any context/gap rows encountered up to that point, so the
@@ -40,13 +42,16 @@ const PinIcon = ({ filled }: { filled: boolean }) => (
 
 const initial = (who: string) => (who?.[0] || "?").toUpperCase();
 
-export function Card({ comment, currentContent, docPath = "", active = false, pinned = false, offscreen = false, reloadKey = 0, onActivate, onJump, onTogglePin, onChange }: {
+export function Card({ comment, currentContent, docPath = "", active = false, pinned = false, offscreen = false, reloadKey = 0, deadlockThreshold = 50, onActivate, onJump, onTogglePin, onChange }: {
   comment: Comment;
   currentContent: string;
   docPath?: string;
   active?: boolean;
   pinned?: boolean;
   offscreen?: boolean;
+  // Confidence (0..100) below which a chair verdict is "no consensus" (deadlock),
+  // from /api/config. Also the chip's amber/green boundary.
+  deadlockThreshold?: number;
   // Bumped by the parent on each SSE event for the open doc; the thread state is
   // local to this Card and would otherwise only load on comment.id change, so an
   // agent reply/suggestion wouldn't appear in the open thread until a refresh.
@@ -116,6 +121,41 @@ export function Card({ comment, currentContent, docPath = "", active = false, pi
     getSuggestion(comment.id).then((s) => { if (live) setSg(s); });
     return () => { live = false; };
   }, [detached, comment.id, reloadKey, actionTick]);
+
+  // Council read model: null for a plain (non-council) comment — the endpoint
+  // 404s and getCandidates maps that to null, so no council UI renders. Fetched
+  // alongside the suggestion and refreshed on SSE (reloadKey) + local action
+  // (actionTick, bumped after a pick).
+  const [council, setCouncil] = useState<CouncilView | null>(null);
+  const [councilOpen, setCouncilOpen] = useState(false);
+  const [pickBusy, setPickBusy] = useState<string | null>(null);
+  const [pickError, setPickError] = useState<string | null>(null);
+  useEffect(() => {
+    if (detached) { setCouncil(null); return; }
+    let live = true;
+    getCandidates(comment.id).then((v) => { if (live) setCouncil(v); });
+    return () => { live = false; };
+  }, [detached, comment.id, reloadKey, actionTick]);
+
+  // Deadlock = the chair reached no consensus (confidence < threshold) AND the
+  // human hasn't picked yet → show ranked "no consensus" pick cards instead of the
+  // ordinary suggestion. Above threshold (or after a pick) the normal suggestion
+  // path is unchanged. deadlock is always false when council is null.
+  const deadlock = !!council && isDeadlock(council, deadlockThreshold);
+  const pick = async (candidateId: string) => {
+    setPickBusy(candidateId);
+    setPickError(null);
+    try {
+      await pickCandidate(comment.id, candidateId);
+      setActionTick((t) => t + 1); // refetch council + suggestion
+      onChange();                  // refresh the doc/comment (the pick emitted a Suggestion)
+    } catch (e) {
+      // Keep the cards on screen and surface the server's message verbatim.
+      setPickError(e instanceof Error ? e.message : "Pick failed — please try again.");
+    } finally {
+      setPickBusy(null);
+    }
+  };
   // Interactive only while proposed AND the comment is not resolved (a stale
   // proposed row on a resolved comment must not offer a Reject that would reopen
   // it). Historical whenever the suggestion is accepted/rejected.
@@ -173,7 +213,59 @@ export function Card({ comment, currentContent, docPath = "", active = false, pi
         )}
       </div>
 
-      {showSuggestion && (
+      {council && (
+        <div className="council-summary" onClick={(e) => e.stopPropagation()}>
+          <div className="council-summary-head">
+            {council.synthesis && (
+              <span
+                className={`council-confidence sev-${severity(council.synthesis.confidence, deadlockThreshold)}`}
+                title="Chair confidence in the verdict"
+              >
+                {council.synthesis.confidence}% confidence
+              </span>
+            )}
+            {council.synthesis && (
+              <span className="council-agreement" title="Council agreement">
+                {Math.round(council.synthesis.agreementScore * 100)}% agree
+              </span>
+            )}
+            <span className="council-members" title="Council members / rounds">
+              {distinctMembers(council)} members{maxRound(council) > 0 ? ` · round ${maxRound(council)}` : ""}
+            </span>
+            {isDiscussing(council) && <span className="council-discussing" title="Members debated over rounds">discussing</span>}
+          </div>
+          <button className="council-view-btn" onClick={() => setCouncilOpen(true)}>View discussion →</button>
+        </div>
+      )}
+
+      {deadlock && (
+        <div className="council-deadlock" onClick={(e) => e.stopPropagation()}>
+          <div className="council-deadlock-head">No consensus — pick a direction</div>
+          {finalPositions(council!).map((cand, i) => (
+            <div key={cand.id} className="council-option">
+              <div className="council-option-head">
+                <span className="council-rank">#{i + 1}</span>
+                <span className="council-who">{cand.agentIdentity}</span>
+                <span className={`council-verdict verdict-${cand.verdict}`}>{cand.verdict.replace("_", " ")}</span>
+              </div>
+              {cand.rationale && <div className="council-rationale">{cand.rationale}</div>}
+              {cand.verdict === "edit" && cand.content && (
+                <pre className="council-option-preview">{cand.content.slice(0, 240)}{cand.content.length > 240 ? "…" : ""}</pre>
+              )}
+              <button className="council-pick-btn" disabled={pickBusy !== null} onClick={() => pick(cand.id)}>
+                {pickBusy === cand.id ? "Picking…" : "Pick this"}
+              </button>
+            </div>
+          ))}
+          {pickError && <div className="council-pick-error" role="alert">{pickError}</div>}
+        </div>
+      )}
+
+      {councilOpen && council && (
+        <CouncilModal view={council} title={docPath || "Council discussion"} onClose={() => setCouncilOpen(false)} />
+      )}
+
+      {showSuggestion && !deadlock && (
         <div className="suggestion" onClick={(e) => e.stopPropagation()}>
           <div className="suggestion-head">
             Suggested change
