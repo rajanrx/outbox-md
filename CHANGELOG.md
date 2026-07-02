@@ -4,6 +4,33 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0](https://github.com/rajanrx/outbox-md/compare/v0.15.0...v0.16.0) (2026-07-02)
+
+
+### Features
+
+* **api:** projects CRUD endpoints ([02e5871](https://github.com/rajanrx/outbox-md/commit/02e58713de8c8d1e917cbe9836591713a00e2d02))
+* **cli:** model syntax on add ([c13df35](https://github.com/rajanrx/outbox-md/commit/c13df359f01c407aa60580205c3ce1d1ca067d68))
+* **council:** add candidate round, discussing state, discussion transcript store ([e243b11](https://github.com/rajanrx/outbox-md/commit/e243b11997fe9fb46ea12dbc4d6bc1ca0e9e5cde))
+* **council:** council_rounds/budget/deadlock config keys + settings surfaces ([04794e8](https://github.com/rajanrx/outbox-md/commit/04794e8524715560897060f92400bbe72c515851))
+* **council:** discussion data model + MCP + config (Phase 2A-1) ([072ed99](https://github.com/rajanrx/outbox-md/commit/072ed9946426f2a9d8c07a48efd2a0b4ae9ef33d))
+* **council:** SubmitReview round param, SubmitDiscussion service + MCP tools ([4ce1a9c](https://github.com/rajanrx/outbox-md/commit/4ce1a9c1a87b39c12e0b36ee1ab15b34c99fa569))
+* **registry:** per-member model + preset model injection ([eba3ff3](https://github.com/rajanrx/outbox-md/commit/eba3ff36597350b807593f6d0bab0d776aecc4f7))
+* **settings:** per-member models + projects CRUD API (Settings page backend) ([adfc3f8](https://github.com/rajanrx/outbox-md/commit/adfc3f84a4f10f91a3cd90a5e6e9a9a543ade5ee))
+
+
+### Bug Fixes
+
+* **council:** codex preset runs non-interactive + chair grounds verdict in actual candidates ([c4fb5bf](https://github.com/rajanrx/outbox-md/commit/c4fb5bf3b85372937b2d944b87e57a070b15cac7))
+* **council:** codex preset runs non-interactive + chair grounds verdict in recorded candidates ([d657534](https://github.com/rajanrx/outbox-md/commit/d657534c6275c1167149a8efa4d44879958a5739))
+* **council:** human refine re-verdicts via re-engagement + newest suggestion wins ([b74058e](https://github.com/rajanrx/outbox-md/commit/b74058e829c662c98f85c3439cfe8cc92a844322))
+* **council:** Refine re-verdicts via human re-engagement + newest suggestion wins ([b2c4427](https://github.com/rajanrx/outbox-md/commit/b2c44277ffc4f85ea4d013f9d9f973bc003442d1))
+* **security:** CSRF/Origin guard on state-changing /api requests (PR [#79](https://github.com/rajanrx/outbox-md/issues/79) P1 root) ([730b7bb](https://github.com/rajanrx/outbox-md/commit/730b7bb0b0833ad1b4fce92d87e44c6db3942383))
+* **security:** use containsDotDot sanitizer CodeQL recognizes for docs (go/path-injection [#3](https://github.com/rajanrx/outbox-md/issues/3)) ([8393fb2](https://github.com/rajanrx/outbox-md/commit/8393fb20624fffbd42330c7e672ebf1cd59a47ad))
+* **security:** use filepath.IsLocal for docs containment (CodeQL go/path-injection [#3](https://github.com/rajanrx/outbox-md/issues/3)) ([08f8c4f](https://github.com/rajanrx/outbox-md/commit/08f8c4f809d007a96482dba10597befd85e19652))
+* **security:** validate model as single token + reject docs traversal before stat (PR [#79](https://github.com/rajanrx/outbox-md/issues/79) P1/P2) ([a4ccddc](https://github.com/rajanrx/outbox-md/commit/a4ccddc8657df39134ea7ff802d29845a31dbd33))
+* **store:** mirror rowid tiebreak in the pending-suggestions subquery (PR [#77](https://github.com/rajanrx/outbox-md/issues/77) P1) ([2f2886e](https://github.com/rajanrx/outbox-md/commit/2f2886e8da64796ccd63f0d8c7765d726523afdb))
+
 ## [0.15.0](https://github.com/rajanrx/outbox-md/compare/v0.14.0...v0.15.0) (2026-07-02)
 
 
