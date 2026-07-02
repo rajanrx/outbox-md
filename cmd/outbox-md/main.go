@@ -227,6 +227,8 @@ func run(args []string, out io.Writer) error {
 		return removeProject(rest, out, os.Stdin)
 	case "list", "projects":
 		return listProjectsCmd(out)
+	case "retry":
+		return retryCmd(rest, out)
 	case "paths":
 		return pathsCmd(out)
 	case "settings":
@@ -249,7 +251,7 @@ func run(args []string, out io.Writer) error {
 // explicit flag still wins over OUTBOX_DIR/OUTBOX_ADDR, which win over the
 // built-in defaults. The default served dir is the current directory (".") for a
 // local run; the Docker image sets OUTBOX_DIR=/data to keep serving /data.
-func resolveFlags(name string, args []string, out io.Writer) (dir, addr string, autoReply bool, err error) {
+func resolveFlags(name string, args []string, out io.Writer) (dir, addr string, autoReply, logs bool, err error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(out)
 	fs.Usage = func() { usageFor(out, name) }
@@ -259,10 +261,26 @@ func resolveFlags(name string, args []string, out io.Writer) (dir, addr string, 
 	// flag only turns it on (there is no force-off); when absent, the config
 	// (auto_reply yaml / OUTBOX_AUTO_REPLY env / default false) decides.
 	ar := fs.Bool("auto-reply", false, "spawn the agent CLI in-process on each human comment (opt-in)")
+	// -logs gates whether the auto-reply agent's OUTPUT (its thinking stream) is
+	// printed. It defaults ON; OUTBOX_LOGS overrides the default, and the explicit
+	// flag wins over the env. Off ⇒ only lifecycle lines (invoking/complete/failed).
+	lg := fs.Bool("logs", envBool("OUTBOX_LOGS", true), "print the auto-reply agent's output/thinking stream")
 	if err := fs.Parse(args); err != nil {
-		return "", "", false, err
+		return "", "", false, false, err
 	}
-	return *d, *a, *ar, nil
+	return *d, *a, *ar, *lg, nil
+}
+
+// envBool reads a loose boolean env var (true/1/yes/on, false/0/no/off),
+// returning def when the var is unset or unrecognised.
+func envBool(key string, def bool) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "true", "1", "yes", "on":
+		return true
+	case "false", "0", "no", "off":
+		return false
+	}
+	return def
 }
 
 // serve builds the server for dir and listens on addr. When open is true it
@@ -273,7 +291,7 @@ func serve(args []string, open bool) error {
 	if open {
 		name = "up"
 	}
-	dir, addr, autoReply, err := resolveFlags(name, args, os.Stderr)
+	dir, addr, autoReply, logs, err := resolveFlags(name, args, os.Stderr)
 	if err != nil {
 		return err
 	}
@@ -284,7 +302,7 @@ func serve(args []string, open bool) error {
 		maybeAutoUpdate(config.Load(dir), os.Stdout)
 	}
 	projects := resolveProjects(dir)
-	mux, stop, err := buildServer(dir, projects, autoReply)
+	mux, stop, err := buildServer(dir, projects, autoReply, logs)
 	if err != nil {
 		return err
 	}
@@ -337,7 +355,7 @@ func describeProjects(projects []registry.Project, dir string) string {
 // mode; two-or-more entries come from the registry. Each project keeps its OWN
 // outbox.yaml sources (loaded per project); the per-project whitelist is enforced
 // at import time (a hidden doc never enters the store).
-func buildServer(root string, projects []registry.Project, autoReplyFlag bool) (http.Handler, func(), error) {
+func buildServer(root string, projects []registry.Project, autoReplyFlag, logs bool) (http.Handler, func(), error) {
 	multi := !(len(projects) == 1 && projects[0].Name == "")
 
 	// Database location. Single-folder mode keeps its database inside the served
@@ -397,9 +415,12 @@ func buildServer(root string, projects []registry.Project, autoReplyFlag bool) (
 	// auto-reply engine that spawns the agent CLI on each human comment.
 	hub := sse.NewHub()
 	sinks := []webhook.Notifier{webhook.New(cfg.Webhook), hub}
-	if engine := autoReplyNotifier(root, projects, cfg, autoReplyFlag, svc); engine != nil {
-		sinks = append(sinks, engine)
-		log.Printf("auto-reply: on (default agent: %s; per-project roots + agents from the registry)", cfg.AgentCmd)
+	var engine *autoreply.Engine
+	if e := autoReplyNotifier(root, projects, cfg, autoReplyFlag, logs, svc); e != nil {
+		engine = e
+		sinks = append(sinks, e)
+		log.Printf("auto-reply: on (default agent: %s; per-project roots + agents from the registry; "+
+			"retries=%d timeout=%s logs=%t)", cfg.AgentCmd, cfg.Agent.ResolveRetries(), cfg.Agent.ResolveTimeout(), logs)
 	}
 	svc.SetWebhook(webhook.Fanout(sinks...))
 	// Per-project runtime sources: each served project → its OWN loaded config, so
@@ -469,6 +490,17 @@ func buildServer(root string, projects []registry.Project, autoReplyFlag bool) (
 		w.Start()
 		stop = func() { _ = w.Close() }
 	}
+	// Compose engine shutdown into stop so a server teardown cancels in-flight
+	// retry backoff, and kick a startup sweep so any stranded backlog (open or
+	// stale-claimed) is processed on boot without waiting for a fresh human comment.
+	if engine != nil {
+		prev := stop
+		stop = func() {
+			prev()
+			engine.Close()
+		}
+		go engine.Sweep()
+	}
 	return mux, stop, nil
 }
 
@@ -481,7 +513,7 @@ func buildServer(root string, projects []registry.Project, autoReplyFlag bool) (
 // OUTBOX_AUTO_REPLY env / default false) decides. root is the served dir used as
 // the default (fallback) working directory; each project overrides it with its
 // own root + agent command (see the Targets map).
-func autoReplyNotifier(root string, projects []registry.Project, cfg config.Config, flagOn bool, svc *service.Service) webhook.Notifier {
+func autoReplyNotifier(root string, projects []registry.Project, cfg config.Config, flagOn, logs bool, svc *service.Service) *autoreply.Engine {
 	if !(flagOn || cfg.AutoReply) {
 		return nil
 	}
@@ -499,6 +531,13 @@ func autoReplyNotifier(root string, projects []registry.Project, cfg config.Conf
 		Dir:      root,
 		AgentCmd: cfg.AgentCmd,
 		Targets:  targets,
+		// Resilience: retry a failed run (default 5) with backoff, and cap each run
+		// at the (bumped, configurable) timeout. Config supplies the defaults, so an
+		// explicit agent.retries: 0 is honoured as no-retry.
+		Retries: cfg.Agent.ResolveRetries(),
+		Timeout: cfg.Agent.ResolveTimeout(),
+		// Gate the agent's output/thinking stream on the -logs flag (default on).
+		Logs: logs,
 		// Drain a partly-cleared burst: after each run the engine re-checks how
 		// much work remains for the project and runs again while it keeps making
 		// progress, so a burst one run only partly handled is not stranded. Nil svc
@@ -677,6 +716,93 @@ func configHomeDir() string {
 
 // registryPath is the global projects-registry file, under the config home.
 func registryPath() string { return filepath.Join(configHomeDir(), "projects.json") }
+
+// dbPath resolves the review database file for the current mode, mirroring
+// buildServer's DSN exactly: multi-project mode shares ONE database next to the
+// registry (config home); single-folder mode keeps it inside the served dir
+// (<OUTBOX_DIR>/.outbox/outbox.db). Keeping this in lock-step with buildServer is
+// essential — a drifting path would open a fresh empty DB and make `outbox retry`
+// silently re-queue nothing.
+func dbPath(multi bool) string {
+	if multi {
+		return filepath.Join(configHomeDir(), "outbox.db")
+	}
+	return filepath.Join(getenv("OUTBOX_DIR", "."), ".outbox", "outbox.db")
+}
+
+// retryCmd re-queues stranded (claimed-but-unfinished) comments back to open so a
+// running server picks them up on its next trigger / startup sweep, or a stopped
+// one processes them on next boot. It operates on the store directly, so it works
+// whether or not the server is running. Multi-project mode: no arg re-queues every
+// registered project (one count per project); <name> targets one (an unknown name
+// errors with the retry help). Single-folder mode targets project "". A missing
+// review database is reported (nothing to do), never created.
+func retryCmd(args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("retry", flag.ContinueOnError)
+	fs.SetOutput(out)
+	fs.Usage = func() { usageFor(out, "retry") }
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	projects, err := registry.Load(registryPath())
+	if err != nil {
+		return err
+	}
+	multi := len(projects) > 0
+
+	// Resolve the target set FIRST (before touching the DB), so an invalid name is
+	// rejected with the retry help regardless of whether a database exists yet.
+	var targets []registry.Project
+	if fs.NArg() > 0 {
+		if !multi {
+			usageFor(out, "retry")
+			return fmt.Errorf("no projects registered — run \"outbox retry\" with no name in single-folder mode")
+		}
+		name := fs.Arg(0)
+		for _, p := range projects {
+			if p.Name == name {
+				targets = []registry.Project{p}
+				break
+			}
+		}
+		if len(targets) == 0 {
+			usageFor(out, "retry")
+			return fmt.Errorf("no project matching %q (run \"outbox list\")", name)
+		}
+	} else if multi {
+		targets = projects
+	} else {
+		// Single-folder mode: the one (empty-named) project.
+		targets = []registry.Project{{Name: ""}}
+	}
+
+	file := dbPath(multi)
+	if _, err := os.Stat(file); os.IsNotExist(err) {
+		fmt.Fprintf(out, "no review database at %s — nothing to re-queue\n", file)
+		return nil
+	} else if err != nil {
+		return err
+	}
+	st, err := store.Open("file:" + file)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = st.Close() }()
+
+	for _, p := range targets {
+		n, err := st.RequeueClaimedCommentsForProject(p.Name)
+		if err != nil {
+			return err
+		}
+		if multi {
+			fmt.Fprintf(out, "re-queued %d in %s\n", n, p.Name)
+		} else {
+			fmt.Fprintf(out, "re-queued %d\n", n)
+		}
+	}
+	return nil
+}
 
 // addProject registers a project: `outbox add <root> <docs...> [--agent <preset>
 // | --agent-cmd <cmd>]`. root (required) is the project repo root and must be an

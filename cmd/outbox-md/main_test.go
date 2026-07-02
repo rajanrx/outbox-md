@@ -403,7 +403,7 @@ func TestBuildServerMultiWiresPerProjectSourcesGuard(t *testing.T) {
 	_ = seed.Close()
 
 	// A single named project forces multi mode (DB at configHomeDir).
-	h, stop, err := buildServer(projDir, []registry.Project{{Name: "proj", Root: projDir, Docs: []string{"."}}}, false)
+	h, stop, err := buildServer(projDir, []registry.Project{{Name: "proj", Root: projDir, Docs: []string{"."}}}, false, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -458,7 +458,7 @@ func TestBuildServerImportSourcesRootRelativeNoDrift(t *testing.T) {
 	// add /repo docs/specs → Docs:["docs/specs"].
 	h, stop, err := buildServer(projDir, []registry.Project{
 		{Name: "proj", Root: projDir, Docs: []string{"docs/specs"}},
-	}, false)
+	}, false, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -490,7 +490,7 @@ func TestHealthz(t *testing.T) {
 func TestResolveFlagsAutoReply(t *testing.T) {
 	var out bytes.Buffer
 	// Default: absent flag → false.
-	_, _, ar, err := resolveFlags("serve", nil, &out)
+	_, _, ar, _, err := resolveFlags("serve", nil, &out)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -498,7 +498,7 @@ func TestResolveFlagsAutoReply(t *testing.T) {
 		t.Fatal("auto-reply should default false when the flag is absent")
 	}
 	// Present: -auto-reply → true.
-	_, _, ar, err = resolveFlags("serve", []string{"-auto-reply"}, &out)
+	_, _, ar, _, err = resolveFlags("serve", []string{"-auto-reply"}, &out)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -509,13 +509,13 @@ func TestResolveFlagsAutoReply(t *testing.T) {
 
 func TestAutoReplyNotifierOffByDefault(t *testing.T) {
 	// Neither flag nor config → no engine wired.
-	if n := autoReplyNotifier(t.TempDir(), nil, config.Config{}, false, nil); n != nil {
+	if n := autoReplyNotifier(t.TempDir(), nil, config.Config{}, false, true, nil); n != nil {
 		t.Fatal("autoReplyNotifier should be nil when off (no flag, no config)")
 	}
 }
 
 func TestAutoReplyNotifierFlagForcesOn(t *testing.T) {
-	n := autoReplyNotifier(t.TempDir(), nil, config.Config{AutoReply: false}, true, nil)
+	n := autoReplyNotifier(t.TempDir(), nil, config.Config{AutoReply: false}, true, true, nil)
 	if n == nil {
 		t.Fatal("the -auto-reply flag should force an engine even when config is false")
 	}
@@ -525,7 +525,7 @@ func TestAutoReplyNotifierFlagForcesOn(t *testing.T) {
 }
 
 func TestAutoReplyNotifierConfigEnables(t *testing.T) {
-	n := autoReplyNotifier(t.TempDir(), nil, config.Config{AutoReply: true}, false, nil)
+	n := autoReplyNotifier(t.TempDir(), nil, config.Config{AutoReply: true}, false, true, nil)
 	if n == nil {
 		t.Fatal("auto_reply: true in config should wire an engine without the flag")
 	}
@@ -899,4 +899,134 @@ func chdir(t *testing.T, dir string) func() {
 		t.Fatal(err)
 	}
 	return func() { _ = os.Chdir(prev) }
+}
+
+// --- outbox retry ---
+
+// TestRetryCmdMultiProject seeds a claimed comment in a registered project's
+// shared DB and confirms `outbox retry` (no arg) re-queues it and reports the
+// count per project.
+func TestRetryCmdMultiProject(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", home)
+
+	projDir := t.TempDir()
+	p, err := registry.Add(registryPath(), projDir, []string{"."}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(configHomeDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dbFile := filepath.Join(configHomeDir(), "outbox.db")
+	st, err := store.Open("file:" + dbFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, _, _ := st.CreateDocumentInProject(p.Name, "a.md", "hi", "human")
+	c, _ := st.CreateComment(domain.Comment{DocID: doc.ID, Status: domain.CommentOpen, AuthorIdentity: "h", Owner: "h"})
+	if err := st.UpdateCommentStatus(c.ID, domain.CommentClaimed, "tok"); err != nil {
+		t.Fatal(err)
+	}
+	_ = st.Close()
+
+	var out bytes.Buffer
+	if err := retryCmd(nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "re-queued 1 in "+p.Name) {
+		t.Fatalf("retry output = %q, want \"re-queued 1 in %s\"", out.String(), p.Name)
+	}
+
+	st2, _ := store.Open("file:" + dbFile)
+	defer st2.Close()
+	got, _ := st2.GetComment(c.ID)
+	if got.Status != domain.CommentOpen || got.ClaimToken != "" {
+		t.Fatalf("comment not re-queued: status=%q token=%q", got.Status, got.ClaimToken)
+	}
+}
+
+// TestRetryCmdNamedProject targets a single project by name.
+func TestRetryCmdNamedProject(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", home)
+	projDir := t.TempDir()
+	p, err := registry.Add(registryPath(), projDir, []string{"."}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(configHomeDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := store.Open("file:" + filepath.Join(configHomeDir(), "outbox.db"))
+	doc, _, _ := st.CreateDocumentInProject(p.Name, "a.md", "hi", "human")
+	c, _ := st.CreateComment(domain.Comment{DocID: doc.ID, Status: domain.CommentOpen, AuthorIdentity: "h", Owner: "h"})
+	_ = st.UpdateCommentStatus(c.ID, domain.CommentClaimed, "tok")
+	_ = st.Close()
+
+	var out bytes.Buffer
+	if err := retryCmd([]string{p.Name}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "re-queued 1 in "+p.Name) {
+		t.Fatalf("named retry output = %q", out.String())
+	}
+}
+
+// TestRetryCmdUnknownProjectErrors: an unregistered name fails with the retry
+// help, even before any DB is opened.
+func TestRetryCmdUnknownProjectErrors(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", home)
+	projDir := t.TempDir()
+	if _, err := registry.Add(registryPath(), projDir, []string{"."}, ""); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := retryCmd([]string{"does-not-exist"}, &out); err == nil {
+		t.Fatal("unknown project should error")
+	}
+	if !strings.Contains(out.String(), "outbox retry") {
+		t.Fatalf("unknown project should print retry help, got %q", out.String())
+	}
+}
+
+// TestRetryCmdSingleFolder: with no registry, retry targets the single-folder DB
+// under OUTBOX_DIR and prints a bare count.
+func TestRetryCmdSingleFolder(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", home) // empty registry ⇒ single-folder mode
+	dir := t.TempDir()
+	t.Setenv("OUTBOX_DIR", dir)
+
+	if err := os.MkdirAll(filepath.Join(dir, ".outbox"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := store.Open("file:" + filepath.Join(dir, ".outbox", "outbox.db"))
+	doc, _, _ := st.CreateDocumentInProject("", "a.md", "hi", "human")
+	c, _ := st.CreateComment(domain.Comment{DocID: doc.ID, Status: domain.CommentOpen, AuthorIdentity: "h", Owner: "h"})
+	_ = st.UpdateCommentStatus(c.ID, domain.CommentClaimed, "tok")
+	_ = st.Close()
+
+	var out bytes.Buffer
+	if err := retryCmd(nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(out.String()); got != "re-queued 1" {
+		t.Fatalf("single-folder retry output = %q, want \"re-queued 1\"", got)
+	}
+}
+
+// TestRetryCmdNoDatabase: a missing review database is reported, not created.
+func TestRetryCmdNoDatabase(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", home)
+	t.Setenv("OUTBOX_DIR", t.TempDir())
+	var out bytes.Buffer
+	if err := retryCmd(nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "no review database") {
+		t.Fatalf("missing DB output = %q, want a 'no review database' notice", out.String())
+	}
 }
