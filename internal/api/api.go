@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -649,7 +650,32 @@ func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub) http.Handler {
 	// so a stale hidden-doc id can't read or mutate through any single endpoint.
 	// A single guard wrapping the mux can't miss a route the way per-handler
 	// checks could. No-op (zero extra lookups) when no whitelist is configured.
-	return guardSources(mux, svc, st)
+	return guardCSRF(guardSources(mux, svc, st))
+}
+
+// guardCSRF rejects cross-origin state-changing requests. outbox is a no-auth
+// localhost server, so without this a malicious webpage the user visits could POST
+// to http://localhost:8181/api/... and drive project changes — including the
+// /api/projects root os.Stat, a filesystem-probe vector (CodeQL go/path-injection).
+// A browser ALWAYS attaches Origin on a cross-origin request, so for unsafe methods
+// we reject when Origin is present and its host differs from the request Host.
+// Same-origin UI calls (Origin == Host) pass; non-browser clients (curl, scripts,
+// the agent CLIs — no Origin, not a CSRF vector) pass; /mcp is mounted separately
+// and is unaffected. This closes the drive-by vector so the arbitrary-but-intended
+// local project root is only reachable by the local user.
+func guardCSRF(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+			if origin := r.Header.Get("Origin"); origin != "" {
+				if u, err := url.Parse(origin); err != nil || u.Host != r.Host {
+					http.Error(w, "cross-origin request rejected", http.StatusForbidden)
+					return
+				}
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // guardSources 404s any doc- or comment-scoped request whose target doc is
