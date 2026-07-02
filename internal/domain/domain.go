@@ -186,6 +186,7 @@ type Synthesis struct {
 	ID             string  `json:"id"`
 	CandidateSetID string  `json:"candidateSetId"`
 	AgreementScore float64 `json:"agreementScore"` // 0..1
+	Confidence     int     `json:"confidence"`     // 0..100, the chair's confidence in the verdict
 	Dissent        string  `json:"dissent"`        // the preserved minority/skeptic position
 	SuggestionID   string  `json:"suggestionId"`
 	CreatedBy      string  `json:"createdBy"`

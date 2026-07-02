@@ -109,9 +109,9 @@ func (s *Store) RecordSynthesis(syn domain.Synthesis) (domain.Synthesis, error) 
 		syn.ID = domain.NewID()
 	}
 	_, err := s.DB.Exec(
-		`INSERT INTO syntheses(id, candidate_set_id, agreement_score, dissent, suggestion_id, created_by)
-		 VALUES(?,?,?,?,?,?)`,
-		syn.ID, syn.CandidateSetID, syn.AgreementScore, syn.Dissent, syn.SuggestionID, syn.CreatedBy)
+		`INSERT INTO syntheses(id, candidate_set_id, agreement_score, confidence, dissent, suggestion_id, created_by)
+		 VALUES(?,?,?,?,?,?,?)`,
+		syn.ID, syn.CandidateSetID, syn.AgreementScore, syn.Confidence, syn.Dissent, syn.SuggestionID, syn.CreatedBy)
 	return syn, err
 }
 
@@ -119,10 +119,10 @@ func (s *Store) RecordSynthesis(syn domain.Synthesis) (domain.Synthesis, error) 
 func (s *Store) GetSynthesisByComment(commentID string) (domain.Synthesis, bool, error) {
 	var syn domain.Synthesis
 	err := s.DB.QueryRow(
-		`SELECT sy.id, sy.candidate_set_id, sy.agreement_score, sy.dissent, sy.suggestion_id, sy.created_by
+		`SELECT sy.id, sy.candidate_set_id, sy.agreement_score, sy.confidence, sy.dissent, sy.suggestion_id, sy.created_by
 		 FROM syntheses sy JOIN candidate_sets cs ON sy.candidate_set_id = cs.id
 		 WHERE cs.comment_id=? ORDER BY sy.created_at DESC, sy.rowid DESC LIMIT 1`, commentID).
-		Scan(&syn.ID, &syn.CandidateSetID, &syn.AgreementScore, &syn.Dissent, &syn.SuggestionID, &syn.CreatedBy)
+		Scan(&syn.ID, &syn.CandidateSetID, &syn.AgreementScore, &syn.Confidence, &syn.Dissent, &syn.SuggestionID, &syn.CreatedBy)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Synthesis{}, false, nil
 	}

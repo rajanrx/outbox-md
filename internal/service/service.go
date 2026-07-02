@@ -482,11 +482,11 @@ func (s *Service) ListCandidates(commentID string) (CouncilView, error) {
 
 // RecordSynthesis records the chair's roll-up of a candidate set and, when it
 // carries an edit, emits an ordinary Suggestion via the existing path so the
-// human's accept-flow is unchanged. The chair itself is the external runner;
-// this is the server-side record. (No MCP tool / endpoint drives this in the
-// server slice — it ships with the runner PR; it is exercised directly here.)
-func (s *Service) RecordSynthesis(commentID, dissent, content, createdBy string, agreementScore float64) (domain.Synthesis, error) {
-	c, err := s.store.GetComment(commentID)
+// human's accept-flow is unchanged. The chair is the external runner; only the
+// claiming council may record, so it validates the shared claim token like every
+// other write path. confidence (0..100) is the chair's confidence in the verdict.
+func (s *Service) RecordSynthesis(commentID, token, dissent, content, createdBy string, agreementScore float64, confidence int) (domain.Synthesis, error) {
+	c, err := s.requireToken(commentID, token)
 	if err != nil {
 		return domain.Synthesis{}, err
 	}
@@ -503,8 +503,8 @@ func (s *Service) RecordSynthesis(commentID, dissent, content, createdBy string,
 		suggestionID = sg.ID
 	}
 	syn, err := s.store.RecordSynthesis(domain.Synthesis{
-		CandidateSetID: set.ID, AgreementScore: agreementScore, Dissent: dissent,
-		SuggestionID: suggestionID, CreatedBy: createdBy,
+		CandidateSetID: set.ID, AgreementScore: agreementScore, Confidence: confidence,
+		Dissent: dissent, SuggestionID: suggestionID, CreatedBy: createdBy,
 	})
 	if err != nil {
 		return domain.Synthesis{}, err

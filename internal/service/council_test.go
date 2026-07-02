@@ -155,12 +155,18 @@ func TestRecordSynthesisEmitsSuggestionAndSetsState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	syn, err := svc.RecordSynthesis(c.ID, "skeptic dissented", "Hello there", "chair", 0.75)
+	syn, err := svc.RecordSynthesis(c.ID, tok, "skeptic dissented", "Hello there", "chair", 0.75, 80)
 	if err != nil {
 		t.Fatalf("synthesis: %v", err)
 	}
 	if syn.SuggestionID == "" {
 		t.Error("synthesis with edit content should link a suggestion")
+	}
+	if syn.Confidence != 80 {
+		t.Errorf("confidence = %d, want 80", syn.Confidence)
+	}
+	if view, _ := svc.ListCandidates(c.ID); view.Synthesis == nil || view.Synthesis.Confidence != 80 {
+		t.Errorf("confidence not persisted through the view: %+v", view.Synthesis)
 	}
 	view, _ := svc.ListCandidates(c.ID)
 	if view.Set.State != domain.CandidateSetSynthesized || view.Synthesis == nil {
@@ -296,7 +302,7 @@ func TestCouncilEditRejectedWhenStale(t *testing.T) {
 	if _, err := s2.AddVersion(doc2.ID, "changed content", "watch"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc2.RecordSynthesis(c2.ID, "", "howdy world", "chair", 0.9); err == nil {
+	if _, err := svc2.RecordSynthesis(c2.ID, tok2, "", "howdy world", "chair", 0.9, 50); err == nil {
 		t.Fatal("RecordSynthesis emitting a stale edit succeeded; want stale rejection")
 	}
 	if _, ok, _ := s2.GetSuggestionByComment(c2.ID); ok {

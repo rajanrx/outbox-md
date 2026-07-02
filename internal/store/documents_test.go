@@ -128,9 +128,12 @@ func TestMigrateAddsProjectToLegacyDB(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO documents(id, path) VALUES('d1','legacy.md')`); err != nil {
 		t.Fatal(err)
 	}
-	// migrate() also ALTERs comments; a legacy DB has that table, so give the
-	// fixture a minimal one for the migration to operate on.
+	// migrate() also ALTERs comments and syntheses; a legacy DB has those tables,
+	// so give the fixture minimal ones for the migration to operate on.
 	if _, err := db.Exec(`CREATE TABLE comments (id TEXT PRIMARY KEY)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE syntheses (id TEXT PRIMARY KEY)`); err != nil {
 		t.Fatal(err)
 	}
 	if err := migrate(db); err != nil {
