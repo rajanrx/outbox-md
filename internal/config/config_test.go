@@ -404,3 +404,52 @@ func TestCoversNormalizesKeyOnce(t *testing.T) {
 		t.Fatal(`Covers("notes/a.md") = true; want false (outside the sources whitelist)`)
 	}
 }
+
+// --- council guardrails (design §6) ---
+
+func TestCouncilDefaultsWhenAbsent(t *testing.T) {
+	cfg := Load(t.TempDir())
+	if got := cfg.ResolveCouncilRounds(); got != DefaultCouncilRounds {
+		t.Fatalf("council_rounds default = %d, want %d", got, DefaultCouncilRounds)
+	}
+	if got := cfg.ResolveCouncilBudget(); got != DefaultCouncilBudget {
+		t.Fatalf("council_budget default = %d, want %d", got, DefaultCouncilBudget)
+	}
+	if got := cfg.ResolveCouncilDeadlockThreshold(); got != DefaultCouncilDeadlockThreshold {
+		t.Fatalf("council_deadlock_threshold default = %d, want %d", got, DefaultCouncilDeadlockThreshold)
+	}
+}
+
+func TestCouncilFromYAML(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "council_rounds: 3\ncouncil_budget: 50000\ncouncil_deadlock_threshold: 40\n")
+	cfg := Load(dir)
+	if cfg.ResolveCouncilRounds() != 3 {
+		t.Fatalf("council_rounds = %d, want 3", cfg.ResolveCouncilRounds())
+	}
+	if cfg.ResolveCouncilBudget() != 50000 {
+		t.Fatalf("council_budget = %d, want 50000", cfg.ResolveCouncilBudget())
+	}
+	if cfg.ResolveCouncilDeadlockThreshold() != 40 {
+		t.Fatalf("council_deadlock_threshold = %d, want 40", cfg.ResolveCouncilDeadlockThreshold())
+	}
+}
+
+func TestCouncilZeroOrNegativeFallsBackToDefault(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "council_rounds: 0\ncouncil_budget: 0\ncouncil_deadlock_threshold: 0\n")
+	cfg := Load(dir)
+	if cfg.ResolveCouncilRounds() != DefaultCouncilRounds {
+		t.Fatalf("zero council_rounds resolved to %d, want default %d", cfg.ResolveCouncilRounds(), DefaultCouncilRounds)
+	}
+	if cfg.ResolveCouncilBudget() != DefaultCouncilBudget {
+		t.Fatalf("zero council_budget resolved to %d, want default %d", cfg.ResolveCouncilBudget(), DefaultCouncilBudget)
+	}
+	if cfg.ResolveCouncilDeadlockThreshold() != DefaultCouncilDeadlockThreshold {
+		t.Fatalf("zero council_deadlock_threshold resolved to %d, want default %d", cfg.ResolveCouncilDeadlockThreshold(), DefaultCouncilDeadlockThreshold)
+	}
+	// Negative on a raw Config likewise falls back.
+	if (Config{CouncilRounds: -5}).ResolveCouncilRounds() != DefaultCouncilRounds {
+		t.Fatal("negative council_rounds should fall back to default")
+	}
+}

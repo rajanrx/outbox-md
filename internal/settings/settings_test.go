@@ -83,3 +83,36 @@ func TestValidate(t *testing.T) {
 		t.Fatalf("string → %q,%v", v, err)
 	}
 }
+
+// TestCouncilIntFieldsEditableAndWrite: the three council guardrails are editable
+// int fields, and an int value written via WriteKey round-trips through config.
+func TestCouncilIntFieldsEditableAndWrite(t *testing.T) {
+	for _, key := range []string{"council_rounds", "council_budget", "council_deadlock_threshold"} {
+		f, ok := FieldByKey(key)
+		if !ok {
+			t.Fatalf("%s should be an editable field", key)
+		}
+		if f.Kind != KindInt {
+			t.Fatalf("%s kind = %q, want int", key, f.Kind)
+		}
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "outbox.yaml")
+	if err := os.WriteFile(path, []byte("# guidance\nauto_reply: false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteKey(path, "council_rounds", "3", KindInt); err != nil {
+		t.Fatalf("write int: %v", err)
+	}
+	txt, _ := os.ReadFile(path)
+	if !strings.Contains(string(txt), "council_rounds: 3") {
+		t.Fatalf("council_rounds not written as bare int:\n%s", txt)
+	}
+	if !strings.Contains(string(txt), "guidance") {
+		t.Fatalf("comment clobbered:\n%s", txt)
+	}
+	if cfg := config.Load(dir); cfg.ResolveCouncilRounds() != 3 {
+		t.Fatalf("council_rounds round-trip = %d, want 3", cfg.ResolveCouncilRounds())
+	}
+}

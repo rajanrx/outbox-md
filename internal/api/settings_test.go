@@ -176,3 +176,50 @@ func TestSettingsUnknownProjectMultiMode(t *testing.T) {
 		t.Fatalf("alpha wrongly updated:\n%s", a)
 	}
 }
+
+// TestSettingsCouncilIntFields: GET surfaces the council guardrails at their
+// effective (default) values, and PUT accepts an int and persists it.
+func TestSettingsCouncilIntFields(t *testing.T) {
+	h, dir := singleFolderAPI(t, "auto_reply: false\n")
+	path := filepath.Join(dir, "outbox.yaml")
+
+	// GET shows the three council keys at their defaults (2 / 200000 / 50).
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/settings", nil))
+	if rr.Code != 200 {
+		t.Fatalf("GET settings: %d %s", rr.Code, rr.Body.String())
+	}
+	var got map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &got)
+	// JSON numbers decode to float64.
+	if got["council_rounds"] != float64(2) {
+		t.Fatalf("GET council_rounds = %v, want 2", got["council_rounds"])
+	}
+	if got["council_budget"] != float64(200000) {
+		t.Fatalf("GET council_budget = %v, want 200000", got["council_budget"])
+	}
+	if got["council_deadlock_threshold"] != float64(50) {
+		t.Fatalf("GET council_deadlock_threshold = %v, want 50", got["council_deadlock_threshold"])
+	}
+
+	// PUT an int value; it persists as a bare int and round-trips.
+	body := `{"council_rounds": 4}`
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPut, "/api/settings", strings.NewReader(body)))
+	if rr.Code != 200 {
+		t.Fatalf("PUT settings: %d %s", rr.Code, rr.Body.String())
+	}
+	if raw, _ := os.ReadFile(path); !strings.Contains(string(raw), "council_rounds: 4") {
+		t.Fatalf("council_rounds not written:\n%s", raw)
+	}
+	if cfg := config.Load(dir); cfg.ResolveCouncilRounds() != 4 {
+		t.Fatalf("council_rounds round-trip = %d, want 4", cfg.ResolveCouncilRounds())
+	}
+
+	// A non-int value is rejected.
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPut, "/api/settings", strings.NewReader(`{"council_budget": "lots"}`)))
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("PUT non-int council_budget code = %d, want 400", rr.Code)
+	}
+}

@@ -41,6 +41,9 @@ var Editable = []Field{
 	{Key: "auto_update", Kind: KindBool, Desc: "self-update on `outbox up`"},
 	{Key: "auto_reply", Kind: KindBool, Desc: "spawn the agent CLI on each human comment"},
 	{Key: "agent_cmd", Kind: KindString, Desc: "command template the auto-reply engine spawns ({prompt} token)"},
+	{Key: "council_rounds", Kind: KindInt, Desc: "max council discussion rounds (early-exit on consensus)"},
+	{Key: "council_budget", Kind: KindInt, Desc: "per-council token budget guardrail"},
+	{Key: "council_deadlock_threshold", Kind: KindInt, Desc: "confidence % below which the chair posts \"no consensus\" options"},
 }
 
 // FieldByKey returns the editable field for key, if any.
