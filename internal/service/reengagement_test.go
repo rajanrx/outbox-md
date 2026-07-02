@@ -17,7 +17,7 @@ func TestHumanReplyReEngagesCouncil(t *testing.T) {
 	defer s.Close()
 	svc := New(s, func(_, _, _ string) error { return nil })
 	c, tok := claimedComment(t, s, svc)
-	if _, err := svc.SubmitReview(c.ID, tok, domain.LensCorrectness, domain.VerdictEdit, "fix", "Hello there", "m1"); err != nil {
+	if _, err := svc.SubmitReview(c.ID, tok, 0, domain.LensCorrectness, domain.VerdictEdit, "fix", "Hello there", "m1"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.RecordSynthesis(c.ID, tok, "", "Hello there", "chair", 0.9, 90); err != nil {
@@ -81,5 +81,44 @@ func TestRefineSurfacesNewestSuggestion(t *testing.T) {
 	}
 	if sg, ok, _ := s.GetSuggestionByComment(c.ID); !ok || sg.ProposedContent != "second draft" {
 		t.Fatalf("suggestion = %q ok=%v, want the newest 'second draft'", sg.ProposedContent, ok)
+	}
+}
+
+// TestPendingViewAgreesWithAccept: the folder-wide pending query must return the
+// SAME (newest) suggestion the inline/Accept path applies, so a user can't review
+// an old diff in the pending view and then accept a different, newer one. Both use
+// the created_at DESC, rowid DESC tiebreak after a same-second re-propose.
+func TestPendingViewAgreesWithAccept(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _, _ string) error { return nil })
+	c, tok := claimedComment(t, s, svc)
+	if _, err := svc.Propose(c.ID, tok, "first draft", "agent"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.HumanReply(c.ID, "refine: tighten it"); err != nil {
+		t.Fatal(err)
+	}
+	tok2, _, _ := svc.Claim([]string{c.ID}, "agent")
+	if _, err := svc.Propose(c.ID, tok2, "second draft", "agent"); err != nil {
+		t.Fatal(err)
+	}
+
+	pend, err := s.ListPendingSuggestions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found *store.PendingSuggestion
+	for i := range pend {
+		if pend[i].CommentID == c.ID {
+			found = &pend[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("comment %s missing from pending list %+v", c.ID, pend)
+	}
+	sg, _, _ := s.GetSuggestionByComment(c.ID)
+	if found.Proposed != "second draft" || found.Proposed != sg.ProposedContent {
+		t.Fatalf("pending view = %q; Accept path = %q; want both 'second draft'", found.Proposed, sg.ProposedContent)
 	}
 }

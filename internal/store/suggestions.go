@@ -79,7 +79,7 @@ func (s *Store) ListPendingSuggestions() ([]PendingSuggestion, error) {
 		  AND s.id = (
 			SELECT id FROM suggestions s2
 			WHERE s2.comment_id = s.comment_id
-			ORDER BY created_at DESC LIMIT 1
+			ORDER BY created_at DESC, rowid DESC LIMIT 1
 		  )
 		ORDER BY d.path`, domain.SuggestionProposed, domain.CommentResolved, domain.CommentDetached)
 	if err != nil {
