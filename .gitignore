@@ -36,3 +36,7 @@ docs/**/__*
 
 # air build dir
 tmp/
+
+# Full-tour video production kit (mock stage, takes, renders, thumbnails) — local only.
+# Ignored rather than committed so `git clean -fd` cannot delete it either.
+docs/media/fulltour-production/
