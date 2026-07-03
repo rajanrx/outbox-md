@@ -1,6 +1,7 @@
 package service
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/rajanrx/outbox-md/internal/domain"
@@ -39,6 +40,16 @@ func TestPickNonEditRejectsStaleChairSuggestion(t *testing.T) {
 	// interactive only while proposed, won't offer Accept/Reject for it).
 	if sg, ok, _ := s.GetSuggestionByComment(c.ID); !ok || sg.State == domain.SuggestionProposed {
 		t.Fatalf("after a non-edit pick the chair's stale edit must not remain proposed; got %+v", sg)
+	}
+	// The picked no-edit outcome must be RECORDED + the comment moved out of the
+	// 'addressed' state the chair edit left it in — not stranded silently.
+	got, _ := s.GetComment(c.ID)
+	if got.Status != domain.CommentReplied {
+		t.Fatalf("status = %q, want replied (out of addressed) after a non-edit pick", got.Status)
+	}
+	th, _ := s.ListThread(c.ID)
+	if len(th) == 0 || !strings.Contains(th[len(th)-1].Body, "Council pick") || !strings.Contains(th[len(th)-1].Body, "m1") {
+		t.Fatalf("expected a visible 'Council pick' reply naming the picked member; thread=%+v", th)
 	}
 }
 

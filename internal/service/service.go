@@ -710,6 +710,29 @@ func (s *Service) PickCandidate(commentID, candidateID, actor string) (domain.Ca
 		if _, err := s.emitSuggestion(c, cand.Content, cand.AgentIdentity); err != nil {
 			return domain.Candidate{}, err
 		}
+	} else {
+		// Non-edit pick (reply / reject_comment): record the chosen no-edit outcome
+		// visibly and move the comment OUT of 'addressed' (where RecordSynthesis left
+		// it when it emitted the now-rejected chair edit). Mirror the no-edit
+		// synthesis path — a human-visible thread reply naming the pick + status
+		// 'replied' — so the no-consensus flow isn't left stranded with no live
+		// suggestion and no explanation of what was chosen. comment.updated (not
+		// .replied) so the council isn't re-triggered by its own resolution.
+		verdict := "reply"
+		if cand.Verdict == domain.VerdictRejectComment {
+			verdict = "reject"
+		}
+		body := fmt.Sprintf("Council pick: %s — %s (%s lens). %s", verdict, cand.AgentIdentity, cand.Lens, cand.Rationale)
+		if _, err := s.store.AddThreadMessage(domain.ThreadMessage{
+			CommentID: commentID, AuthorIdentity: LocalHuman, Body: body,
+		}); err != nil {
+			return domain.Candidate{}, err
+		}
+		if err := s.store.UpdateCommentStatus(commentID, domain.CommentReplied, c.ClaimToken); err != nil {
+			return domain.Candidate{}, err
+		}
+		_ = s.store.SetProcessingUntil(commentID, nil)
+		s.fireCommentEvent(webhook.EventCommentUpdated, c)
 	}
 	return cand, nil
 }
