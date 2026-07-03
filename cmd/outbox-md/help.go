@@ -48,6 +48,21 @@ Examples:
   outbox up -auto-reply               # open the UI with the agent loop on
   outbox up -logs=false               # start quietly (no agent output stream)
 `,
+	"down": `outbox down — stop the running outbox server (frees its port).
+
+Usage:
+  outbox down [-addr <host:port>]
+
+Finds the process listening on the addr's port and stops it (SIGTERM). Use this when
+"outbox up" reports "address already in use", or to shut the server down cleanly.
+
+Flags:
+  -addr   listen address of the server to stop (default ":8181", env OUTBOX_ADDR)
+
+Examples:
+  outbox down                 # stop the server on :8181
+  outbox down -addr :9090     # stop a server on :9090
+`,
 	"init": `outbox init — scaffold outbox.yaml + register the MCP with detected AI clients.
 
 Usage:
@@ -201,12 +216,15 @@ func usageFor(w io.Writer, name string) {
 func usage(w io.Writer) {
 	fmt.Fprint(w, `outbox-md — local-first, agent-agnostic review for AI-generated Markdown specs.
 
+To get started:  outbox init  →  outbox up --auto-reply     (stop it with: outbox down)
+
 Usage:
   outbox <command> [flags]
 
 Commands (with a one-line example each):
   serve      Serve the review UI + MCP endpoint      outbox serve -dir docs
-  up         Serve, then open the browser            outbox up
+  up         Serve, then open the browser            outbox up --auto-reply
+  down       Stop the running server (frees the port) outbox down
   init       Scaffold outbox.yaml + register MCP     outbox init
   add        Register a project (root + docs...)     outbox add ~/work/app docs/specs
   remove     Unregister projects/docs (multiselect)  outbox remove
@@ -219,7 +237,7 @@ Commands (with a one-line example each):
   help       Show this help (or "help <command>")    outbox help add
 
 Getting started:
-  outbox init && outbox up
+  outbox init && outbox up --auto-reply     # then stop with: outbox down
 
 Multiple projects:
   outbox add ~/my-specs-repo .        # register a repo (whole repo is specs)

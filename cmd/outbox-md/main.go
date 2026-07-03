@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -314,6 +316,8 @@ func run(args []string, out io.Writer) error {
 		return serve(rest, false)
 	case "up":
 		return serve(rest, true)
+	case "down":
+		return downCmd(rest, out)
 	case "init":
 		return initProject(rest, out)
 	case "add":
@@ -339,6 +343,86 @@ func run(args []string, out io.Writer) error {
 		usage(out)
 		return fmt.Errorf("unknown command %q (run \"outbox help\")", cmd)
 	}
+}
+
+// downCmd stops a running outbox server by finding the process listening on the
+// addr's port and sending it SIGTERM — the counterpart to up/serve for when the
+// port is held ("address already in use"). It shells out to lsof to resolve the
+// listener (outbox is a local mac/Linux tool) and never force-kills, so the server
+// shuts down cleanly.
+func downCmd(args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("down", flag.ContinueOnError)
+	fs.SetOutput(out)
+	fs.Usage = func() { usageFor(out, "down") }
+	addr := fs.String("addr", getenv("OUTBOX_ADDR", ":8181"), "listen address of the server to stop")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	port := portOf(*addr)
+	if port == "" {
+		return fmt.Errorf("could not parse a port from -addr %q", *addr)
+	}
+	pids, err := listenerPIDs(port)
+	if err != nil {
+		return err
+	}
+	if len(pids) == 0 {
+		fmt.Fprintf(out, "no outbox server is listening on port %s\n", port)
+		return nil
+	}
+	for _, pid := range pids {
+		if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
+			fmt.Fprintf(out, "could not stop pid %d: %v\n", pid, err)
+			continue
+		}
+		fmt.Fprintf(out, "stopped outbox server (pid %d) on port %s\n", pid, port)
+	}
+	return nil
+}
+
+// portOf extracts the port from a listen address like ":8181", "localhost:8181",
+// or a bare "8181". Returns "" when no port can be determined.
+func portOf(addr string) string {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return ""
+	}
+	if _, p, err := net.SplitHostPort(addr); err == nil {
+		return p
+	}
+	// A colon-less string is a port only if it is numeric ("8181"); a bare host
+	// ("localhost") has no port.
+	if !strings.Contains(addr, ":") {
+		if _, err := strconv.Atoi(addr); err == nil {
+			return addr
+		}
+	}
+	return ""
+}
+
+// listenerPIDs returns the PIDs listening on the given TCP port via lsof. An empty
+// result means nothing is listening; a missing lsof is surfaced with a hint since
+// outbox relies on it for `down`.
+func listenerPIDs(port string) ([]int, error) {
+	b, err := exec.Command("lsof", "-ti", "tcp:"+port, "-sTCP:LISTEN").Output()
+	if err != nil {
+		// lsof exits 1 with no output when there are simply no matches — not an error.
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && len(b) == 0 {
+			return nil, nil
+		}
+		if errors.Is(err, exec.ErrNotFound) {
+			return nil, fmt.Errorf("`lsof` not found — needed to locate the server; stop it manually (or install lsof)")
+		}
+		return nil, err
+	}
+	var pids []int
+	for _, line := range strings.Fields(string(b)) {
+		if n, e := strconv.Atoi(line); e == nil {
+			pids = append(pids, n)
+		}
+	}
+	return pids, nil
 }
 
 // resolveFlags parses -dir/-addr for the server subcommands. Precedence is
