@@ -116,6 +116,12 @@ export function CouncilModal({ view, title, onClose }: {
           {s && (
             <section className="council-synthesis">
               <div className="council-round-title">Chair synthesis</div>
+              <div className="council-synthesis-decision">
+                {s.suggestionId ? "Edit proposed" : "Reply — no edit"}
+              </div>
+              {s.summary && (
+                <div className="council-synthesis-summary council-msg-body">{s.summary}</div>
+              )}
               <div className="council-synthesis-stats">
                 <span className="council-stat">
                   Agreement <b>{Math.round(s.agreementScore * 100)}%</b>
