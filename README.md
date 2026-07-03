@@ -4,11 +4,11 @@
 
 <div align="center">
 
-<a href="https://www.youtube.com/watch?v=CNT49m0xBOY">
-  <img src="docs/media/explainer-thumb.png" alt="Watch: What is outbox-md?" width="100%">
+<a href="https://www.youtube.com/watch?v=LN0Z_cve36w">
+  <img src="docs/media/hero-thumb.png" alt="Watch: outbox-md — the full walkthrough" width="100%">
 </a>
 
-<em>▶ <b><a href="https://www.youtube.com/watch?v=CNT49m0xBOY">What is outbox-md?</a></b> — the 2-minute intro</em>
+<em>▶ <b><a href="https://www.youtube.com/watch?v=LN0Z_cve36w">Watch the full walkthrough</a></b> — what it is, how to use it, and the architecture</em>
 
 </div>
 
@@ -100,23 +100,6 @@ The review loop, governance, and audit log all work and are covered by tests. Ho
 - **Agents respond, they don't initiate** — an agent acts on comments *you* raise; it can't open new ones (AI-council is on the roadmap).
 
 ---
-
-## Watch & learn
-
-<div align="center">
-<table>
-<tr>
-<td width="50%" valign="top">
-  <a href="https://www.youtube.com/watch?v=4VH7NT095ms"><img src="docs/media/tutorial-thumb.png" alt="Tutorial" width="100%"></a>
-  <p align="center"><b>▶ <a href="https://www.youtube.com/watch?v=4VH7NT095ms">Using outbox-md</a></b><br/>Run it → comment → connect an agent → accept</p>
-</td>
-<td width="50%" valign="top">
-  <a href="https://www.youtube.com/watch?v=VmuwLniMU9M"><img src="docs/media/deepdive-thumb.png" alt="Deep dive" width="100%"></a>
-  <p align="center"><b>▶ <a href="https://www.youtube.com/watch?v=VmuwLniMU9M">Architecture &amp; Vision</a></b><br/>The hard parts and where it's headed — for builders</p>
-</td>
-</tr>
-</table>
-</div>
 
 ## Design
 
