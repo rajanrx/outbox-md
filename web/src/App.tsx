@@ -153,6 +153,13 @@ export default function App() {
     const onEvent = (e: MessageEvent) => {
       try {
         const d = JSON.parse(e.data) as { docId?: string };
+        // A comment created/resolved/status-changed shifts the file-tree badge for
+        // ITS doc — which may not be the open one — so refresh the doc list (it
+        // carries openComments) OUTSIDE the open-doc filter. Skip the high-frequency
+        // no-count events (processing heartbeats, suggestion.proposed, approvals).
+        if (e.type === "comment.created" || e.type === "comment.resolved" || e.type === "comment.updated") {
+          listDocs().then((docs) => setDocs(docs ?? []));
+        }
         if (!d.docId || d.docId === docIdRef.current) {
           refreshRef.current();
           // refresh() reloads the comment LIST; each open Card keeps its own
