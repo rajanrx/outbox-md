@@ -67,6 +67,9 @@ export default function App() {
   const [deadlockThreshold, setDeadlockThreshold] = useState(50);
   // KB retrieval mode for the header chip (§5.5): "" until config loads.
   const [retrievalMode, setRetrievalMode] = useState("");
+  // Project council_default (/api/config): the fallback seed for a new comment's
+  // council toggle. Threaded to each Card via Margin.
+  const [councilDefault, setCouncilDefault] = useState(false);
   const [commentsW, setCommentsW] = useState(() => {
     const v = Number(localStorage.getItem(COMMENTS_W_KEY));
     return v ? clampW(v) : 420;
@@ -183,6 +186,7 @@ export default function App() {
       setVersion(c?.version ?? "");
       if (typeof c?.councilDeadlockThreshold === "number") setDeadlockThreshold(c.councilDeadlockThreshold);
       setRetrievalMode(c?.retrievalMode ?? "");
+      if (typeof c?.councilDefault === "boolean") setCouncilDefault(c.councilDefault);
     });
   }, []);
   // Load the registered projects; keep the stored selection if it is still valid,
@@ -198,6 +202,13 @@ export default function App() {
 
   // Show the switcher only with 2+ projects — single-folder UX stays uncluttered.
   const multiProject = projects.length > 1;
+  // The current project runs a council iff it has >=2 members AND a chair — mirrors
+  // the backend isCouncil predicate. Only then is the per-comment council toggle
+  // shown. Single-folder mode has no roster, so it is never a council project.
+  const councilProject = useMemo(() => {
+    const p = projects.find((x) => x.name === project) ?? (projects.length === 1 ? projects[0] : undefined);
+    return (p?.members?.length ?? 0) >= 2 && !!p?.chair?.agent;
+  }, [projects, project]);
   // Docs visible in the tree: filtered to the selected project when multi-project,
   // otherwise every doc (single-folder mode, back-compat).
   const visibleDocs = useMemo(
@@ -375,7 +386,7 @@ export default function App() {
           {commentsOpen && <div className="resize-handle" onMouseDown={startResize} title="Drag to resize" />}
           <div className="panel-head">Comments <span className="count">{openCount}</span></div>
           <div className="panel-body">
-            {view && <Margin docId={docId} content={view.content} docPath={view.document.path} rootRef={rootRef} comments={view.comments ?? []} reloadKey={threadTick} deadlockThreshold={deadlockThreshold} onChange={refresh} />}
+            {view && <Margin docId={docId} content={view.content} docPath={view.document.path} rootRef={rootRef} comments={view.comments ?? []} reloadKey={threadTick} deadlockThreshold={deadlockThreshold} councilProject={councilProject} councilDefault={councilDefault} onChange={refresh} />}
           </div>
         </aside>
       </div>

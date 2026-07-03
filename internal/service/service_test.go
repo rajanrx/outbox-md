@@ -1038,3 +1038,53 @@ func TestPostCommentBlockedOnApprovedWhenDisabled(t *testing.T) {
 		t.Fatalf("post-approval comment should be allowed when enabled: %v", err)
 	}
 }
+
+// TestPostCommentSeedsCouncilFromDefault: a new comment inherits its council flag
+// from the effective config's council_default — false (system default) ⇒ single-
+// agent, true ⇒ full council — and SetCommentCouncil flips a comment's flag.
+func TestPostCommentSeedsCouncilFromDefault(t *testing.T) {
+	dir := t.TempDir()
+	s, err := store.Open("file:" + filepath.Join(dir, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	svc := New(s, func(_, _, _ string) error { return nil })
+
+	doc, _, _ := s.CreateDocument("spec.md", "base", "human")
+
+	// Default config → council_default false → new comment seeded single-agent.
+	svc.SetConfig(config.Defaults())
+	off, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 4}, "human")
+	if off.CouncilEnabled {
+		t.Fatalf("with council_default=false, new comment CouncilEnabled=true, want false")
+	}
+
+	// council_default true → new comment seeded council-on.
+	cfg := config.Defaults()
+	cfg.CouncilDefault = true
+	svc.SetConfig(cfg)
+	on, _ := svc.PostComment(doc.ID, domain.Anchor{Start: 0, End: 4}, "human")
+	if !on.CouncilEnabled {
+		t.Fatalf("with council_default=true, new comment CouncilEnabled=false, want true")
+	}
+
+	// SetCommentCouncil flips a comment's flag and persists.
+	if err := svc.SetCommentCouncil(off.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.GetComment(off.ID); !got.CouncilEnabled {
+		t.Fatalf("after SetCommentCouncil(true), CouncilEnabled=false, want true")
+	}
+	if err := svc.SetCommentCouncil(on.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.GetComment(on.ID); got.CouncilEnabled {
+		t.Fatalf("after SetCommentCouncil(false), CouncilEnabled=true, want false")
+	}
+
+	// A missing comment is an error (GetComment guard).
+	if err := svc.SetCommentCouncil("nope", true); err == nil {
+		t.Fatalf("SetCommentCouncil on unknown comment: err=nil, want error")
+	}
+}

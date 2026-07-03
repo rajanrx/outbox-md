@@ -483,9 +483,13 @@ function OutboxYamlSections({
               <span className="settings-copy"><b>Deadlock threshold</b><small>Rounds without progress before forcing a decision.</small></span>
               <input type="number" min={0} value={values.council_deadlock_threshold} onChange={(e) => set("council_deadlock_threshold", num(e.target.value))} />
             </label>
+            <label className="settings-toggle">
+              <input type="checkbox" checked={values.council_default} onChange={(e) => set("council_default", e.target.checked)} />
+              <span className="settings-copy"><b>Council on new comments by default</b><small>Seed a new comment to run the full council rather than a single agent.</small></span>
+            </label>
           </div>
         )}
-        <SaveRow state={council} onSave={() => saveKeys(["council_rounds", "council_budget", "council_deadlock_threshold"], setCouncil)} disabled={values === null} savedLabel="Saved ✓ · restart to apply" />
+        <SaveRow state={council} onSave={() => saveKeys(["council_rounds", "council_budget", "council_deadlock_threshold", "council_default"], setCouncil)} disabled={values === null} savedLabel="Saved ✓ · restart to apply" />
       </section>
 
       <section className="settings-section">

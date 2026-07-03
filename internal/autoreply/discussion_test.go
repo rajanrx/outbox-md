@@ -71,7 +71,7 @@ func discConfig(rec *discRecorder, members []string, chair string, rounds, budge
 			if atomic.AddInt32(&served, 1) > 1 {
 				return nil, nil
 			}
-			return []CommentRef{{ID: "c1", DocID: "doc-1", Excerpt: "flagged sentence", Thread: "human: fix this"}}, nil
+			return []CommentRef{{ID: "c1", DocID: "doc-1", Excerpt: "flagged sentence", Thread: "human: fix this", CouncilEnabled: true}}, nil
 		},
 		Heartbeat:                func(string, string) error { return nil },
 		CouncilState:             state,

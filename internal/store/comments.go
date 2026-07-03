@@ -9,11 +9,12 @@ import (
 
 func scanComment(scan func(...any) error) (domain.Comment, error) {
 	var c domain.Comment
-	var pa int
+	var pa, ce int
 	var pu, ca sql.NullString
 	err := scan(&c.ID, &c.DocID, &c.AgainstVersionID, &c.Anchor.Start, &c.Anchor.End,
-		&c.AuthorIdentity, &c.Owner, &c.Status, &c.ClaimToken, &pa, &pu, &ca)
+		&c.AuthorIdentity, &c.Owner, &c.Status, &c.ClaimToken, &pa, &pu, &ca, &ce)
 	c.PostApproval = pa != 0
+	c.CouncilEnabled = ce != 0
 	if err == nil && pu.Valid && pu.String != "" {
 		if t, perr := time.Parse(time.RFC3339Nano, pu.String); perr == nil {
 			c.ProcessingUntil = &t
@@ -28,7 +29,7 @@ func scanComment(scan func(...any) error) (domain.Comment, error) {
 }
 
 const commentCols = `id, doc_id, against_version_id, anchor_start, anchor_end,
-	author_identity, owner, status, claim_token, post_approval, processing_until, claimed_at`
+	author_identity, owner, status, claim_token, post_approval, processing_until, claimed_at, council_enabled`
 
 // StaleClaimGrace is how long a claim may sit un-heart-beated before
 // list_open_comments treats it as ABANDONED and re-surfaces it. It bounds the
@@ -58,11 +59,28 @@ func (s *Store) CreateComment(c domain.Comment) (domain.Comment, error) {
 	if c.PostApproval {
 		pa = 1
 	}
-	_, err := s.DB.Exec(`INSERT INTO comments(`+commentCols+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+	ce := 0
+	if c.CouncilEnabled {
+		ce = 1
+	}
+	_, err := s.DB.Exec(`INSERT INTO comments(`+commentCols+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		c.ID, c.DocID, c.AgainstVersionID, c.Anchor.Start, c.Anchor.End,
 		c.AuthorIdentity, c.Owner, c.Status, c.ClaimToken, pa,
-		nullTime(c.ProcessingUntil), nullTime(c.ClaimedAt))
+		nullTime(c.ProcessingUntil), nullTime(c.ClaimedAt), ce)
 	return c, err
+}
+
+// SetCommentCouncil sets the per-comment council on/off flag (see
+// domain.Comment.CouncilEnabled). It is a human-only toggle from the thread UI —
+// like resolve/accept, it changes no status and writes no file, only the flag
+// that selects the council vs single-agent processing path for the comment.
+func (s *Store) SetCommentCouncil(commentID string, enabled bool) error {
+	ce := 0
+	if enabled {
+		ce = 1
+	}
+	_, err := s.DB.Exec(`UPDATE comments SET council_enabled=? WHERE id=?`, ce, commentID)
+	return err
 }
 
 // SetProcessingUntil sets (or, with nil, clears) the ephemeral processing hint on

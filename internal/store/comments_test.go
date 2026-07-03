@@ -1,11 +1,112 @@
 package store
 
 import (
+	"database/sql"
 	"testing"
 	"time"
 
 	"github.com/rajanrx/outbox-md/internal/domain"
 )
+
+// TestCommentCouncilEnabledRoundTrips covers the per-comment council flag: a fresh
+// comment defaults to false; a comment created with true scans back true;
+// SetCommentCouncil flips it both ways.
+func TestCommentCouncilEnabledRoundTrips(t *testing.T) {
+	s, _ := Open(":memory:")
+	defer s.Close()
+	doc, _, _ := s.CreateDocument("a.md", "hi", "human")
+
+	// Fresh comment (flag unset) defaults to false.
+	off, err := s.CreateComment(domain.Comment{
+		DocID: doc.ID, AgainstVersionID: doc.CurrentVersionID,
+		Anchor: domain.Anchor{Start: 0, End: 1}, AuthorIdentity: "human",
+		Owner: "human", Status: domain.CommentOpen,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.GetComment(off.ID)
+	if got.CouncilEnabled {
+		t.Fatalf("fresh comment CouncilEnabled = true, want false (system default)")
+	}
+
+	// Comment created WITH the flag scans back true.
+	on, err := s.CreateComment(domain.Comment{
+		DocID: doc.ID, AgainstVersionID: doc.CurrentVersionID,
+		Anchor: domain.Anchor{Start: 0, End: 1}, AuthorIdentity: "human",
+		Owner: "human", Status: domain.CommentOpen, CouncilEnabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.GetComment(on.ID)
+	if !got.CouncilEnabled {
+		t.Fatalf("seeded comment CouncilEnabled = false, want true")
+	}
+
+	// SetCommentCouncil flips it both ways.
+	if err := s.SetCommentCouncil(off.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.GetComment(off.ID); !got.CouncilEnabled {
+		t.Fatalf("after SetCommentCouncil(true), CouncilEnabled = false, want true")
+	}
+	if err := s.SetCommentCouncil(off.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.GetComment(off.ID); got.CouncilEnabled {
+		t.Fatalf("after SetCommentCouncil(false), CouncilEnabled = true, want false")
+	}
+
+	// The flag also survives ListComments / ListOpenComments scans.
+	list, _ := s.ListComments(doc.ID)
+	seen := map[string]bool{}
+	for _, c := range list {
+		seen[c.ID] = c.CouncilEnabled
+	}
+	if seen[on.ID] != true {
+		t.Fatalf("ListComments dropped CouncilEnabled for seeded comment: %+v", seen)
+	}
+}
+
+// TestMigrateAddsCouncilEnabledToLegacyDB exercises the ADD COLUMN path a fresh
+// schema.sql never triggers: it builds a comments table in the OLD pre-flag shape
+// (no council_enabled), runs migrate(), confirms the column resolves and legacy
+// rows default to 0 (single-agent), and that a second migrate() is a no-op.
+func TestMigrateAddsCouncilEnabledToLegacyDB(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	// migrate() ALTERs documents, comments, syntheses and candidates; give it the
+	// minimal tables (comments in its original pre-council_enabled shape).
+	for _, ddl := range []string{
+		`CREATE TABLE documents (id TEXT PRIMARY KEY, path TEXT)`,
+		`CREATE TABLE comments (id TEXT PRIMARY KEY)`,
+		`INSERT INTO comments(id) VALUES('c-legacy')`,
+		`CREATE TABLE syntheses (id TEXT PRIMARY KEY)`,
+		`CREATE TABLE candidates (id TEXT PRIMARY KEY)`,
+	} {
+		if _, err := db.Exec(ddl); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate on legacy DB: %v", err)
+	}
+	var ce int
+	if err := db.QueryRow(`SELECT council_enabled FROM comments WHERE id='c-legacy'`).Scan(&ce); err != nil {
+		t.Fatalf("council_enabled column missing after migrate: %v", err)
+	}
+	if ce != 0 {
+		t.Fatalf("legacy row council_enabled = %d, want 0 (single-agent)", ce)
+	}
+	if err := migrate(db); err != nil {
+		t.Fatalf("re-migrate on existing DB: %v", err)
+	}
+}
 
 func TestCommentAndSuggestionRoundTrip(t *testing.T) {
 	s, _ := Open(":memory:")

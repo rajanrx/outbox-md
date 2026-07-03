@@ -108,6 +108,12 @@ type CommentRef struct {
 	// Thread is the human's feedback, pre-formatted (author: body per line), since
 	// members cannot fetch it themselves from a claimed comment.
 	Thread string
+	// CouncilEnabled selects how a council project processes THIS comment: true ⇒
+	// the full council (members debate → chair verdict), false ⇒ a single agent (the
+	// chair command run as a normal agent doing propose_suggestion / reply_in_thread).
+	// It is seeded from the comment's flag (config council_default) and toggled by the
+	// human; the engine branches on it per comment in councilPass.
+	CouncilEnabled bool
 }
 
 // CouncilTurn is one recorded council candidate as the engine sees it — the
@@ -786,8 +792,30 @@ func (r *runner) councilPass() {
 		if !won {
 			continue // another council-run holds this comment
 		}
-		r.runCouncilForComment(cr, token)
+		// Per-comment council on/off: an enabled comment runs the full council;
+		// a disabled one is processed single-agent with the chair command (a normal
+		// agent, NOT the council member/chair MCP roles). Both hold the same claim
+		// and heartbeat for the whole run.
+		if cr.CouncilEnabled {
+			r.runCouncilForComment(cr, token)
+		} else {
+			r.runSingleAgentForComment(cr, token, r.council.chair)
+		}
 	}
+}
+
+// runSingleAgentForComment processes ONE claimed comment single-agent — the
+// council-OFF path. It spawns agentCmd (the chair command) as an ordinary agent
+// that reads the comment's excerpt + thread and finishes it with
+// propose_suggestion or reply_in_thread using the claim token the engine already
+// holds (it must NOT claim again — the engine's council claim already owns it, and
+// re-claiming would fail the token check). It runs inside the SAME heartbeat scope
+// as a council run, so a long single-agent run never lets the comment go stale
+// mid-run (→ double-processing). No member fan-out, no chair synthesis.
+func (r *runner) runSingleAgentForComment(cr CommentRef, token, agentCmd string) {
+	stopHeartbeat := r.startHeartbeat(cr.ID, token)
+	defer stopHeartbeat()
+	r.spawnCouncil(agentCmd, councilOffPrompt(cr, token))
 }
 
 // runCouncilForComment runs the full council over one claimed comment: it keeps
@@ -1113,6 +1141,38 @@ func councilChairPrompt(cr CommentRef, token, identity string, deadlock int) str
 // positions + prior discussion + this member's own prior take).
 func councilDiscussionPrompt(cr CommentRef, token, identity, lens string, round int, transcript string) string {
 	return fmt.Sprintf(councilDiscussionGuidance, cr.ID, lens, token, identity, cr.DocID, cr.Excerpt, cr.Thread, round, transcript)
+}
+
+// councilOffGuidance is the single-agent (council-OFF) prompt template. Explicit
+// argument indices keep substitution order-independent: [1]=commentId, [2]=token,
+// [3]=docId, [4]=excerpt, [5]=thread. The engine has ALREADY claimed this ONE
+// comment (the token is embedded), so the agent must NOT claim again — it just
+// reads the doc + excerpt + thread and finishes the comment with ONE of
+// propose_suggestion / reply_in_thread using the token. This is a normal agent
+// pass over a single comment, NOT the council member/chair MCP roles.
+const councilOffGuidance = `You are processing exactly ONE outbox comment, %[1]s, on document %[3]s. This comment is already claimed for you — you hold the claim token "%[2]s". Do NOT call claim_comment (it is already claimed; re-claiming would fail).
+
+The human flagged this excerpt:
+"""
+%[4]s
+"""
+Their feedback (the thread):
+"""
+%[5]s
+"""
+Do exactly this, in order:
+1. read_doc(docId="%[3]s") — read the full current document for the context around that excerpt.
+2. Decide the best response. Anti-sycophancy: a comment is not an order — disagree when the evidence warrants.
+3. Finish the comment with EXACTLY ONE call, using the claim token "%[2]s":
+   - propose_suggestion(commentId="%[1]s", token="%[2]s", content="the FULL replacement document content", agent="agent") for a tracked-change edit, OR
+   - reply_in_thread(commentId="%[1]s", token="%[2]s", body="your reply", agent="agent") to counter, clarify, or discuss.
+This is a plain single-agent pass: do NOT use any council-mode review tools. Never resolve, accept, or approve (human-only). Handle only this one comment, then stop.`
+
+// councilOffPrompt builds the single-agent (council-OFF) prompt for one claimed
+// comment, embedding the token, doc id, excerpt, and thread so the agent has full
+// context and the claim it already holds.
+func councilOffPrompt(cr CommentRef, token string) string {
+	return fmt.Sprintf(councilOffGuidance, cr.ID, token, cr.DocID, cr.Excerpt, cr.Thread)
 }
 
 // latestPositions reduces a snapshot's candidates to each member's LATEST position

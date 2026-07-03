@@ -64,7 +64,14 @@ type Comment struct {
 	Owner            string        `json:"owner"`
 	Status           CommentStatus `json:"status"`
 	PostApproval     bool          `json:"postApproval"`
-	ClaimToken       string        `json:"-"`
+	// CouncilEnabled selects HOW a council project processes this comment. true ⇒
+	// the full council (members debate → chair verdict); false ⇒ a single agent
+	// (the chair command run as a normal agent doing propose_suggestion /
+	// reply_in_thread). It is seeded at creation from the project's council_default
+	// (config.Config.CouncilDefault, default false) and toggled per-comment from the
+	// thread UI. It is inert on a non-council project (always single-agent there).
+	CouncilEnabled bool   `json:"councilEnabled"`
+	ClaimToken     string `json:"-"`
 	// ProcessingUntil is an ephemeral, self-expiring hint that an AI agent is
 	// actively working this comment. It is NOT a status: a comment is "processing"
 	// iff ProcessingUntil is set and still in the future (see IsProcessing). A dead

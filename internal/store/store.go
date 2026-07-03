@@ -60,6 +60,11 @@ func migrate(db *sql.DB) error {
 		// by schema.sql (CREATE TABLE IF NOT EXISTS runs on every Open), so a legacy
 		// database gains it there — only this pre-existing table needs an ALTER.
 		`ALTER TABLE candidates ADD COLUMN round INTEGER NOT NULL DEFAULT 0`,
+		// Per-comment council on/off: 1 = full council, 0 = single-agent (the chair
+		// command run as a normal agent). Legacy rows default to 0 (single-agent),
+		// matching the system default of council OFF; fresh databases already have it
+		// from schema.sql.
+		`ALTER TABLE comments ADD COLUMN council_enabled INTEGER NOT NULL DEFAULT 0`,
 	} {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 			return err

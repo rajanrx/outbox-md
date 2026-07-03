@@ -34,6 +34,11 @@ CREATE TABLE IF NOT EXISTS comments (
   -- recovery: a just-made claim is not re-surfaced by list_open_comments until
   -- it is older than StaleClaimGrace, closing the claim→mark_processing race.
   claimed_at TEXT,
+  -- council_enabled selects HOW a council project processes this comment: 1 = the
+  -- full council (members debate → chair verdict), 0 = a single agent (the chair
+  -- command as a normal agent). Seeded at creation from council_default (default
+  -- 0), toggled per-comment from the thread UI; inert on non-council projects.
+  council_enabled INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS suggestions (

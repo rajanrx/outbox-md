@@ -51,7 +51,7 @@ function scrollReaderToAnchor(root: HTMLElement, source: string, anchor: { start
   pane.scrollTo({ top: pane.scrollTop + (rect.top - paneRect.top) - 140, behavior: "smooth" });
 }
 
-export function Margin({ docId, content, docPath, rootRef, comments, reloadKey = 0, deadlockThreshold = 50, onChange }: {
+export function Margin({ docId, content, docPath, rootRef, comments, reloadKey = 0, deadlockThreshold = 50, councilProject = false, councilDefault = false, onChange }: {
   docId: string;
   content: string;
   docPath: string;
@@ -62,6 +62,10 @@ export function Margin({ docId, content, docPath, rootRef, comments, reloadKey =
   reloadKey?: number;
   // Council deadlock threshold from /api/config, forwarded to each Card.
   deadlockThreshold?: number;
+  // Whether the current project runs a council (>=2 members + chair) and the
+  // project council_default — forwarded to each Card for the on/off toggle.
+  councilProject?: boolean;
+  councilDefault?: boolean;
   onChange: () => void;
 }) {
   const [pending, setPending] = useState<{ start: number; end: number } | null>(null);
@@ -267,6 +271,8 @@ export function Margin({ docId, content, docPath, rootRef, comments, reloadKey =
           offscreen={offscreen.has(c.id)}
           reloadKey={reloadKey}
           deadlockThreshold={deadlockThreshold}
+          councilProject={councilProject}
+          councilDefault={councilDefault}
           onActivate={() => setFocused(c.id)}
           onJump={() => jumpTo(c)}
           onTogglePin={() => togglePin(c.id)}

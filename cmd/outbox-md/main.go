@@ -745,11 +745,12 @@ func autoReplyNotifier(root string, projects []registry.Project, cfg config.Conf
 			refs := make([]autoreply.CommentRef, 0, len(comments))
 			for _, c := range comments {
 				refs = append(refs, autoreply.CommentRef{
-					ID:      c.CommentID,
-					DocID:   c.DocID,
-					DocPath: c.DocPath,
-					Excerpt: c.Excerpt,
-					Thread:  formatCouncilThread(c.Thread),
+					ID:             c.CommentID,
+					DocID:          c.DocID,
+					DocPath:        c.DocPath,
+					Excerpt:        c.Excerpt,
+					Thread:         formatCouncilThread(c.Thread),
+					CouncilEnabled: c.CouncilEnabled,
 				})
 			}
 			return refs, nil
