@@ -66,6 +66,18 @@ button { font-family: inherit; cursor: pointer; }
   background: var(--chrome-2); border: 1px solid var(--chrome-line);
   border-radius: 999px; padding: 1px 7px; letter-spacing: .2px;
 }
+/* Retrieval-mode chip (§5.5) — same badge family as the version badge, with
+   info (keyword-only) and warning (degraded) variants. Semantic renders nothing. */
+.retrieval-chip {
+  font-size: 11px; font-weight: 500; border-radius: 999px; padding: 1px 8px;
+  letter-spacing: .2px; white-space: nowrap; cursor: default;
+}
+.retrieval-chip.info {
+  color: #2c5aa0; background: rgba(56, 120, 210, 0.12); border: 1px solid rgba(56, 120, 210, 0.35);
+}
+.retrieval-chip.warn {
+  color: #9a5b00; background: rgba(214, 138, 20, 0.14); border: 1px solid rgba(214, 138, 20, 0.4);
+}
 .crumbs { display: flex; align-items: center; gap: 7px; color: var(--chrome-soft); font-size: 13px; min-width: 0; }
 .crumbs .sep { opacity: .5; }
 .crumbs .leaf { color: var(--ink); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

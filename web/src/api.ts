@@ -218,7 +218,9 @@ export async function pickCandidate(commentId: string, candidateId: string): Pro
 // AppConfig is the subset of /api/config the UI reads directly. version is "dev"
 // for local builds and the release tag otherwise. councilDeadlockThreshold is the
 // confidence (0..100) below which a chair verdict is treated as "no consensus".
-export type AppConfig = { version: string; councilDeadlockThreshold?: number };
+// retrievalMode is the KB retrieval posture (§5.5): "semantic" | "keyword-only" |
+// "degraded", or ""/absent when retrieval is not wired — the header chip reads it.
+export type AppConfig = { version: string; councilDeadlockThreshold?: number; retrievalMode?: string };
 export async function getConfig(): Promise<AppConfig | null> {
   const r = await fetch("/api/config");
   return r.ok ? r.json() : null;

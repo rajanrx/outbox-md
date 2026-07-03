@@ -7,6 +7,7 @@ import { BaselineDiff } from "./governance/BaselineDiff";
 import { DecisionLog } from "./log/DecisionLog";
 import { Modal } from "./Modal";
 import { SettingsPage } from "./settings/SettingsPage";
+import { RetrievalChip } from "./RetrievalChip";
 import "./governance/governance.css";
 
 const PanelLeftIcon = () => (
@@ -64,6 +65,8 @@ export default function App() {
   // chair verdict is "no consensus". Threaded to each comment Card for the
   // confidence chip's amber/green boundary and the pick-card split. 50 = default.
   const [deadlockThreshold, setDeadlockThreshold] = useState(50);
+  // KB retrieval mode for the header chip (§5.5): "" until config loads.
+  const [retrievalMode, setRetrievalMode] = useState("");
   const [commentsW, setCommentsW] = useState(() => {
     const v = Number(localStorage.getItem(COMMENTS_W_KEY));
     return v ? clampW(v) : 420;
@@ -179,6 +182,7 @@ export default function App() {
     getConfig().then((c) => {
       setVersion(c?.version ?? "");
       if (typeof c?.councilDeadlockThreshold === "number") setDeadlockThreshold(c.councilDeadlockThreshold);
+      setRetrievalMode(c?.retrievalMode ?? "");
     });
   }, []);
   // Load the registered projects; keep the stored selection if it is still valid,
@@ -285,6 +289,7 @@ export default function App() {
         <div className="brand">
           <span className="dot" /><b>outbox</b><span>·md</span>
           {version && <span className="version-badge" title="outbox-md version">{versionLabel(version)}</span>}
+          <RetrievalChip mode={retrievalMode} />
         </div>
         {multiProject && (
           <select
