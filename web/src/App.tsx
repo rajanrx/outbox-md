@@ -60,6 +60,10 @@ export default function App() {
   );
   // Build version for the header badge ("dev" for local builds).
   const [version, setVersion] = useState("");
+  // Council deadlock threshold from /api/config: the confidence below which a
+  // chair verdict is "no consensus". Threaded to each comment Card for the
+  // confidence chip's amber/green boundary and the pick-card split. 50 = default.
+  const [deadlockThreshold, setDeadlockThreshold] = useState(50);
   const [commentsW, setCommentsW] = useState(() => {
     const v = Number(localStorage.getItem(COMMENTS_W_KEY));
     return v ? clampW(v) : 420;
@@ -171,7 +175,12 @@ export default function App() {
   }, []);
 
   useEffect(() => { listDocs().then((d) => setDocs(d ?? [])); }, []);
-  useEffect(() => { getConfig().then((c) => setVersion(c?.version ?? "")); }, []);
+  useEffect(() => {
+    getConfig().then((c) => {
+      setVersion(c?.version ?? "");
+      if (typeof c?.councilDeadlockThreshold === "number") setDeadlockThreshold(c.councilDeadlockThreshold);
+    });
+  }, []);
   // Load the registered projects; keep the stored selection if it is still valid,
   // otherwise fall back to the first project (single-folder mode → empty name).
   // Exposed as a callback so the Settings page can refresh it after a CRUD write.
@@ -361,7 +370,7 @@ export default function App() {
           {commentsOpen && <div className="resize-handle" onMouseDown={startResize} title="Drag to resize" />}
           <div className="panel-head">Comments <span className="count">{openCount}</span></div>
           <div className="panel-body">
-            {view && <Margin docId={docId} content={view.content} docPath={view.document.path} rootRef={rootRef} comments={view.comments ?? []} reloadKey={threadTick} onChange={refresh} />}
+            {view && <Margin docId={docId} content={view.content} docPath={view.document.path} rootRef={rootRef} comments={view.comments ?? []} reloadKey={threadTick} deadlockThreshold={deadlockThreshold} onChange={refresh} />}
           </div>
         </aside>
       </div>

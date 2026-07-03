@@ -127,3 +127,110 @@
 .link-btn:disabled { opacity: .4; cursor: default; }
 .link-btn.resolve { color: var(--agent); }
 .link-btn.resolve:hover { background: rgba(43,140,127,.12); color: var(--agent); }
+
+/* ── council summary (on a council comment) ── */
+.council-summary {
+  margin-top: 10px; padding: 9px 10px; border-radius: 9px;
+  background: var(--chrome); border: 1px solid var(--chrome-line);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.council-summary-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.council-confidence {
+  font-size: 10.5px; font-weight: 700; line-height: 1; padding: 4px 8px; border-radius: 999px;
+}
+/* High confidence = quiet green; low = amber warning (below the deadlock threshold). */
+.council-confidence.sev-high { color: var(--diff-add-ink); background: #e6ffec; border: 1px solid #abf2bc; }
+.council-confidence.sev-low { color: var(--accent); background: var(--accent-soft); border: 1px solid rgba(196,125,18,.32); }
+.council-agreement, .council-members {
+  font-size: 10.5px; font-weight: 600; line-height: 1; color: var(--chrome-soft);
+}
+.council-discussing {
+  font-size: 10px; font-weight: 700; line-height: 1; letter-spacing: .02em; text-transform: lowercase;
+  padding: 3px 7px; border-radius: 999px;
+  color: var(--agent); background: rgba(43,140,127,.1); border: 1px solid rgba(43,140,127,.3);
+}
+.council-view-btn {
+  align-self: flex-start; background: none; border: 0; padding: 2px 0; font-size: 12px; font-weight: 650;
+  color: var(--accent); transition: filter .12s;
+}
+.council-view-btn:hover { filter: brightness(1.1); text-decoration: underline; }
+
+/* ── deadlock / no-consensus pick cards ── */
+.council-deadlock {
+  margin-top: 10px; padding: 10px; border-radius: 9px;
+  background: var(--accent-soft); border: 1px solid rgba(196,125,18,.3);
+  display: flex; flex-direction: column; gap: 9px;
+}
+.council-deadlock-head { font-size: 12px; font-weight: 700; color: var(--accent); }
+.council-option {
+  padding: 8px 10px; border-radius: 8px; background: var(--chrome-2); border: 1px solid var(--chrome-line);
+  display: flex; flex-direction: column; gap: 6px;
+}
+.council-option-head { display: flex; align-items: center; gap: 8px; }
+.council-rank { font-size: 11px; font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; }
+.council-who { font-size: 12.5px; font-weight: 650; text-transform: capitalize; color: var(--ink); }
+.council-option-preview, .council-proposed-body {
+  margin: 0; padding: 8px 10px; border-radius: 6px; background: var(--chrome); border: 1px solid var(--chrome-line);
+  font-family: var(--font-mono); font-size: 11.5px; line-height: 1.5; color: var(--ink);
+  white-space: pre-wrap; overflow-x: auto; max-height: 180px; overflow-y: auto;
+}
+.council-pick-btn {
+  align-self: flex-start; padding: 6px 14px; border-radius: 8px; font-size: 12px; font-weight: 650;
+  background: var(--accent); color: var(--accent-ink); border: 1px solid transparent; transition: filter .12s;
+}
+.council-pick-btn:hover:not(:disabled) { filter: brightness(1.06); }
+.council-pick-btn:disabled { opacity: .5; cursor: default; }
+.council-pick-error { font-size: 11.5px; font-weight: 600; color: var(--diff-del-ink); }
+
+/* ── verdict + lens badges (shared by the modal + pick cards) ── */
+.council-verdict {
+  font-size: 10px; font-weight: 700; line-height: 1; padding: 3px 7px; border-radius: 5px; text-transform: capitalize;
+  color: var(--ink-soft); background: var(--chrome-3); border: 1px solid var(--chrome-line);
+}
+.council-verdict.verdict-edit { color: var(--diff-add-ink); background: #e6ffec; border-color: #abf2bc; }
+.council-verdict.verdict-reject_comment { color: var(--diff-del-ink); background: #ffebe9; border-color: rgba(179,38,30,.3); }
+.council-lens {
+  font-size: 10px; font-weight: 600; line-height: 1; padding: 3px 7px; border-radius: 5px; text-transform: capitalize;
+  color: var(--agent); background: rgba(43,140,127,.1); border: 1px solid rgba(43,140,127,.28);
+}
+.council-rationale { font-size: 12.5px; line-height: 1.55; color: var(--ink); white-space: pre-wrap; }
+
+/* ── council discussion modal (reuses the diff-modal shell) ── */
+.council-round { margin-bottom: 20px; }
+.council-round:last-child { margin-bottom: 0; }
+.council-round-title {
+  font-size: 11px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase;
+  color: var(--chrome-soft); margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--chrome-line);
+}
+.council-entry { display: flex; gap: 10px; align-items: flex-start; padding: 9px 0; }
+.council-entry + .council-entry { border-top: 1px dashed var(--chrome-line); }
+.council-entry.council-dissent { background: rgba(179,38,30,.05); border-radius: 8px; padding: 9px 10px; }
+.council-entry-main { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.council-entry-head { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.council-dissent-tag {
+  font-size: 9.5px; font-weight: 700; line-height: 1; letter-spacing: .03em; text-transform: uppercase;
+  padding: 3px 6px; border-radius: 4px; color: var(--diff-del-ink); background: #ffebe9; border: 1px solid rgba(179,38,30,.3);
+}
+.council-chosen {
+  font-size: 9.5px; font-weight: 700; line-height: 1; text-transform: uppercase; letter-spacing: .03em;
+  padding: 3px 6px; border-radius: 4px; color: var(--diff-add-ink); background: #e6ffec; border: 1px solid #abf2bc;
+}
+.council-proposed summary {
+  cursor: pointer; font-size: 11.5px; font-weight: 600; color: var(--accent); user-select: none; width: fit-content;
+}
+.council-proposed[open] summary { margin-bottom: 6px; }
+.council-msg-body { font-size: 12.5px; line-height: 1.55; color: var(--ink); white-space: pre-wrap; }
+.council-message .council-msg-body { color: var(--ink-soft); }
+.council-refs { display: flex; flex-wrap: wrap; gap: 6px; }
+.council-ref {
+  font-size: 10.5px; font-weight: 600; line-height: 1; padding: 3px 7px; border-radius: 999px;
+  color: var(--chrome-soft); background: var(--chrome-3); border: 1px solid var(--chrome-line);
+}
+.council-synthesis {
+  margin-top: 6px; padding: 14px 16px; border-radius: 10px;
+  background: var(--chrome); border: 1px solid var(--chrome-line);
+}
+.council-synthesis-stats { display: flex; flex-wrap: wrap; gap: 18px; margin-bottom: 6px; }
+.council-stat { font-size: 12.5px; color: var(--ink-soft); }
+.council-stat b { color: var(--ink); font-size: 14px; }
+.council-synthesis-dissent { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
