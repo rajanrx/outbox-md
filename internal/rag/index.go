@@ -110,13 +110,31 @@ func (ix *Indexer) BuildAll(ctx context.Context, docs []Doc) error {
 	var firstErr error
 	anyEmbedFail := false
 
+	served := make(map[DocKey]bool, len(docs))
 	for _, d := range docs {
+		served[DocKey{Project: d.Project, Path: d.Path}] = true
 		embedFailed, err := ix.reindex(ctx, d.Project, d.Path, d.Content)
 		if err != nil && firstErr == nil {
 			firstErr = err
 		}
 		if embedFailed {
 			anyEmbedFail = true
+		}
+	}
+
+	// Prune: docs is the COMPLETE served set, so any doc still indexed but NOT in it
+	// (removed from docs, hidden by narrowed sources, or deleted before startup) must
+	// be dropped — otherwise it stays retrievable from the project-scoped store even
+	// though it is no longer served. This makes the index exactly match the served set.
+	if indexed, err := ix.Store.ListIndexedDocs(); err != nil {
+		if firstErr == nil {
+			firstErr = err
+		}
+	} else {
+		for _, k := range indexed {
+			if !served[k] {
+				_ = ix.Store.DeleteDoc(k.Project, k.Path)
+			}
 		}
 	}
 

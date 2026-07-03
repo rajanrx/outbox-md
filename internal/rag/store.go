@@ -133,6 +133,32 @@ func (s *Store) DeleteDoc(project, docPath string) error {
 	return tx.Commit()
 }
 
+// DocKey identifies an indexed doc by its (project, path).
+type DocKey struct {
+	Project string
+	Path    string
+}
+
+// ListIndexedDocs returns every (project, doc_path) that currently has chunks in
+// the index. BuildAll uses it to prune docs that have left the served set (removed
+// from docs, hidden by narrowed sources, or deleted) so they can't be retrieved.
+func (s *Store) ListIndexedDocs() ([]DocKey, error) {
+	rows, err := s.db.Query(`SELECT DISTINCT project, doc_path FROM chunks`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DocKey
+	for rows.Next() {
+		var k DocKey
+		if err := rows.Scan(&k.Project, &k.Path); err != nil {
+			return nil, err
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
 func deleteDocTx(tx *sql.Tx, fts bool, project, docPath string) error {
 	if fts {
 		// Delete FTS rows by the chunk-id set being removed (delete-by-UNINDEXED-col

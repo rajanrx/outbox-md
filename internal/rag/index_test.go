@@ -108,3 +108,38 @@ func TestBuildAllDegradedWhenEmbedFails(t *testing.T) {
 		t.Fatal("BuildAll lost text index on embed failure")
 	}
 }
+
+// TestBuildAllPrunesUnservedDocs: BuildAll is handed the COMPLETE served set, so a
+// doc previously indexed but no longer served (removed from docs, hidden by
+// narrowed sources, or deleted before startup) must be pruned — otherwise it stays
+// retrievable from the project-scoped store.
+func TestBuildAllPrunesUnservedDocs(t *testing.T) {
+	s := newStore(t)
+	emb := &stubEmbedder{}
+	mode := NewModeTracker(true, func(string, ...any) {})
+	ix := NewIndexer(s, emb, mode, func(string, ...any) {})
+
+	if err := ix.BuildAll(context.Background(), []Doc{
+		{Project: "p", Path: "keep.md", Content: "# Keep\n\napple pie"},
+		{Project: "p", Path: "hidden.md", Content: "# Hidden\n\nbanana bread"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Rebuild with ONLY keep.md — hidden.md has left the served set.
+	if err := ix.BuildAll(context.Background(), []Doc{
+		{Project: "p", Path: "keep.md", Content: "# Keep\n\napple pie"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := countChunks(t, s, "p", "hidden.md"); got != 0 {
+		t.Fatalf("hidden.md still has %d chunks after it left the served set", got)
+	}
+	srch := NewSearcher(s, emb, mode)
+	results, _ := srch.Search("p", "banana", 5)
+	for _, r := range results {
+		if r.DocPath == "hidden.md" {
+			t.Fatalf("hidden.md still searchable after pruning: %+v", results)
+		}
+	}
+}
