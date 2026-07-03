@@ -65,6 +65,17 @@ type Notifier interface {
 	Fire(event string, payload any)
 }
 
+// Reindexer is the OPTIONAL RAG hook (design §5.1): the watcher drives it on the
+// SAME debounced pass that reconciles a changed .md into the store, so the KB
+// index stays live without a second polling loop. Reindex re-chunks+embeds a
+// created/edited doc; DropDoc removes a deleted/renamed doc's chunks. Both are
+// best-effort — a re-index failure is non-blocking (3A degrades, never blocks),
+// so the watcher logs and moves on. nil ⇒ retrieval is not wired.
+type Reindexer interface {
+	Reindex(project, path, content string) error
+	DropDoc(project, path string) error
+}
+
 // EventDocsChanged is the browser-only SSE event a filesystem change broadcasts.
 const EventDocsChanged = "docs.changed"
 
@@ -96,6 +107,7 @@ type Watcher struct {
 	fsw      *fsnotify.Watcher
 	sync     Syncer
 	notify   Notifier
+	reindex  Reindexer // optional RAG hook; nil ⇒ no KB re-index
 	debounce time.Duration
 
 	mu     sync.Mutex
@@ -134,6 +146,15 @@ func New(projects []Project, syncer Syncer, notify Notifier, debounce time.Durat
 	}
 	log.Printf("watcher: watching %d dirs across %d project(s)", w.dirCount(), len(projects))
 	return w, nil
+}
+
+// SetReindexer installs the OPTIONAL RAG re-index hook. Call it before Start (the
+// server wires it in buildServer right after New). A nil Reindexer leaves the
+// watcher KB-agnostic — every live-reload behaviour is unchanged.
+func (w *Watcher) SetReindexer(r Reindexer) {
+	w.mu.Lock()
+	w.reindex = r
+	w.mu.Unlock()
 }
 
 // Start launches the event loop. Call exactly once.
@@ -303,13 +324,18 @@ func (w *Watcher) reconcile(path string, ctx dirCtx) {
 	}
 
 	if b, err := os.ReadFile(path); err == nil {
-		changed, err := w.sync.SyncFile(ctx.project, key, string(b))
+		content := string(b)
+		changed, err := w.sync.SyncFile(ctx.project, key, content)
 		if err != nil {
 			log.Printf("watcher: sync %s: %v", key, err)
 			return
 		}
 		if changed {
 			log.Printf("watcher: imported %s", key)
+			// Ride the SAME debounced pass to re-index the KB (§5.1). Gated on
+			// `changed` so the server's own accept/reapprove self-writes (identical
+			// bytes → changed=false) never trigger a re-embed.
+			w.reindexDoc(ctx.project, key, content)
 			w.broadcast(ctx.project, key, "upsert")
 		}
 		return
@@ -326,7 +352,36 @@ func (w *Watcher) reconcile(path string, ctx dirCtx) {
 	}
 	if removed {
 		log.Printf("watcher: removed %s", key)
+		w.dropDoc(ctx.project, key) // drop its KB chunks too
 		w.broadcast(ctx.project, key, "remove")
+	}
+}
+
+// reindexDoc drives the optional RAG hook after a doc upserts. Best-effort: a
+// re-index failure is non-blocking (3A degrades, never blocks), so it only logs.
+func (w *Watcher) reindexDoc(project, key, content string) {
+	w.mu.Lock()
+	r := w.reindex
+	w.mu.Unlock()
+	if r == nil {
+		return
+	}
+	if err := r.Reindex(project, key, content); err != nil {
+		log.Printf("watcher: rag re-index %s: %v (retriable)", key, err)
+	}
+}
+
+// dropDoc drives the optional RAG hook after a doc is removed, dropping its
+// chunks so retrieval never surfaces a deleted doc. Best-effort (logs only).
+func (w *Watcher) dropDoc(project, key string) {
+	w.mu.Lock()
+	r := w.reindex
+	w.mu.Unlock()
+	if r == nil {
+		return
+	}
+	if err := r.DropDoc(project, key); err != nil {
+		log.Printf("watcher: rag drop %s: %v", key, err)
 	}
 }
 

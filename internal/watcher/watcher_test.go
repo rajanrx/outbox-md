@@ -288,6 +288,125 @@ func TestSelfWriteDoesNotLoop(t *testing.T) {
 	}
 }
 
+// spyReindexer records the RAG hook calls so tests can assert a write re-indexes
+// and a delete drops — without a real embedder/store.
+type spyReindexer struct {
+	mu      sync.Mutex
+	reindex map[string]string // path -> last content re-indexed
+	dropped []string
+}
+
+func (r *spyReindexer) Reindex(_, path, content string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.reindex == nil {
+		r.reindex = map[string]string{}
+	}
+	r.reindex[path] = content
+	return nil
+}
+
+func (r *spyReindexer) DropDoc(_, path string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.dropped = append(r.dropped, path)
+	return nil
+}
+
+func (r *spyReindexer) reindexed(path string) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	c, ok := r.reindex[path]
+	return c, ok
+}
+
+func (r *spyReindexer) wasDropped(path string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, p := range r.dropped {
+		if p == path {
+			return true
+		}
+	}
+	return false
+}
+
+// TestWriteTriggersRagReindex: a served .md write re-indexes the KB on the same
+// debounced pass (with the file's content), riding the existing reconcile — no
+// second polling loop.
+func TestWriteTriggersRagReindex(t *testing.T) {
+	dir := t.TempDir()
+	svc, _ := realSvc(t)
+	spy := &spyNotifier{}
+	rr := &spyReindexer{}
+	w := startWatcher(t, dir, svc, spy, 40*time.Millisecond)
+	w.SetReindexer(rr)
+
+	if err := os.WriteFile(filepath.Join(dir, "k.md"), []byte("# K\n\nkb body\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !eventually(t, func() bool { _, ok := rr.reindexed("k.md"); return ok }) {
+		t.Fatal("write did not trigger a rag re-index")
+	}
+	if c, _ := rr.reindexed("k.md"); c != "# K\n\nkb body\n" {
+		t.Fatalf("re-index got content %q, want the file bytes", c)
+	}
+}
+
+// TestDeleteDropsRagChunks: deleting a served .md drops its KB chunks via the hook.
+func TestDeleteDropsRagChunks(t *testing.T) {
+	dir := t.TempDir()
+	svc, _ := realSvc(t)
+	path := filepath.Join(dir, "d.md")
+	if err := os.WriteFile(path, []byte("bye\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SyncFile("", "d.md", "bye\n"); err != nil {
+		t.Fatal(err)
+	}
+	spy := &spyNotifier{}
+	rr := &spyReindexer{}
+	w := startWatcher(t, dir, svc, spy, 40*time.Millisecond)
+	w.SetReindexer(rr)
+
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if !eventually(t, func() bool { return rr.wasDropped("d.md") }) {
+		t.Fatal("delete did not drop the doc's rag chunks")
+	}
+}
+
+// TestSelfWriteDoesNotReindex: the server's own identical self-write (changed=false)
+// must NOT trigger a re-embed, mirroring the docs.changed suppression.
+func TestSelfWriteDoesNotReindex(t *testing.T) {
+	dir := t.TempDir()
+	svc, _ := realSvc(t)
+	path := filepath.Join(dir, "a.md")
+	if err := os.WriteFile(path, []byte("v1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SyncFile("", "a.md", "v1"); err != nil {
+		t.Fatal(err)
+	}
+	spy := &spyNotifier{}
+	rr := &spyReindexer{}
+	w := startWatcher(t, dir, svc, spy, 40*time.Millisecond)
+	w.SetReindexer(rr)
+
+	tmp := filepath.Join(dir, ".outbox-tmp-a")
+	if err := os.WriteFile(tmp, []byte("v1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if _, ok := rr.reindexed("a.md"); ok {
+		t.Fatal("identical self-write triggered a rag re-index")
+	}
+}
+
 // TestNewSubdirJoinsWatch: a file created in a subdirectory that did not exist at
 // startup is still caught — the new dir is added to the watch set on the fly.
 func TestNewSubdirJoinsWatch(t *testing.T) {
