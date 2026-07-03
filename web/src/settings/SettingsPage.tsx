@@ -17,6 +17,41 @@ import "./settings.css";
 // a raw command (the "custom" branch of the member editor).
 const PRESETS = ["claude", "codex", "copilot"] as const;
 
+// MODELS_BY_AGENT lists common models each preset accepts (Claude Code --model,
+// Codex -m, Copilot --model), surfaced as searchable suggestions in the model field.
+// It is NOT exhaustive: the field is a datalist, so any value can still be typed —
+// the "other" case for a model not listed (advanced users / future models). A custom
+// agent command gets no suggestions.
+const MODELS_BY_AGENT: Record<string, string[]> = {
+  // Claude Code `--model`: an alias (fable/opus/sonnet/haiku) OR a full model name
+  // (`claude --help`: "Provide an alias for the latest model … or a model's full name").
+  claude: ["opus", "sonnet", "haiku", "fable", "claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5", "claude-fable-5"],
+  // Codex `-m`: OpenAI models (developers.openai.com/codex/models, 2026).
+  codex: ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.2-codex"],
+  // Copilot `--model`: Copilot serves many providers (docs.github.com/copilot/reference/
+  // ai-models/supported-models). A datalist, so a newer model can still be typed.
+  copilot: [
+    "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5-mini",
+    "claude-sonnet-5", "claude-sonnet-4.6", "claude-sonnet-4.5", "claude-opus-4.8",
+    "claude-haiku-4.5", "claude-fable-5", "gemini-3.5-flash", "gemini-2.5-pro", "kimi-k2.7-code",
+  ],
+};
+
+// ModelDatalists renders one <datalist> per preset (id "models-<agent>"), placed
+// ONCE per members editor so every member/chair row's model input can reference it
+// without duplicate DOM ids.
+function ModelDatalists() {
+  return (
+    <>
+      {Object.entries(MODELS_BY_AGENT).map(([agent, models]) => (
+        <datalist key={agent} id={`models-${agent}`}>
+          {models.map((m) => <option key={m} value={m} />)}
+        </datalist>
+      ))}
+    </>
+  );
+}
+
 // versionLabel mirrors App.tsx: "dev"/"vX" as-is, otherwise prefixed with "v".
 const versionLabel = (v: string) => (v === "dev" || v.startsWith("v") ? v : `v${v}`);
 
@@ -130,7 +165,7 @@ function ProjectsSection({
 function ProjectCard({ project, onChanged, onSingleFolder }: { project: Project; onChanged: () => void; onSingleFolder: () => void }) {
   const [docs, setDocs] = useState(docsToText(projectDocs(project)));
   const [members, setMembers] = useState<Member[]>(project.members ?? []);
-  const [chair, setChair] = useState<Member>(project.chair ?? { agent: "", model: "" });
+  const [chair, setChair] = useState<Member>(project.chair ?? { agent: "claude", model: "" });
   const [save, setSave] = useState<SaveState>(idleSave);
   const [confirming, setConfirming] = useState(false);
 
@@ -147,7 +182,9 @@ function ProjectCard({ project, onChanged, onSingleFolder }: { project: Project;
       await updateProject(project.name, {
         docs: textToDocs(docs),
         members,
-        chair: chair.agent.trim() ? chair : null,
+        // Only persist a chair when council mode requires one (>=2 members); a solo
+        // project saves chair=null even though the picker defaults to claude.
+        chair: chairRequired && chair.agent.trim() ? chair : null,
       });
       setSave({ busy: false, saved: true, error: null });
       onChanged();
@@ -219,7 +256,7 @@ function AddProject({ onAdded, onSingleFolder }: { onAdded: () => void; onSingle
   const [root, setRoot] = useState("");
   const [docs, setDocs] = useState("");
   const [members, setMembers] = useState<Member[]>([]);
-  const [chair, setChair] = useState<Member>({ agent: "", model: "" });
+  const [chair, setChair] = useState<Member>({ agent: "claude", model: "" });
   const [save, setSave] = useState<SaveState>(idleSave);
 
   const reset = () => {
@@ -238,7 +275,7 @@ function AddProject({ onAdded, onSingleFolder }: { onAdded: () => void; onSingle
         root: root.trim(),
         docs: textToDocs(docs),
         members,
-        chair: chair.agent.trim() ? chair : null,
+        chair: chairRequired && chair.agent.trim() ? chair : null,
       });
       onAdded();
       setOpen(false);
@@ -299,6 +336,7 @@ function MembersEditor({
 
   return (
     <div className="settings-members">
+      <ModelDatalists />
       <div className="settings-copy"><b>Council members</b><small>Each reviews with the given agent + optional model.</small></div>
       {members.length === 0 && <p className="settings-empty">No members — solo mode.</p>}
       {members.map((m, i) => (
@@ -350,9 +388,12 @@ function MemberRow({
       <select
         className="settings-agent-select"
         aria-label="Agent preset"
-        value={mode === "custom" ? "custom" : member.agent || "claude"}
+        // Bind to the REAL agent value (no phantom default): an empty agent shows the
+        // placeholder, so the select never displays a preset the user hasn't chosen.
+        value={mode === "custom" ? "custom" : member.agent}
         onChange={(e) => onSelect(e.target.value)}
       >
+        {mode !== "custom" && !member.agent && <option value="">— select agent —</option>}
         {PRESETS.map((p) => <option key={p} value={p}>{p}</option>)}
         <option value="custom">custom command…</option>
       </select>
@@ -371,9 +412,12 @@ function MemberRow({
         type="text"
         className="settings-model"
         aria-label="Model"
+        // A datalist gives a searchable dropdown of the agent's supported models while
+        // still allowing ANY typed value (the "other" case for a model not listed).
+        list={MODELS_BY_AGENT[member.agent] ? `models-${member.agent}` : undefined}
         value={member.model ?? ""}
         spellCheck={false}
-        placeholder="model (optional)"
+        placeholder={MODELS_BY_AGENT[member.agent] ? "model — pick or type…" : "model (optional)"}
         onChange={(e) => onChange({ ...member, model: e.target.value })}
       />
       {onRemove && <button className="settings-member-x" aria-label="Remove member" onClick={onRemove}>×</button>}
