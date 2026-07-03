@@ -189,6 +189,7 @@ export type Synthesis = {
   agreementScore: number;
   confidence: number;
   dissent: string;
+  summary?: string;
   suggestionId: string;
   createdBy: string;
 };

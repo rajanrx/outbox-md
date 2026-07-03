@@ -266,9 +266,9 @@ func (h *Handlers) ListCandidates(commentID string) (service.CouncilView, error)
 // Suggestion the human then accepts unchanged. Token-authed via the service like
 // every write path, so only the claiming council may record. agentIdentity is
 // the chair's identity (stored as the synthesis creator).
-func (h *Handlers) RecordSynthesis(commentID, token, content, dissent string, agreementScore float64, confidence int, agentIdentity string) (domain.Synthesis, error) {
+func (h *Handlers) RecordSynthesis(commentID, token, content, dissent, summary string, agreementScore float64, confidence int, agentIdentity string) (domain.Synthesis, error) {
 	if !h.served(commentID) {
 		return domain.Synthesis{}, fmt.Errorf("comment %s not found", commentID)
 	}
-	return h.Svc.RecordSynthesis(commentID, token, dissent, content, agentIdentity, agreementScore, confidence)
+	return h.Svc.RecordSynthesis(commentID, token, dissent, content, summary, agentIdentity, agreementScore, confidence)
 }

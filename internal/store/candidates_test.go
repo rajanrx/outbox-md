@@ -79,7 +79,7 @@ func TestCandidateSetRoundTrip(t *testing.T) {
 	// Synthesis records and reads back.
 	if _, err := s.RecordSynthesis(domain.Synthesis{
 		CandidateSetID: set.ID, AgreementScore: 0.66, Confidence: 72, Dissent: "skeptic disagreed",
-		SuggestionID: "sg-1", CreatedBy: "chair",
+		Summary: "the chair's answer to the human", SuggestionID: "sg-1", CreatedBy: "chair",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -89,6 +89,10 @@ func TestCandidateSetRoundTrip(t *testing.T) {
 	}
 	if syn.AgreementScore != 0.66 || syn.Confidence != 72 || syn.Dissent != "skeptic disagreed" || syn.SuggestionID != "sg-1" {
 		t.Errorf("synthesis = %+v", syn)
+	}
+	// The summary round-trips through insert/scan.
+	if syn.Summary != "the chair's answer to the human" {
+		t.Errorf("summary = %q, want round-tripped value", syn.Summary)
 	}
 }
 
@@ -190,6 +194,14 @@ func TestMigrateAddsConfidenceToLegacyDB(t *testing.T) {
 	}
 	if confidence != 0 {
 		t.Fatalf("legacy row confidence = %d, want 0", confidence)
+	}
+	// migrate() also adds the chair summary column; legacy rows default to ''.
+	var summary string
+	if err := db.QueryRow(`SELECT summary FROM syntheses WHERE id='sy-legacy'`).Scan(&summary); err != nil {
+		t.Fatalf("summary column missing after migrate: %v", err)
+	}
+	if summary != "" {
+		t.Fatalf("legacy row summary = %q, want empty", summary)
 	}
 	// Idempotent: a second migrate() must not error (duplicate column ignored).
 	if err := migrate(db); err != nil {

@@ -120,6 +120,7 @@ func NewServer(h *Handlers) *mcp.Server {
 		Token          string  `json:"token" jsonschema:"the claim token from claim_comment"`
 		Content        string  `json:"content,omitempty" jsonschema:"the full replacement content of the chair's verdict; when set, an accept-eligible suggestion is emitted"`
 		Dissent        string  `json:"dissent,omitempty" jsonschema:"the preserved minority/skeptic position"`
+		Summary        string  `json:"summary,omitempty" jsonschema:"the chair's decision + reasoning + the answer/response to the human — for a reply/no-edit verdict this IS the answer posted to the human; for an edit it explains the change"`
 		AgreementScore float64 `json:"agreementScore" jsonschema:"council agreement, 0..1"`
 		Confidence     int     `json:"confidence" jsonschema:"the chair's confidence in the verdict, 0..100"`
 		AgentIdentity  string  `json:"agentIdentity" jsonschema:"the council chair's identity"`
@@ -128,7 +129,7 @@ func NewServer(h *Handlers) *mcp.Server {
 		Name:        "record_synthesis",
 		Description: "Council chair verdict: record the roll-up of a candidate set (agreement, confidence, dissent) and — when it carries edit content — emit the accept-eligible suggestion the human reviews. Token-authed: only the claiming council may record. Returns the synthesis, including its emitted suggestionId.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in recordSynthesisIn) (*mcp.CallToolResult, domain.Synthesis, error) {
-		syn, err := h.RecordSynthesis(in.CommentID, in.Token, in.Content, in.Dissent, in.AgreementScore, in.Confidence, in.AgentIdentity)
+		syn, err := h.RecordSynthesis(in.CommentID, in.Token, in.Content, in.Dissent, in.Summary, in.AgreementScore, in.Confidence, in.AgentIdentity)
 		return nil, syn, err
 	})
 

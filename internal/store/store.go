@@ -54,6 +54,10 @@ func migrate(db *sql.DB) error {
 		// AI Council: the chair's confidence (0..100) in a synthesis. Legacy rows
 		// default to 0; fresh databases already have it from schema.sql.
 		`ALTER TABLE syntheses ADD COLUMN confidence INTEGER NOT NULL DEFAULT 0`,
+		// AI Council chair summary: the chair's substantive verdict prose (decision +
+		// reasoning + the answer/response to the human). Legacy rows default to '';
+		// fresh databases already have it from schema.sql.
+		`ALTER TABLE syntheses ADD COLUMN summary TEXT NOT NULL DEFAULT ''`,
 		// Council discussion: a candidate's round (0 = independent take, >=1 =
 		// discussion revision). Legacy rows default to 0; fresh databases already
 		// have it from schema.sql. The discussion_messages table itself is created

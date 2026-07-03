@@ -40,7 +40,7 @@ function council(overrides: Partial<CouncilView> = {}): CouncilView {
     discussion: [
       { id: "msg-1", candidateSetId: "set1", round: 1, agentIdentity: "codex", body: "I still disagree after review.", refs: [{ kind: "member", targetId: "cand-a" }, { kind: "kb", targetId: "spec.md#3" }] },
     ],
-    synthesis: { id: "syn1", candidateSetId: "set1", agreementScore: 0.5, confidence: 82, dissent: "codex would reject the comment outright.", suggestionId: "sg1", createdBy: "chair" },
+    synthesis: { id: "syn1", candidateSetId: "set1", agreementScore: 0.5, confidence: 82, dissent: "codex would reject the comment outright.", summary: "Tighten the heading; the change sharpens the claim without losing meaning.", suggestionId: "sg1", createdBy: "chair" },
     ...overrides,
   };
 }
@@ -120,10 +120,42 @@ describe("council discussion modal", () => {
     expect(refs.some((t) => t?.includes("responding to claude"))).toBe(true);
     expect(refs.some((t) => t?.includes("KB: spec.md#3"))).toBe(true);
 
+    // Chair synthesis: derived decision label (a suggestion is set → an edit) and
+    // the chair's summary prose render above the stats.
+    expect(document.querySelector(".council-synthesis-decision")?.textContent).toContain("Edit proposed");
+    expect(document.querySelector(".council-synthesis-summary")?.textContent).toContain(
+      "Tighten the heading",
+    );
+
     // Chair synthesis stats: agreement scaled to %, confidence as-is.
     const stats = document.querySelector(".council-synthesis-stats")?.textContent || "";
     expect(stats).toContain("50%");
     expect(stats).toContain("82%");
+  });
+
+  it("shows a 'Reply — no edit' decision and the summary when no suggestion was emitted", () => {
+    render(
+      <CouncilModal
+        view={council({
+          synthesis: {
+            id: "syn1",
+            candidateSetId: "set1",
+            agreementScore: 0.97,
+            confidence: 88,
+            dissent: "",
+            summary: "Outbox turns Markdown comments into AI-reviewed edits.",
+            suggestionId: "",
+            createdBy: "chair",
+          },
+        })}
+        title="doc.md"
+        onClose={() => {}}
+      />,
+    );
+    expect(document.querySelector(".council-synthesis-decision")?.textContent).toContain("Reply — no edit");
+    expect(document.querySelector(".council-synthesis-summary")?.textContent).toContain(
+      "Outbox turns Markdown comments",
+    );
   });
 });
 

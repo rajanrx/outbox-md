@@ -436,6 +436,15 @@ func TestCouncilPromptsCarryDocContext(t *testing.T) {
 	if !strings.Contains(chair, "50") {
 		t.Fatalf("chair prompt missing deadlock threshold:\n%s", chair)
 	}
+	// Regression: the chair must be instructed to pass a summary AND to answer the
+	// human's question directly on a no-edit verdict — so the wiring for a
+	// substantive human-facing reply can't silently drop out of the prompt.
+	if !strings.Contains(chair, "summary=") {
+		t.Fatalf("chair prompt missing the summary param:\n%s", chair)
+	}
+	if !strings.Contains(chair, "ANSWER") {
+		t.Fatalf("chair prompt does not require answering the human's question:\n%s", chair)
+	}
 }
 
 // TestCouncilPromptsRetrieveFromKB (§3.2): every council prompt — member round 0,
