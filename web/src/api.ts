@@ -9,6 +9,10 @@ export type Comment = {
   // Ephemeral, self-expiring hint that an AI agent is working this comment.
   // Absent/empty when idle; an ISO timestamp in the future while processing.
   processingUntil?: string;
+  // Per-comment council flag: true ⇒ the full council processes this comment,
+  // false ⇒ a single agent (the chair command). Seeded from council_default at
+  // creation and toggled from the thread UI. Always present on the current server.
+  councilEnabled?: boolean;
 };
 export type DocView = {
   document: { id: string; project: string; path: string; status: "draft" | "approved" | "amending"; approvedVersionId: string };
@@ -131,6 +135,13 @@ export async function resolve(commentId: string): Promise<unknown> {
   const r = await fetch(`/api/comments/${commentId}/resolve`, { method: "POST" });
   return r.ok ? r.json().catch(() => null) : null;
 }
+// setCommentCouncil flips a comment's per-comment council on/off flag (human-only,
+// like resolve). Throws on a non-OK POST so the caller can keep local state.
+export async function setCommentCouncil(commentId: string, enabled: boolean): Promise<void> {
+  const r = await fetch(`/api/comments/${commentId}/council`, { method: "POST", body: JSON.stringify({ enabled }) });
+  if (!r.ok) throw new Error(`council toggle failed (${r.status})`);
+}
+
 export async function rejectSuggestion(commentId: string): Promise<unknown> {
   const r = await fetch(`/api/comments/${commentId}/reject`, { method: "POST" });
   return r.ok ? r.json().catch(() => null) : null;
@@ -220,7 +231,8 @@ export async function pickCandidate(commentId: string, candidateId: string): Pro
 // confidence (0..100) below which a chair verdict is treated as "no consensus".
 // retrievalMode is the KB retrieval posture (§5.5): "semantic" | "keyword-only" |
 // "degraded", or ""/absent when retrieval is not wired — the header chip reads it.
-export type AppConfig = { version: string; councilDeadlockThreshold?: number; retrievalMode?: string };
+// councilDefault seeds a new comment's council toggle (system default false).
+export type AppConfig = { version: string; councilDeadlockThreshold?: number; retrievalMode?: string; councilDefault?: boolean };
 export async function getConfig(): Promise<AppConfig | null> {
   const r = await fetch("/api/config");
   return r.ok ? r.json() : null;
@@ -290,6 +302,8 @@ export type Settings = {
   council_rounds: number;
   council_budget: number;
   council_deadlock_threshold: number;
+  // Seed a new comment's council flag on (full council) rather than single-agent.
+  council_default: boolean;
 };
 
 // getSettings reads the current project's editable outbox.yaml fields. In

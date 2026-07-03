@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getThread, reply, resolve, getSuggestion, getCandidates, pickCandidate, type Comment, type ThreadMessage, type Suggestion, type CouncilView } from "../api";
+import { getThread, reply, resolve, getSuggestion, getCandidates, pickCandidate, setCommentCouncil, type Comment, type ThreadMessage, type Suggestion, type CouncilView } from "../api";
 import { unifiedDiff, type Row } from "../suggestion/diff";
 import { DiffRows, counts } from "../suggestion/DiffRows";
 import { DiffModal } from "../suggestion/DiffModal";
@@ -42,7 +42,19 @@ const PinIcon = ({ filled }: { filled: boolean }) => (
 
 const initial = (who: string) => (who?.[0] || "?").toUpperCase();
 
-export function Card({ comment, currentContent, docPath = "", active = false, pinned = false, offscreen = false, reloadKey = 0, deadlockThreshold = 50, onActivate, onJump, onTogglePin, onChange }: {
+// The per-comment council choice is remembered in localStorage so it seeds a NEW
+// comment's toggle for immediate feedback (the server-side seed stays
+// council_default). Returns null when nothing is remembered yet.
+const COUNCIL_REMEMBER_KEY = "outbox.councilEnabled";
+function rememberedCouncil(): boolean | null {
+  const v = localStorage.getItem(COUNCIL_REMEMBER_KEY);
+  return v === null ? null : v === "true";
+}
+function rememberCouncil(on: boolean) {
+  localStorage.setItem(COUNCIL_REMEMBER_KEY, String(on));
+}
+
+export function Card({ comment, currentContent, docPath = "", active = false, pinned = false, offscreen = false, reloadKey = 0, deadlockThreshold = 50, councilProject = false, councilDefault = false, onActivate, onJump, onTogglePin, onChange }: {
   comment: Comment;
   currentContent: string;
   docPath?: string;
@@ -52,6 +64,12 @@ export function Card({ comment, currentContent, docPath = "", active = false, pi
   // Confidence (0..100) below which a chair verdict is "no consensus" (deadlock),
   // from /api/config. Also the chip's amber/green boundary.
   deadlockThreshold?: number;
+  // True when the current project is a council (>=2 members + chair). Only then is
+  // the council on/off toggle shown; on a non-council project it stays hidden.
+  councilProject?: boolean;
+  // The project's council_default (/api/config): the fallback seed for a NEW
+  // comment's toggle when nothing is remembered and the comment has no flag yet.
+  councilDefault?: boolean;
   // Bumped by the parent on each SSE event for the open doc; the thread state is
   // local to this Card and would otherwise only load on comment.id change, so an
   // agent reply/suggestion wouldn't appear in the open thread until a refresh.
@@ -82,6 +100,26 @@ export function Card({ comment, currentContent, docPath = "", active = false, pi
   useEffect(() => {
     if (active) ref.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [active]);
+
+  // Per-comment council on/off. Display = server truth when the comment carries a
+  // flag, else the remembered choice, else the project council_default — so a NEW
+  // comment's toggle shows the last choice immediately. Toggling persists the
+  // choice (localStorage) and POSTs the flag, then refreshes the doc.
+  const councilOn = comment.councilEnabled ?? rememberedCouncil() ?? councilDefault;
+  const [councilBusy, setCouncilBusy] = useState(false);
+  const toggleCouncil = async (on: boolean) => {
+    if (on === councilOn) return;
+    rememberCouncil(on);
+    setCouncilBusy(true);
+    try {
+      await setCommentCouncil(comment.id, on);
+      onChange();
+    } catch {
+      // Leave the remembered choice; the server flag is unchanged on failure.
+    } finally {
+      setCouncilBusy(false);
+    }
+  };
 
   const stop = (e: React.MouseEvent, fn?: () => void) => { e.stopPropagation(); fn?.(); };
   const sendReply = async () => {
@@ -188,6 +226,32 @@ export function Card({ comment, currentContent, docPath = "", active = false, pi
           <button className={"ic-btn" + (pinned ? " on" : "")} title={pinned ? "Unpin" : "Pin"} aria-label={pinned ? "Unpin" : "Pin"} onClick={(e) => stop(e, onTogglePin)}><PinIcon filled={pinned} /></button>
         </span>
       </div>
+
+      {councilProject && (
+        <div className="council-toggle" role="radiogroup" aria-label="Council mode" onClick={(e) => e.stopPropagation()}>
+          <span className="council-toggle-label">Council</span>
+          <label className="council-toggle-opt">
+            <input
+              type="radio"
+              name={`council-${comment.id}`}
+              checked={councilOn}
+              disabled={councilBusy}
+              onChange={() => toggleCouncil(true)}
+            />
+            <span>On</span>
+          </label>
+          <label className="council-toggle-opt">
+            <input
+              type="radio"
+              name={`council-${comment.id}`}
+              checked={!councilOn}
+              disabled={councilBusy}
+              onChange={() => toggleCouncil(false)}
+            />
+            <span>Single agent</span>
+          </label>
+        </div>
+      )}
 
       <div className="posts">
         {thread.length === 0 && <div className="post-empty">No comment text yet.</div>}

@@ -13,6 +13,7 @@ const baseSettings = {
   council_rounds: 2,
   council_budget: 200000,
   council_deadlock_threshold: 50,
+  council_default: false,
 };
 
 vi.mock("../api", async (importOriginal) => {
@@ -85,7 +86,21 @@ describe("SettingsPage", () => {
     fireEvent.click(within(council).getByText("Save"));
     await waitFor(() => expect(api.putSettings).toHaveBeenCalled());
     const patch = (api.putSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(Object.keys(patch).sort()).toEqual(["council_budget", "council_deadlock_threshold", "council_rounds"]);
+    expect(Object.keys(patch).sort()).toEqual(["council_budget", "council_deadlock_threshold", "council_default", "council_rounds"]);
+  });
+
+  it("saves the council_default toggle via putSettings", async () => {
+    const { getByText, container } = render(
+      <SettingsPage projects={multi} initialProject="repo" version="dev" onBack={noop} onProjectsChanged={noop} />,
+    );
+    await waitFor(() => expect(container.querySelector('input[type="number"]')).not.toBeNull());
+    const council = getByText("Council").closest("section") as HTMLElement;
+    // Flip "Council on new comments by default" (the section's checkbox), then Save.
+    fireEvent.click(within(council).getByRole("checkbox"));
+    fireEvent.click(within(council).getByText("Save"));
+    await waitFor(() => expect(api.putSettings).toHaveBeenCalled());
+    const patch = (api.putSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(patch.council_default).toBe(true);
   });
 
   it("shows the single-folder notice and no projects form in single-folder mode", () => {
