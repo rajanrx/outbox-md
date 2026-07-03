@@ -90,6 +90,13 @@ type Config struct {
 	// DefaultCouncilDeadlockThreshold (50). Resolve with
 	// ResolveCouncilDeadlockThreshold.
 	CouncilDeadlockThreshold int `json:"councilDeadlockThreshold" yaml:"council_deadlock_threshold"`
+	// CouncilDefault is the per-project default council flag a NEW comment is seeded
+	// with (domain.Comment.CouncilEnabled). false (the system default) ⇒ a new
+	// comment is processed single-agent even on a council project; true ⇒ the full
+	// council. Absent ⇒ false (the zero value). It is captured at startup like the
+	// other council guardrails, so a change needs a restart to apply. Resolve with
+	// ResolveCouncilDefault.
+	CouncilDefault bool `json:"councilDefault" yaml:"council_default"`
 	// EmbedCmd is the shell-out command the RAG embedder spawns to turn text into a
 	// vector (design §5.2). The command reads ONE text on stdin and writes a JSON
 	// array of float64 on stdout; outbox runs it once per text and discovers the
@@ -169,6 +176,14 @@ func (c Config) ResolveCouncilDeadlockThreshold() int {
 		return DefaultCouncilDeadlockThreshold
 	}
 	return c.CouncilDeadlockThreshold
+}
+
+// ResolveCouncilDefault returns the effective per-project default council flag a
+// new comment is seeded with. It is a plain bool (no clamping); the accessor
+// exists so callers seed from ONE place and the intent reads clearly at the call
+// site (system default = false, council OFF).
+func (c Config) ResolveCouncilDefault() bool {
+	return c.CouncilDefault
 }
 
 type AgentConfig struct {
@@ -260,6 +275,9 @@ func Defaults() Config {
 		CouncilRounds:            DefaultCouncilRounds,
 		CouncilBudget:            DefaultCouncilBudget,
 		CouncilDeadlockThreshold: DefaultCouncilDeadlockThreshold,
+		// CouncilDefault defaults to false: the system default is council OFF, so a
+		// new comment is single-agent unless a project opts in via council_default.
+		CouncilDefault: false,
 		// EmbedCmd is empty by default: no embedder ⇒ FTS5 keyword-only retrieval,
 		// never a hard failure (design §5.2 HARD DECISION). A user opts into semantic
 		// recall by pointing embed_cmd at a wrapper that emits vectors, or via
