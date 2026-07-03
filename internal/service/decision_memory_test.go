@@ -115,3 +115,29 @@ func TestDecisionDetailBoundedNoFullBodyLeak(t *testing.T) {
 		}
 	}
 }
+
+// TestNoEditSummaryRecordedInDecisionMemory (PR #94 P2): a no-edit (reply) verdict's
+// substantive summary — the actual answer the chair gave the human — must be captured
+// in decision memory, so a future search_knowledge_base(kind="decision") recalls WHAT
+// was decided and WHY, not just that a ruling happened. Previously Detail was the
+// (empty) edit content for a no-edit verdict, losing the answer.
+func TestNoEditSummaryRecordedInDecisionMemory(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _, _ string) error { return nil })
+	var recs []DecisionRecord
+	svc.SetDecisionRecorder(func(r DecisionRecord) { recs = append(recs, r) })
+
+	c, tok := claimedComment(t, s, svc)
+	// A no-edit verdict (content empty) with a real answer and no dissent.
+	answer := "Model calls, keys, quorum, tiebreak, chair all live in the external runner."
+	if _, err := svc.RecordSynthesis(c.ID, tok, "", "", answer, "chair", 0.97, 88); err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("expected one decision record, got %d", len(recs))
+	}
+	if !strings.Contains(recs[0].Detail, "external runner") {
+		t.Fatalf("decision memory lost the chair's no-edit answer; Detail=%q", recs[0].Detail)
+	}
+}

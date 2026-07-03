@@ -761,11 +761,20 @@ func (s *Service) RecordSynthesis(commentID, token, dissent, content, summary, c
 	if content != "" {
 		outcome = "Council verdict: edit"
 	}
+	// Prefer the chair's summary (its reasoning + the answer it gave the human) as the
+	// decision-memory detail, so a future search_knowledge_base(kind="decision") recalls
+	// WHAT was decided and WHY — not just that a ruling happened. Fall back to the edit
+	// content when there is no summary. Bounded (decisionDetailExcerpt) to avoid leaking
+	// full bodies.
+	detail := content
+	if strings.TrimSpace(summary) != "" {
+		detail = summary
+	}
 	rec := DecisionRecord{
 		Excerpt:   s.commentExcerpt(c),
 		Outcome:   fmt.Sprintf("%s (agreement %.0f%%, confidence %d%%)", outcome, agreementScore*100, confidence),
 		Rationale: dissent,
-		Detail:    decisionDetailExcerpt(content),
+		Detail:    decisionDetailExcerpt(detail),
 	}
 	if doc, err := s.store.GetDocument(c.DocID); err == nil {
 		rec.Project, rec.DocPath = doc.Project, doc.Path
