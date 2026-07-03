@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -23,6 +24,7 @@ import (
 	"github.com/rajanrx/outbox-md/internal/domain"
 	"github.com/rajanrx/outbox-md/internal/mcp"
 	"github.com/rajanrx/outbox-md/internal/mcpclients"
+	"github.com/rajanrx/outbox-md/internal/rag"
 	"github.com/rajanrx/outbox-md/internal/registry"
 	"github.com/rajanrx/outbox-md/internal/service"
 	"github.com/rajanrx/outbox-md/internal/sse"
@@ -171,6 +173,62 @@ func importMarkdown(st *store.Store, project, keyBase, dir string, sources []str
 		}
 		return importFile(st, project, keyBase, p)
 	})
+}
+
+// collectRAGDocs walks a docs subtree and returns every served .md as a rag.Doc,
+// keyed by its ROOT-relative path with content read FROM DISK. It applies the
+// SAME SourcesMatch predicate + root-relative keying as importMarkdown, so the
+// KB index reconciles against exactly the served set (no import/serve drift) and
+// the key matches the watcher's re-index key. Content is read from disk — never
+// the governance store, which may hold stale bytes for a doc it already imported
+// (importFile skips re-reading an already-present doc). Read failures skip the
+// file rather than aborting the whole walk.
+func collectRAGDocs(project, keyBase, dir string, sources []string) ([]rag.Doc, error) {
+	var docs []rag.Doc
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == ".outbox" || (strings.HasPrefix(d.Name(), ".") && p != dir) {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(d.Name(), ".md") {
+			return nil
+		}
+		rel, err := filepath.Rel(keyBase, p)
+		if err != nil {
+			return err
+		}
+		key := filepath.ToSlash(rel)
+		if !config.SourcesMatch(sources, key) {
+			return nil
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return nil // unreadable file: skip, never abort the walk
+		}
+		docs = append(docs, rag.Doc{Project: project, Path: key, Content: string(b)})
+		return nil
+	})
+	return docs, err
+}
+
+// ragReindexer adapts the rag indexer + store to the watcher's Reindexer seam so
+// a live doc change re-indexes (or drops) the KB on the watcher's debounced pass.
+type ragReindexer struct {
+	ix    *rag.Indexer
+	store *rag.Store
+}
+
+func (r ragReindexer) Reindex(project, path, content string) error {
+	return r.ix.Reindex(context.Background(), project, path, content)
+}
+
+func (r ragReindexer) DropDoc(project, path string) error {
+	return r.store.DeleteDoc(project, path)
 }
 
 // importFile imports a single .md file at absolute path p, keyed by (project, its
@@ -439,6 +497,10 @@ func buildServer(root string, projects []registry.Project, autoReplyFlag, logs b
 	// (UI/HTTP/MCP), not just at import. Single-folder mode is one entry keyed ""
 	// carrying the real cfg, so single-dir behaviour is bit-for-bit unchanged.
 	sources := make(config.ProjectSources, len(projects))
+	// The served docs-union read from disk, for the §5.1 KB startup reconciliation
+	// below. Accumulated on the SAME walk that imports, so it is exactly the served
+	// set (same SourcesMatch predicate + root-relative key).
+	var ragDocs []rag.Doc
 	// Import every project under its own name. A project serves the UNION of its
 	// docs subtrees; each subtree is walked but keyed relative to the project ROOT,
 	// so the same filename under two subpaths (docs1/a.md vs docs2/a.md) never
@@ -463,9 +525,44 @@ func buildServer(root string, projects []registry.Project, autoReplyFlag, logs b
 			if err := importMarkdown(st, p.Name, p.Root, specDir, pcfg.Sources); err != nil {
 				return nil, nil, err
 			}
+			docs, err := collectRAGDocs(p.Name, p.Root, specDir, pcfg.Sources)
+			if err != nil {
+				return nil, nil, err
+			}
+			ragDocs = append(ragDocs, docs...)
 		}
 	}
 	svc.SetProjectSources(sources)
+
+	// ── Retrieval knowledge base (design §5) ──────────────────────────────────
+	// Build the KB over the SAME SQLite handle (MaxOpenConns=1 serialises it, and
+	// reindex embeds BEFORE the store write, so a slow embed never holds the
+	// connection). The embedder is config-driven (embed_cmd; nil ⇒ FTS5-only). ONE
+	// shared ModeTracker feeds the indexer, the searcher, and /api/config so the UI
+	// chip reflects what search actually did. NewModeTracker logs the startup mode.
+	ragStore, err := rag.NewStore(st.DB)
+	if err != nil {
+		return nil, nil, err
+	}
+	embedder, err := rag.NewEmbedder(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !ragStore.FTSAvailable() {
+		log.Printf("rag: FTS5 unavailable — lexical layer degraded to LIKE scan")
+	}
+	ragMode := rag.NewModeTracker(embedder != nil, log.Printf)
+	ragIndexer := rag.NewIndexer(ragStore, embedder, ragMode, log.Printf)
+	ragSearcher := rag.NewSearcher(ragStore, embedder, ragMode)
+	// Surface the retrieval mode at /api/config for the UI chip (§5.5).
+	svc.SetRetrievalMode(func() string { return string(ragMode.Mode()) })
+	// §5.1 startup reconciliation: after the doc import, converge the index with the
+	// served docs-union on disk — re-embed stale/missing/embedder-changed docs, drop
+	// chunks for docs no longer served. Non-blocking: a reconcile error is logged,
+	// never fatal (retrieval degrades, serving continues).
+	if _, err := ragIndexer.Reconcile(context.Background(), ragDocs); err != nil {
+		log.Printf("rag: startup reconcile had errors (retrieval may be partial): %v", err)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -473,8 +570,9 @@ func buildServer(root string, projects []registry.Project, autoReplyFlag, logs b
 	})
 	mux.Handle("/api/", api.NewAPI(svc, st, hub))
 
-	// MCP over Streamable HTTP at /mcp — any agent connects here.
-	mcpServer := mcp.NewServer(&mcp.Handlers{Svc: svc, St: st})
+	// MCP over Streamable HTTP at /mcp — any agent connects here. The KB searcher
+	// backs search_knowledge_base (project-scoped retrieval to ground reviews).
+	mcpServer := mcp.NewServer(&mcp.Handlers{Svc: svc, St: st, RAG: ragSearcher})
 	mcpHandler := mcpsdk.NewStreamableHTTPHandler(
 		func(*http.Request) *mcpsdk.Server { return mcpServer }, nil)
 	mux.Handle("/mcp", mcpHandler)
@@ -496,6 +594,9 @@ func buildServer(root string, projects []registry.Project, autoReplyFlag, logs b
 	if w, err := watcher.New(wp, svc, hub, 0); err != nil {
 		log.Printf("watcher: disabled (%v)", err)
 	} else {
+		// Ride the watcher's debounced pass to keep the KB live (§5.1): a doc change
+		// re-indexes, a delete drops its chunks — no second polling loop.
+		w.SetReindexer(ragReindexer{ix: ragIndexer, store: ragStore})
 		w.Start()
 		stop = func() { _ = w.Close() }
 	}

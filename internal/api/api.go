@@ -171,11 +171,14 @@ func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub) http.Handler {
 
 	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, _ *http.Request) {
 		// Embed the Config (its fields promote to the top level) and add the build
-		// version so the UI can show a version badge without a second request.
+		// version + the KB retrieval mode (§5.5) so the UI can show a version badge
+		// and a retrieval-mode chip without a second request. retrievalMode is ""
+		// when retrieval is not wired — the UI then renders no chip.
 		writeJSON(w, struct {
 			config.Config
-			Version string `json:"version"`
-		}{Config: svc.Config(), Version: svc.Version()}, nil)
+			Version       string `json:"version"`
+			RetrievalMode string `json:"retrievalMode"`
+		}{Config: svc.Config(), Version: svc.Version(), RetrievalMode: svc.RetrievalMode()}, nil)
 	})
 
 	// The projects being served: [{name, root, docs, members, chair}]. Single-folder

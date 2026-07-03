@@ -47,6 +47,11 @@ type Service struct {
 	// version is the CLI/server version string surfaced at /api/config so the UI
 	// can show a build badge. "dev" for local builds; set once at startup.
 	version string
+	// retrievalMode, when set, returns the KB's current retrieval posture
+	// (semantic / keyword-only / degraded) for /api/config, so the UI chip reflects
+	// what search actually did. It is a func seam (not a *rag.ModeTracker) to keep
+	// service free of a rag import; buildServer wires it to the shared tracker.
+	retrievalMode func() string
 	// projectSources, when non-nil, is the per-project runtime sources map built
 	// by the server at startup (single-folder mode is a single "" entry carrying
 	// the real cfg). It drives the read guards so each project's Sources whitelist
@@ -149,6 +154,20 @@ func (s *Service) unresolvedCount(docID string) (int, error) {
 
 // Config returns the effective configuration (read-only view for the API).
 func (s *Service) Config() config.Config { return s.cfg }
+
+// SetRetrievalMode installs the KB retrieval-mode reader surfaced at /api/config
+// (design §5.5). buildServer wires it to the shared rag.ModeTracker; unset (nil)
+// ⇒ RetrievalMode reports "" so the UI shows no chip.
+func (s *Service) SetRetrievalMode(fn func() string) { s.retrievalMode = fn }
+
+// RetrievalMode returns the KB's current retrieval posture, or "" when retrieval
+// is not wired (single global-cfg tests, or a build without the KB).
+func (s *Service) RetrievalMode() string {
+	if s.retrievalMode == nil {
+		return ""
+	}
+	return s.retrievalMode()
+}
 
 // SetProjectSources installs the per-project runtime sources map (built once at
 // startup). Leaving it unset keeps the guards on the single global cfg.
