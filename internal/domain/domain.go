@@ -222,6 +222,7 @@ type Synthesis struct {
 	AgreementScore float64 `json:"agreementScore"` // 0..1
 	Confidence     int     `json:"confidence"`     // 0..100, the chair's confidence in the verdict
 	Dissent        string  `json:"dissent"`        // the preserved minority/skeptic position
+	Summary        string  `json:"summary"`        // the chair's substantive verdict: decision + reasoning + the answer/response to the human
 	SuggestionID   string  `json:"suggestionId"`
 	CreatedBy      string  `json:"createdBy"`
 }

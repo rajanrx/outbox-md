@@ -104,6 +104,7 @@ CREATE TABLE IF NOT EXISTS syntheses (
   agreement_score REAL NOT NULL DEFAULT 0,
   confidence INTEGER NOT NULL DEFAULT 0,
   dissent TEXT NOT NULL DEFAULT '',
+  summary TEXT NOT NULL DEFAULT '',
   suggestion_id TEXT NOT NULL DEFAULT '',
   created_by TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
