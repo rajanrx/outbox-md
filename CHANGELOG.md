@@ -4,6 +4,53 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.0](https://github.com/rajanrx/outbox-md/compare/v0.17.0...v0.18.0) (2026-07-03)
+
+
+### Features
+
+* **autoreply:** bounded council discussion rounds with transcript, early-exit, and budget ([5744a30](https://github.com/rajanrx/outbox-md/commit/5744a30bbfef2e87eb6839b8f6d10cf4cdc6318c))
+* **autoreply:** council prompts retrieve from the KB ([b5ee51a](https://github.com/rajanrx/outbox-md/commit/b5ee51ad72e87412e5a87d1c3a5b31ce0eef414f))
+* **autoreply:** single-agent branch for council-off comments ([5b6cdf1](https://github.com/rajanrx/outbox-md/commit/5b6cdf1f928eafa9784544125edff7d41a2f3429))
+* **config:** embed_cmd/embed_api/kb_scope ([513a089](https://github.com/rajanrx/outbox-md/commit/513a089d5fe72ee450b6ea71a94a1cbe215b621d))
+* **config:** surface embed_cmd + kb_scope in settings ([8f63367](https://github.com/rajanrx/outbox-md/commit/8f6336772b826a455e654698af66401723531f64))
+* **council:** bounded discussion rounds orchestration (Phase 2A-2) ([94c78cf](https://github.com/rajanrx/outbox-md/commit/94c78cf9edb4c269635b0073f0f50c4b4cfe83e4))
+* **council:** per-comment council on/off toggle ([b5768b6](https://github.com/rajanrx/outbox-md/commit/b5768b6db8d39f7f85c0ba3754b83bd6ca84cd0b))
+* **domain/store:** comment CouncilEnabled + council_default config ([0eadeb9](https://github.com/rajanrx/outbox-md/commit/0eadeb977b3e04fc79570633932402da8999329b))
+* **mcp:** search_knowledge_base tool ([f17503e](https://github.com/rajanrx/outbox-md/commit/f17503e8af0a95880c16f62aafbf0e335e56ce4a))
+* **outbox-md:** wire CouncilState seam + council config into buildServer ([d4eb1bc](https://github.com/rajanrx/outbox-md/commit/d4eb1bc153affdec9a60678610cba18145039483))
+* **outbox-md:** wire rag store+embedder into buildServer ([dcd5bc1](https://github.com/rajanrx/outbox-md/commit/dcd5bc1b529c75c549dbbe2d11d0d162744b0df3))
+* **rag:** agents retrieve + decision memory + embed_api (Phase 3C — RAG complete) ([0745d9e](https://github.com/rajanrx/outbox-md/commit/0745d9ef1f6892ab339d582f43ed54e0930abcf7))
+* **rag:** chunk+vector+fts5 store ([996cba0](https://github.com/rajanrx/outbox-md/commit/996cba02c085683161af4d403b67c6ddd470ac4b))
+* **rag:** decision memory (kind filter + write on verdict/accept) ([bda2228](https://github.com/rajanrx/outbox-md/commit/bda2228d34228d5ce4ca5419b652d47e45c389f7))
+* **rag:** embed_api embedder ([5caeb4f](https://github.com/rajanrx/outbox-md/commit/5caeb4fd44607c0e4ecde48e851c0672acf6d319))
+* **rag:** embedder interface + embed_cmd ([6d66fef](https://github.com/rajanrx/outbox-md/commit/6d66fefad3999f06c7c5c3210b0e251f0f2424e1))
+* **rag:** index build + hybrid search + retrieval mode ([e2ad6e4](https://github.com/rajanrx/outbox-md/commit/e2ad6e411689ec20da4be932a2bd29294f3d1df7))
+* **rag:** knowledge-base core — embedder, chunker, vector+FTS5 store, hybrid search (Phase 3A) ([c7c4243](https://github.com/rajanrx/outbox-md/commit/c7c42433e32cf53fbac22ce5ec51febf9da7a9ad))
+* **rag:** markdown chunker ([bc4ebf4](https://github.com/rajanrx/outbox-md/commit/bc4ebf47b3a149f5d4ac38f9263775296f6cc6e8))
+* **rag:** search_knowledge_base tool + watcher re-index + reconciliation + retrieval chip (Phase 3B) ([d9a9754](https://github.com/rajanrx/outbox-md/commit/d9a9754d497e063a28851107201e94cde93d819a))
+* **rag:** startup reconciliation ([b88b7b0](https://github.com/rajanrx/outbox-md/commit/b88b7b0efa3b8914a4bedb2954bc29a7c041075c))
+* **service/api:** set-council endpoint + config surfacing ([bc58796](https://github.com/rajanrx/outbox-md/commit/bc58796f4c76e41835feab305feabeee55b8b9a0))
+* **watcher:** rag re-index on doc change ([9a58f65](https://github.com/rajanrx/outbox-md/commit/9a58f65fd642e9a7090c2ea62913f460e7c838d2))
+* **web:** confidence chip, view-discussion entry + deadlock pick cards ([6007103](https://github.com/rajanrx/outbox-md/commit/600710307e34791f5cdfb7f7108e64068d6d0717))
+* **web:** council api client + types ([c14af7f](https://github.com/rajanrx/outbox-md/commit/c14af7f3a05ea4dfff74828938f6b4a787903f4e))
+* **web:** council discussion modal ([bb5d05b](https://github.com/rajanrx/outbox-md/commit/bb5d05b46d384aceb4215dfe318d1ee282e1d802))
+* **web:** council discussion modal + confidence chip + deadlock pick cards (Phase 2B) ([5f050da](https://github.com/rajanrx/outbox-md/commit/5f050da866513bebc9fff10f75941749f4da7cdf))
+* **web:** per-comment council toggle + settings default ([7ff1220](https://github.com/rajanrx/outbox-md/commit/7ff1220ef4e8c8ecf8b49864bdb3da111f20c6dd))
+* **web:** retrieval-mode chip ([0ca72fd](https://github.com/rajanrx/outbox-md/commit/0ca72fd3b2939b9fd110ec5b7ada3e32496b1c3f))
+
+
+### Bug Fixes
+
+* **autoreply:** show proposed edit content to other members in discussion (PR [#82](https://github.com/rajanrx/outbox-md/issues/82) P2) ([c469559](https://github.com/rajanrx/outbox-md/commit/c469559934f554b120fa9205885ad58f7df3376c))
+* **autoreply:** truncate injected transcript on a rune boundary ([cda1fb3](https://github.com/rajanrx/outbox-md/commit/cda1fb3238d5486663cc992086a3ea2aff3838d9))
+* **council:** a pick rejects the chair's stale proposed suggestion (PR [#84](https://github.com/rajanrx/outbox-md/issues/84) P1) ([d47cfdc](https://github.com/rajanrx/outbox-md/commit/d47cfdc2937e016d61dffa6926222108fd8ca4ec))
+* **council:** non-edit pick records the outcome + leaves 'addressed' (PR [#84](https://github.com/rajanrx/outbox-md/issues/84) P2) ([ec8dc2e](https://github.com/rajanrx/outbox-md/commit/ec8dc2e46953f5b855e32239e10e61097ef960f3))
+* **rag:** BuildAll prunes docs no longer in the served set (PR [#85](https://github.com/rajanrx/outbox-md/issues/85) P1) ([29c3e61](https://github.com/rajanrx/outbox-md/commit/29c3e61e302408fc9e7960c9883ce2d9efa75aba))
+* **rag:** index decision memory off the request goroutine ([da91d38](https://github.com/rajanrx/outbox-md/commit/da91d3800bcd8adf0b006c9719a0fb70981a2ad8))
+* **rag:** re-index on service-owned writes via content hash, not SyncFile flag (PR [#86](https://github.com/rajanrx/outbox-md/issues/86) P1) ([2380578](https://github.com/rajanrx/outbox-md/commit/23805783a595e60c520a15cdb940bae9fc04d25d))
+* **rag:** store a bounded decision preview, not full doc bodies (PR [#87](https://github.com/rajanrx/outbox-md/issues/87) P1) ([43b2677](https://github.com/rajanrx/outbox-md/commit/43b2677212c6c7e597e9dd1c5147f648a13355bb))
+
 ## [0.17.0](https://github.com/rajanrx/outbox-md/compare/v0.16.0...v0.17.0) (2026-07-02)
 
 
