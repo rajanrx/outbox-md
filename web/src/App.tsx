@@ -41,7 +41,7 @@ const clampTreeW = (w: number) => Math.min(560, Math.max(180, w));
 const PROJECT_KEY = "outbox.project";
 
 export default function App() {
-  const [docs, setDocs] = useState<{ id: string; path: string; project: string }[]>([]);
+  const [docs, setDocs] = useState<{ id: string; path: string; project: string; openComments?: number }[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   // Selected project name; persisted so a reload keeps the same project. The
   // empty string is the single-folder mode (no switcher shown).

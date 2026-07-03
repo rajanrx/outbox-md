@@ -97,7 +97,7 @@ export async function reapprove(id: string, note = ""): Promise<unknown> {
   return r.ok ? r.json() : null;
 }
 
-export async function listDocs(): Promise<{ id: string; path: string; project: string }[]> {
+export async function listDocs(): Promise<{ id: string; path: string; project: string; openComments?: number }[]> {
   return (await fetch("/api/docs")).json();
 }
 export async function listProjects(): Promise<Project[]> {
