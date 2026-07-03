@@ -597,10 +597,18 @@ func buildServer(root string, projects []registry.Project, autoReplyFlag, logs b
 	// councils can recall prior rulings. Best-effort — a failed index is logged and
 	// never blocks the verdict/accept.
 	svc.SetDecisionRecorder(func(rec service.DecisionRecord) {
-		text := formatDecisionRecord(rec)
-		if err := ragIndexer.IndexDecision(context.Background(), rec.Project, rec.DocPath, decisionHeading(rec), text); err != nil {
-			log.Printf("rag: decision index failed (non-blocking) for %s/%s: %v", rec.Project, rec.DocPath, err)
-		}
+		// Index off the request goroutine: IndexDecision embeds inline, and the
+		// embed_api embedder is a network POST (up to a 30s client timeout), so a
+		// slow/hanging embedder must never sit in the human's Accept path or the
+		// chair's record_synthesis path. A write lost on shutdown is acceptable —
+		// decision memory is advisory by contract.
+		go func() {
+			defer func() { _ = recover() }()
+			text := formatDecisionRecord(rec)
+			if err := ragIndexer.IndexDecision(context.Background(), rec.Project, rec.DocPath, decisionHeading(rec), text); err != nil {
+				log.Printf("rag: decision index failed (non-blocking) for %s/%s: %v", rec.Project, rec.DocPath, err)
+			}
+		}()
 	})
 	// §5.1 startup reconciliation: after the doc import, converge the index with the
 	// served docs-union on disk — re-embed stale/missing/embedder-changed docs, drop
