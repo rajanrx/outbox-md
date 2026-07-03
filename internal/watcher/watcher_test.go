@@ -193,7 +193,10 @@ func TestDeleteRemoves(t *testing.T) {
 	}) {
 		t.Fatal("gone.md still in store after delete")
 	}
-	if spy.count(EventDocsChanged) < 1 {
+	// Wait for the broadcast too: the watcher removes the doc from the store BEFORE
+	// appending docs.changed, so the deletion above can be observed a beat before the
+	// event lands — asserting immediately raced to an empty event list on CI.
+	if !eventually(t, func() bool { return spy.count(EventDocsChanged) >= 1 }) {
 		t.Fatalf("no docs.changed on delete, events=%v", spy.events)
 	}
 }
