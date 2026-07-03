@@ -435,3 +435,28 @@ func TestCouncilPromptsCarryDocContext(t *testing.T) {
 		t.Fatalf("chair prompt missing deadlock threshold:\n%s", chair)
 	}
 }
+
+// TestCouncilPromptsRetrieveFromKB (§3.2): every council prompt — member round 0,
+// the discussion round, and the chair — must nudge the agent to ground itself with
+// search_knowledge_base BEFORE forming a position, and to recall prior council
+// rulings via kind="decision" (§5.4). This is a regression so the RAG wiring can't
+// silently drop out of the prompts.
+func TestCouncilPromptsRetrieveFromKB(t *testing.T) {
+	cr := CommentRef{
+		ID: "c1", DocID: "doc-42", DocPath: "spec.md",
+		Excerpt: "the flagged sentence", Thread: "human: please tighten this",
+	}
+	prompts := map[string]string{
+		"member":     councilMemberPrompt(cr, "tok", "member-1", domain.LensCorrectness),
+		"discussion": councilDiscussionPrompt(cr, "tok", "member-1", domain.LensCorrectness, 1, "transcript"),
+		"chair":      councilChairPrompt(cr, "tok", councilChairIdentity, 50),
+	}
+	for name, p := range prompts {
+		if !strings.Contains(p, "search_knowledge_base") {
+			t.Fatalf("%s prompt does not nudge search_knowledge_base:\n%s", name, p)
+		}
+		if !strings.Contains(p, `kind="decision"`) {
+			t.Fatalf("%s prompt does not mention kind=\"decision\" (prior-decision recall):\n%s", name, p)
+		}
+	}
+}

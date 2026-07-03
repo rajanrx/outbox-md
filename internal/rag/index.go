@@ -115,6 +115,64 @@ func (ix *Indexer) reindex(ctx context.Context, project, docPath, content string
 	return embedFailed, ix.Store.UpsertDoc(project, docPath, rows)
 }
 
+// IndexDecision writes a decision-memory record (§5.4) — a past council verdict or
+// an accepted change — into the KB, keyed to the project and carrying the real
+// docPath for citation. The text is chunked and embedded exactly like a doc chunk,
+// but tagged kind="decision" and APPENDED (never replacing served-doc chunks, and
+// immune to doc re-index / reconciliation). An embed failure is NON-BLOCKING: the
+// record is still indexed as text (keyword-retrievable) and the mode flips to
+// degraded, mirroring Reindex. Only a store error propagates; the caller treats
+// even that as best-effort so a failed index never blocks the verdict/accept.
+func (ix *Indexer) IndexDecision(ctx context.Context, project, docPath, heading, text string) error {
+	chunks := ChunkMarkdown(docPath, text)
+	if len(chunks) == 0 {
+		return nil
+	}
+	rows := make([]ChunkRow, len(chunks))
+	for i, c := range chunks {
+		h := c.Heading
+		if h == "" {
+			h = heading
+		}
+		rows[i] = ChunkRow{
+			ID:      domain.NewID(),
+			Project: project,
+			DocPath: docPath,
+			Heading: h,
+			Ord:     c.Ord,
+			Text:    c.Text,
+			Kind:    KindDecision,
+		}
+	}
+
+	if ix.Embedder != nil {
+		texts := make([]string, len(rows))
+		for i, r := range rows {
+			texts[i] = r.Text
+		}
+		vecs, embErr := ix.Embedder.Embed(ctx, texts)
+		switch {
+		case embErr != nil:
+			ix.logf("rag: embed failed for decision on %s/%s, indexing keyword-only (retriable): %v", project, docPath, embErr)
+			ix.Mode.MarkDegraded()
+		case len(vecs) == len(rows):
+			id, dims := ix.Embedder.ID(), ix.Embedder.Dims()
+			for i := range rows {
+				rows[i].Embedding = vecs[i]
+				rows[i].EmbedderID = id
+				rows[i].Dims = dims
+			}
+			ix.Mode.MarkHealthy()
+		default:
+			ix.logf("rag: embedder returned %d vectors for %d decision chunks (%s/%s); indexing keyword-only",
+				len(vecs), len(rows), project, docPath)
+			ix.Mode.MarkDegraded()
+		}
+	}
+
+	return ix.Store.AppendChunks(project, rows)
+}
+
 // BuildAll (re)indexes a set of served docs. It runs Reindex per doc, collecting
 // any store error but continuing (a broken doc never blocks the rest). It sets the
 // retrieval mode ONCE from the aggregate at the end — all embeds succeeded ⇒

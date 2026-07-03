@@ -37,20 +37,27 @@ type Embedder interface {
 	Embed(ctx context.Context, texts []string) ([][]float32, error)
 }
 
-// NewEmbedder is the config-driven factory (design §5.2). This slice ships ONE
-// implementation, embed_cmd. It returns (nil, nil) when no embedder is configured
-// — the caller then runs keyword-only over FTS5; a missing embedder is a
-// supported mode, never an error. embed_api is parsed by config but its
-// implementation lands in a later slice; when it is configured (and embed_cmd is
-// not) this returns (nil, nil) with the caller degrading to FTS5, so the presence
-// of an embed_api block never hard-fails startup.
+// NewEmbedder is the config-driven factory (design §5.2). It picks embed_api OVER
+// embed_cmd when the API block is configured (embed_api set ⇒ use it), then falls
+// back to embed_cmd, then to no embedder. It returns (nil, nil) when nothing is
+// configured — or when embed_api is configured but its key env is empty — so the
+// caller runs keyword-only over FTS5; a missing/unkeyed embedder is a supported
+// mode, never an error, and never hard-fails startup.
 func NewEmbedder(cfg config.Config) (Embedder, error) {
+	if cfg.EmbedAPI.Configured() {
+		emb, err := NewAPIEmbedder(cfg.EmbedAPI)
+		if err != nil {
+			return nil, err
+		}
+		if emb == nil {
+			// embed_api set but its key env is empty ⇒ degrade to FTS5. embed_api
+			// overrides embed_cmd, so we do NOT fall through to embed_cmd here.
+			return nil, nil
+		}
+		return emb, nil
+	}
 	if cmd := trimSpace(cfg.EmbedCmd); cmd != "" {
 		return NewCmdEmbedder(cmd), nil
 	}
-	// embed_api is reserved for a later slice; with no embed_cmd we fall through to
-	// no embedder (FTS5-only) rather than failing. NOTE for 3C: spec §5.2 says
-	// embed_api OVERRIDES embed_cmd when set — when the API embedder is implemented,
-	// check cfg.EmbedAPI.Configured() BEFORE embed_cmd here and return it first.
 	return nil, nil
 }

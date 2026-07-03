@@ -15,6 +15,7 @@ type Result struct {
 	Snippet string
 	Score   float64
 	Source  string // "semantic" | "keyword" | "hybrid"
+	Kind    string // "doc" (served document) | "decision" (§5.4 memory)
 }
 
 // Snippet length for a result preview (characters).
@@ -51,14 +52,26 @@ func NewSearcher(store *Store, embedder Embedder, mode *ModeTracker) *Searcher {
 // there is no embedder. A query-embed failure flips the mode to degraded and
 // falls back to keyword search rather than failing the call.
 func (s *Searcher) Search(project, query string, k int) ([]Result, error) {
+	return s.SearchKind(project, query, KindDoc, k)
+}
+
+// SearchKind is Search restricted to one chunk kind (§5.4). kind="doc" (the
+// default, and what Search uses) retrieves served documents; kind="decision"
+// retrieves durable decision memory only. An unknown/blank kind falls back to
+// KindDoc. Every result is tagged with the kind it came from so the caller (and
+// the whitelist filter) can tell docs from decisions.
+func (s *Searcher) SearchKind(project, query, kind string, k int) ([]Result, error) {
 	if k <= 0 {
 		k = 5
+	}
+	if kind != KindDecision {
+		kind = KindDoc
 	}
 	if strings.TrimSpace(query) == "" {
 		return nil, nil
 	}
 
-	lexical, err := s.Store.LexicalSearch(project, query, k*4)
+	lexical, err := s.Store.LexicalSearchKind(project, query, kind, k*4)
 	if err != nil {
 		return nil, err
 	}
@@ -66,19 +79,28 @@ func (s *Searcher) Search(project, query string, k int) ([]Result, error) {
 	qvec := s.embedQuery(context.Background(), query)
 	if qvec == nil {
 		// Keyword-only path: no embedder, or the query embed failed (degraded).
-		return topKeyword(lexical, k), nil
+		return tagKind(topKeyword(lexical, k), kind), nil
 	}
 
-	vecs, err := s.Store.VectorChunks(project, s.Embedder.ID(), s.Embedder.Dims())
+	vecs, err := s.Store.VectorChunksKind(project, kind, s.Embedder.ID(), s.Embedder.Dims())
 	if err != nil {
 		return nil, err
 	}
 	if len(vecs) == 0 {
 		// Embedder healthy but nothing vector-indexed yet for this embedder — serve
 		// keyword results so retrieval still works during back-fill.
-		return topKeyword(lexical, k), nil
+		return tagKind(topKeyword(lexical, k), kind), nil
 	}
-	return blend(qvec, vecs, lexical, k), nil
+	return tagKind(blend(qvec, vecs, lexical, k), kind), nil
+}
+
+// tagKind stamps every result with the kind the search was scoped to (all results
+// of one SearchKind share it), so callers can distinguish docs from decisions.
+func tagKind(results []Result, kind string) []Result {
+	for i := range results {
+		results[i].Kind = kind
+	}
+	return results
 }
 
 // embedQuery embeds the query with the configured embedder, updating the mode on

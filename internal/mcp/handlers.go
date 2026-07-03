@@ -18,6 +18,9 @@ import (
 // wired and the tool returns no hits.
 type RAGSearcher interface {
 	Search(project, query string, k int) ([]rag.Result, error)
+	// SearchKind restricts retrieval to one chunk kind — rag.KindDoc (the default)
+	// for served documents, rag.KindDecision for durable decision memory (§5.4).
+	SearchKind(project, query, kind string, k int) ([]rag.Result, error)
 }
 
 type Handlers struct {
@@ -29,12 +32,15 @@ type Handlers struct {
 }
 
 // KBHit is one search_knowledge_base result: the source doc + heading for
-// citation, a snippet preview, and the blended relevance score (higher = better).
+// citation, a snippet preview, the blended relevance score (higher = better), and
+// the kind ("doc" | "decision") so an agent can tell a served passage from a
+// recalled prior decision (§5.4).
 type KBHit struct {
 	DocPath string  `json:"docPath"`
 	Heading string  `json:"heading"`
 	Snippet string  `json:"snippet"`
 	Score   float64 `json:"score"`
+	Kind    string  `json:"kind"`
 }
 
 // SearchKnowledgeBase runs project-scoped retrieval over the served corpus and
@@ -44,18 +50,33 @@ type KBHit struct {
 // sources whitelist — 3A only indexes served docs, so this is belt-and-suspenders
 // over that invariant. k <= 0 falls back to the searcher default.
 func (h *Handlers) SearchKnowledgeBase(project, query string, k int) ([]KBHit, error) {
+	return h.SearchKnowledgeBaseKind(project, query, rag.KindDoc, k)
+}
+
+// SearchKnowledgeBaseKind is SearchKnowledgeBase scoped to a chunk kind (§5.4):
+// kind="doc" (the default, and what search_knowledge_base uses when kind is
+// omitted) retrieves served documents; kind="decision" restricts to durable
+// decision memory — prior council verdicts and accepted changes. A blank/unknown
+// kind falls back to "doc". The sources-whitelist filter applies ONLY to doc hits:
+// decisions are project-scoped memory, not served files, so they surface even
+// under an active whitelist (their DocPath is a real doc for citation but need not
+// be currently served).
+func (h *Handlers) SearchKnowledgeBaseKind(project, query, kind string, k int) ([]KBHit, error) {
 	if h.RAG == nil {
 		return []KBHit{}, nil
 	}
+	if kind != rag.KindDecision {
+		kind = rag.KindDoc
+	}
 	project = h.resolveKBProject(project)
-	results, err := h.RAG.Search(project, query, k)
+	results, err := h.RAG.SearchKind(project, query, kind, k)
 	if err != nil {
 		return nil, err
 	}
 	restricted := h.Svc != nil && h.Svc.SourcesRestricted()
 	out := make([]KBHit, 0, len(results))
 	for _, r := range results {
-		if restricted && !h.Svc.ProjectServes(project, r.DocPath) {
+		if restricted && r.Kind == rag.KindDoc && !h.Svc.ProjectServes(project, r.DocPath) {
 			continue // hidden doc: never leak a chunk (assert the whitelist)
 		}
 		out = append(out, KBHit{
@@ -63,6 +84,7 @@ func (h *Handlers) SearchKnowledgeBase(project, query string, k int) ([]KBHit, e
 			Heading: r.Heading,
 			Snippet: r.Snippet,
 			Score:   r.Score,
+			Kind:    r.Kind,
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Score > out[j].Score })

@@ -52,6 +52,12 @@ type Service struct {
 	// what search actually did. It is a func seam (not a *rag.ModeTracker) to keep
 	// service free of a rag import; buildServer wires it to the shared tracker.
 	retrievalMode func() string
+	// decisionSink, when set, records a decision-memory entry (§5.4) on a chair
+	// synthesis (a verdict) and on an Accept (a suggestion becoming a new version).
+	// It is a func seam (not a *rag.Indexer) to keep service free of a rag import;
+	// buildServer wires it to the KB indexer. Best-effort by contract: a failed
+	// index NEVER blocks or fails the verdict/accept.
+	decisionSink func(DecisionRecord)
 	// projectSources, when non-nil, is the per-project runtime sources map built
 	// by the server at startup (single-folder mode is a single "" entry carrying
 	// the real cfg). It drives the read guards so each project's Sources whitelist
@@ -167,6 +173,62 @@ func (s *Service) RetrievalMode() string {
 		return ""
 	}
 	return s.retrievalMode()
+}
+
+// DecisionRecord is one decision-memory entry (§5.4): the comment excerpt that
+// triggered the decision, the outcome (a council verdict or an accepted change),
+// the rationale/dissent behind it, and the document it was about. buildServer's
+// sink chunks + embeds it into the KB as a kind="decision" entry, project-scoped,
+// so future councils can recall how a similar comment was ruled on before. The
+// service builds it from data it already has; it never imports rag.
+type DecisionRecord struct {
+	Project   string // the project the doc belongs to ("" = single-folder mode)
+	DocPath   string // the document the decision was about (for citation)
+	Excerpt   string // the anchored comment excerpt that triggered the decision
+	Outcome   string // e.g. "Council verdict: edit" | "Suggestion accepted → v3"
+	Rationale string // the reasoning / dissent behind the outcome
+	Detail    string // optional extra context (a BOUNDED change preview — see decisionDetailExcerpt)
+}
+
+// decisionDetailExcerpt bounds the proposed-content preview stored in durable
+// decision memory. Decision memory intentionally BYPASSES the sources whitelist so
+// the council can recall a ruling even for a now-hidden doc — so it must NOT carry
+// the full document body, or a hidden doc's text would stay fully searchable via
+// search_knowledge_base(kind="decision"). A short, rune-safe preview keeps the gist
+// of the change without exposing arbitrary body text.
+func decisionDetailExcerpt(content string) string {
+	const max = 280
+	if r := []rune(content); len(r) > max {
+		return string(r[:max]) + "\n…(truncated)"
+	}
+	return content
+}
+
+// SetDecisionRecorder installs the decision-memory sink fired on a chair synthesis
+// and on an Accept (§5.4). Unset (nil) ⇒ recordDecision is a no-op, so the
+// governance flow is unchanged when the KB is not wired.
+func (s *Service) SetDecisionRecorder(fn func(DecisionRecord)) { s.decisionSink = fn }
+
+// recordDecision fires the decision-memory sink if one is wired. It is best-effort
+// and MUST NOT block or fail the caller: a nil sink is a no-op and any panic from
+// the sink is contained, so a failed index never blocks the verdict/accept.
+func (s *Service) recordDecision(rec DecisionRecord) {
+	if s.decisionSink == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	s.decisionSink(rec)
+}
+
+// commentExcerpt best-effort resolves the anchored excerpt a comment refers to,
+// for a decision record. A failed lookup yields "" rather than an error — decision
+// memory is advisory and never blocks the governance path.
+func (s *Service) commentExcerpt(c domain.Comment) string {
+	ver, err := s.store.GetVersion(c.AgainstVersionID)
+	if err != nil {
+		return ""
+	}
+	return anchor.Excerpt(ver.Content, c.Anchor.Start, c.Anchor.End)
 }
 
 // SetProjectSources installs the per-project runtime sources map (built once at
@@ -663,6 +725,21 @@ func (s *Service) RecordSynthesis(commentID, token, dissent, content, createdBy 
 		return domain.Synthesis{}, err
 	}
 	// State is already 'synthesized' — set atomically by TryClaimSynthesis above.
+	// Record the verdict as decision memory (§5.4), best-effort — never blocks.
+	outcome := "Council verdict: no edit"
+	if content != "" {
+		outcome = "Council verdict: edit"
+	}
+	rec := DecisionRecord{
+		Excerpt:   s.commentExcerpt(c),
+		Outcome:   fmt.Sprintf("%s (agreement %.0f%%, confidence %d%%)", outcome, agreementScore*100, confidence),
+		Rationale: dissent,
+		Detail:    decisionDetailExcerpt(content),
+	}
+	if doc, err := s.store.GetDocument(c.DocID); err == nil {
+		rec.Project, rec.DocPath = doc.Project, doc.Path
+	}
+	s.recordDecision(rec)
 	return syn, nil
 }
 
@@ -976,6 +1053,16 @@ func (s *Service) Accept(commentID string) (domain.Version, error) {
 		}
 		_ = s.store.RebaseComment(oc.ID, newVer.ID, na, oc.Status)
 	}
+	// Record the accepted change as decision memory (§5.4), best-effort — a failed
+	// index never blocks the accept.
+	s.recordDecision(DecisionRecord{
+		Project:   doc.Project,
+		DocPath:   doc.Path,
+		Excerpt:   s.commentExcerpt(c),
+		Outcome:   fmt.Sprintf("Suggestion accepted → version %d", newVer.Ordinal),
+		Rationale: "accepted from " + sg.CreatedBy,
+		Detail:    decisionDetailExcerpt(sg.ProposedContent),
+	})
 	return newVer, nil
 }
 

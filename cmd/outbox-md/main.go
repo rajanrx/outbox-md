@@ -235,6 +235,38 @@ func (r ragReindexer) DropDoc(project, path string) error {
 	return r.store.DeleteDoc(project, path)
 }
 
+// decisionHeading is the citation heading for a decision-memory chunk (§5.4): the
+// outcome line, so a recalled decision cites as "<doc> — Council verdict: edit".
+func decisionHeading(rec service.DecisionRecord) string {
+	if h := strings.TrimSpace(rec.Outcome); h != "" {
+		return h
+	}
+	return "Council decision"
+}
+
+// formatDecisionRecord renders a DecisionRecord as the Markdown text indexed into
+// the KB. A leading heading gives the chunker a heading for citation; the body
+// carries the doc path, the flagged excerpt, the outcome, and the rationale so a
+// keyword OR semantic query over past decisions retrieves the right memory.
+func formatDecisionRecord(rec service.DecisionRecord) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# %s\n\n", decisionHeading(rec))
+	if rec.DocPath != "" {
+		fmt.Fprintf(&b, "Document: %s\n\n", rec.DocPath)
+	}
+	if strings.TrimSpace(rec.Excerpt) != "" {
+		fmt.Fprintf(&b, "Flagged excerpt:\n%s\n\n", strings.TrimSpace(rec.Excerpt))
+	}
+	fmt.Fprintf(&b, "Outcome: %s\n\n", rec.Outcome)
+	if strings.TrimSpace(rec.Rationale) != "" {
+		fmt.Fprintf(&b, "Rationale / dissent:\n%s\n\n", strings.TrimSpace(rec.Rationale))
+	}
+	if strings.TrimSpace(rec.Detail) != "" {
+		fmt.Fprintf(&b, "Detail:\n%s\n", strings.TrimSpace(rec.Detail))
+	}
+	return b.String()
+}
+
 // importFile imports a single .md file at absolute path p, keyed by (project, its
 // path relative to keyBase). Already-imported files (same project+path) are
 // skipped.
@@ -560,6 +592,24 @@ func buildServer(root string, projects []registry.Project, autoReplyFlag, logs b
 	ragSearcher := rag.NewSearcher(ragStore, embedder, ragMode)
 	// Surface the retrieval mode at /api/config for the UI chip (§5.5).
 	svc.SetRetrievalMode(func() string { return string(ragMode.Mode()) })
+	// Decision memory (§5.4): a chair synthesis (verdict) and an Accept (accepted
+	// change) index a kind="decision" KB entry via the same indexer, so future
+	// councils can recall prior rulings. Best-effort — a failed index is logged and
+	// never blocks the verdict/accept.
+	svc.SetDecisionRecorder(func(rec service.DecisionRecord) {
+		// Index off the request goroutine: IndexDecision embeds inline, and the
+		// embed_api embedder is a network POST (up to a 30s client timeout), so a
+		// slow/hanging embedder must never sit in the human's Accept path or the
+		// chair's record_synthesis path. A write lost on shutdown is acceptable —
+		// decision memory is advisory by contract.
+		go func() {
+			defer func() { _ = recover() }()
+			text := formatDecisionRecord(rec)
+			if err := ragIndexer.IndexDecision(context.Background(), rec.Project, rec.DocPath, decisionHeading(rec), text); err != nil {
+				log.Printf("rag: decision index failed (non-blocking) for %s/%s: %v", rec.Project, rec.DocPath, err)
+			}
+		}()
+	})
 	// §5.1 startup reconciliation: after the doc import, converge the index with the
 	// served docs-union on disk — re-embed stale/missing/embedder-changed docs, drop
 	// chunks for docs no longer served. Non-blocking: a reconcile error is logged,
