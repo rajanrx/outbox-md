@@ -149,6 +149,126 @@ func (ix *Indexer) BuildAll(ctx context.Context, docs []Doc) error {
 	return firstErr
 }
 
+// ReconcileStats is the one-line summary of a §5.1 startup reconciliation: how
+// many served docs were re-embedded (stale/missing/embedder-changed), how many
+// were already current, and how many stale docs were dropped from the index.
+type ReconcileStats struct {
+	Reindexed int
+	Unchanged int
+	Dropped   int
+}
+
+// Reconcile converges the index with the served docs-union at `serve` start
+// (design §5.1), so offline edits and `git pull` need no manual rebuild. `docs`
+// is the served set read FROM DISK (the governance store may hold stale content
+// for a doc it already imported, so reconciliation must use on-disk bytes). For
+// each served doc it re-embeds when the doc is missing, its content hash drifted,
+// OR — when an embedder is configured — it carries no vectors for the CURRENT
+// embedder (the install-then-restart upgrade: keyword-only chunks gain vectors
+// once ollama is present). Docs still current are left untouched. Finally it
+// drops chunks for any indexed doc no longer in the served set (deleted, renamed,
+// or un-served), scanning every project that appears on disk OR in the index so a
+// project that vanished entirely is cleaned too. The aggregate retrieval mode is
+// settled once at the end, exactly like BuildAll. A per-doc store error is
+// collected but never aborts the sweep.
+func (ix *Indexer) Reconcile(ctx context.Context, docs []Doc) (ReconcileStats, error) {
+	var stats ReconcileStats
+	var firstErr error
+	anyEmbedFail := false
+
+	served := make(map[string]map[string]struct{})
+	for _, d := range docs {
+		if served[d.Project] == nil {
+			served[d.Project] = make(map[string]struct{})
+		}
+		served[d.Project][d.Path] = struct{}{}
+
+		if !ix.docCurrent(d.Project, d.Path, d.Content) {
+			embedFailed, err := ix.reindex(ctx, d.Project, d.Path, d.Content)
+			if err != nil && firstErr == nil {
+				firstErr = err
+			}
+			if embedFailed {
+				anyEmbedFail = true
+			}
+			stats.Reindexed++
+		} else {
+			stats.Unchanged++
+		}
+	}
+
+	// Drop chunks for docs no longer served/present. Scan the union of projects on
+	// disk and in the index so a wholly-removed project is cleaned, not just
+	// per-doc deletions within a still-served project.
+	projects := map[string]struct{}{}
+	for p := range served {
+		projects[p] = struct{}{}
+	}
+	if stored, err := ix.Store.ListProjects(); err == nil {
+		for _, p := range stored {
+			projects[p] = struct{}{}
+		}
+	} else if firstErr == nil {
+		firstErr = err
+	}
+	for project := range projects {
+		paths, err := ix.Store.ListDocPaths(project)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		for _, path := range paths {
+			if _, ok := served[project][path]; ok {
+				continue
+			}
+			if err := ix.Store.DeleteDoc(project, path); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+			stats.Dropped++
+		}
+	}
+
+	switch {
+	case ix.Embedder == nil:
+		ix.Mode.Set(ModeKeywordOnly)
+	case anyEmbedFail:
+		ix.Mode.Set(ModeDegraded)
+	default:
+		ix.Mode.Set(ModeSemantic)
+	}
+	ix.logf("rag: reconcile complete — %d re-embedded, %d unchanged, %d dropped",
+		stats.Reindexed, stats.Unchanged, stats.Dropped)
+	return stats, firstErr
+}
+
+// docCurrent reports whether the stored index for (project, docPath) already
+// matches content AND is vector-current under the active embedder. False ⇒
+// Reconcile re-embeds. A doc with no chunks is not current (never indexed); a
+// hash drift is not current (offline edit); and — when an embedder is configured
+// — a hash match with zero vectors for the current embedder is not current
+// (was keyword-only, an embedder has since appeared).
+func (ix *Indexer) docCurrent(project, docPath, content string) bool {
+	stored, ok, err := ix.Store.DocContentHash(project, docPath)
+	if err != nil || !ok {
+		return false
+	}
+	if stored != contentHash(content) {
+		return false
+	}
+	if ix.Embedder != nil {
+		n, err := ix.Store.DocVectorCount(project, docPath, ix.Embedder.ID(), ix.Embedder.Dims())
+		if err != nil || n == 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // contentHash is the per-doc content hash used for §5.1 reconciliation (compare
 // on-disk hash vs stored hash to decide re-embed). Full sha256 hex.
 func contentHash(content string) string {

@@ -209,6 +209,63 @@ func (s *Store) DocContentHash(project, docPath string) (hash string, ok bool, e
 	return hash, err == nil, err
 }
 
+// ListDocPaths returns the distinct doc paths that currently have chunks for a
+// project. §5.1 reconciliation diffs this against the served docs-union on disk
+// to drop chunks for docs no longer served or present.
+func (s *Store) ListDocPaths(project string) ([]string, error) {
+	rows, err := s.db.Query(
+		`SELECT DISTINCT doc_path FROM chunks WHERE project=?`, project)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// ListProjects returns the distinct projects that currently have chunks. §5.1
+// reconciliation unions this with the served projects so chunks for a project
+// that vanished entirely (e.g. a project unregistered while offline) are still
+// dropped, not just per-doc deletions within a still-served project.
+func (s *Store) ListProjects() ([]string, error) {
+	rows, err := s.db.Query(`SELECT DISTINCT project FROM chunks`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// DocVectorCount returns how many of a doc's chunks are embedded by the given
+// embedder id AND dims — i.e. vector-current under the active embedder (§5.2 key
+// invariant). §5.1 reconciliation uses it for the install-then-restart flow: a
+// doc whose content hash is unchanged but which carries no vectors for the newly
+// configured embedder (was keyword-only) still needs re-embedding, so an ollama
+// install upgrades the corpus on the next start without a manual rebuild.
+func (s *Store) DocVectorCount(project, docPath, embedderID string, dims int) (int, error) {
+	var n int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM chunks
+		  WHERE project=? AND doc_path=? AND embedder_id=? AND dims=? AND embedding IS NOT NULL`,
+		project, docPath, embedderID, dims).Scan(&n)
+	return n, err
+}
+
 // VectorChunk is a chunk with its decoded vector, for cosine scoring.
 type VectorChunk struct {
 	ID        string
