@@ -43,6 +43,18 @@ const (
 	DefaultCouncilDeadlockThreshold = 50
 )
 
+// RAG knowledge-base config (design §5). These carry the retrieval settings; the
+// index/search core (internal/rag) reads them via the accessors below.
+const (
+	// KBScopeProject keeps retrieval within the project's own docs-union (the
+	// default and the only mode this slice implements). KBScopeAll (§5.3) widens
+	// retrieval across registered projects and lands in a later slice.
+	KBScopeProject = "project"
+	KBScopeAll     = "all"
+	// DefaultKBScope is the retrieval scope when kb_scope is absent/blank.
+	DefaultKBScope = KBScopeProject
+)
+
 type Config struct {
 	Agent    AgentConfig    `json:"agent"    yaml:"agent"`
 	Approval ApprovalConfig `json:"approval" yaml:"approval"`
@@ -78,6 +90,57 @@ type Config struct {
 	// DefaultCouncilDeadlockThreshold (50). Resolve with
 	// ResolveCouncilDeadlockThreshold.
 	CouncilDeadlockThreshold int `json:"councilDeadlockThreshold" yaml:"council_deadlock_threshold"`
+	// EmbedCmd is the shell-out command the RAG embedder spawns to turn text into a
+	// vector (design §5.2). The command reads ONE text on stdin and writes a JSON
+	// array of float64 on stdout; outbox runs it once per text and discovers the
+	// dimensionality from the first successful embed. It is exec'd directly (no
+	// shell), argv split on whitespace like agent_cmd. It expects a WRAPPER that
+	// emits vectors — plain `ollama run embeddinggemma` prints prose, not a vector,
+	// so it will not work as-is. EMPTY BY DEFAULT: with no embed_cmd (and no
+	// embed_api) retrieval runs keyword-only over FTS5; it is never a hard failure.
+	EmbedCmd string `json:"embedCmd" yaml:"embed_cmd"`
+	// EmbedAPI is the opt-in hosted embedder (design §5.2). Parsed here but only the
+	// embed_cmd implementation ships in this slice; when set it is surfaced in
+	// settings and reserved for the embed_api implementation. The API key is read
+	// from os.Getenv(APIKeyEnv) at use time and NEVER stored in config or the DB.
+	EmbedAPI EmbedAPIConfig `json:"embedApi" yaml:"embed_api"`
+	// KBScope selects retrieval scope (design §5.3): "project" (default) keeps a
+	// search within the project's own docs-union; "all" widens it across registered
+	// projects (a later slice). Absent/blank ⇒ DefaultKBScope. Resolve with
+	// ResolveKBScope.
+	KBScope string `json:"kbScope" yaml:"kb_scope"`
+}
+
+// EmbedAPIConfig is the opt-in hosted-embedder block (design §5.2). Off by
+// default. The key is referenced by env-var NAME only (APIKeyEnv) and read from
+// the environment at use time — the secret itself is never written to config or
+// the database.
+type EmbedAPIConfig struct {
+	Provider  string `json:"provider"  yaml:"provider"`
+	Model     string `json:"model"     yaml:"model"`
+	APIKeyEnv string `json:"apiKeyEnv" yaml:"api_key_env"`
+}
+
+// Configured reports whether the API embedder block is filled enough to use
+// (provider + model + the env-var name that holds the key).
+func (e EmbedAPIConfig) Configured() bool {
+	return strings.TrimSpace(e.Provider) != "" &&
+		strings.TrimSpace(e.Model) != "" &&
+		strings.TrimSpace(e.APIKeyEnv) != ""
+}
+
+// ResolveKBScope returns the effective retrieval scope: a blank/unknown value
+// falls back to DefaultKBScope ("project"). Only "project" and "all" are valid;
+// anything else is treated as the safe default.
+func (c Config) ResolveKBScope() string {
+	switch strings.ToLower(strings.TrimSpace(c.KBScope)) {
+	case KBScopeAll:
+		return KBScopeAll
+	case KBScopeProject:
+		return KBScopeProject
+	default:
+		return DefaultKBScope
+	}
 }
 
 // ResolveCouncilRounds returns the effective max discussion rounds: an unset or
@@ -197,7 +260,12 @@ func Defaults() Config {
 		CouncilRounds:            DefaultCouncilRounds,
 		CouncilBudget:            DefaultCouncilBudget,
 		CouncilDeadlockThreshold: DefaultCouncilDeadlockThreshold,
-		Approval:                 ApprovalConfig{PostApprovalComments: true},
+		// EmbedCmd is empty by default: no embedder ⇒ FTS5 keyword-only retrieval,
+		// never a hard failure (design §5.2 HARD DECISION). A user opts into semantic
+		// recall by pointing embed_cmd at a wrapper that emits vectors, or via
+		// embed_api. KBScope seeds the project-scoped default.
+		KBScope:  DefaultKBScope,
+		Approval: ApprovalConfig{PostApprovalComments: true},
 		// All four governance events are enabled by default. These string
 		// literals mirror the event names emitted by internal/webhook; they are
 		// duplicated here (rather than imported) to keep config free of a webhook
@@ -269,6 +337,16 @@ func Load(dir string) Config {
 	// OUTBOX_AGENT_CMD overrides the spawn command template.
 	if v := os.Getenv("OUTBOX_AGENT_CMD"); v != "" {
 		cfg.AgentCmd = v
+	}
+	// OUTBOX_EMBED_CMD overrides the RAG embedder command (env-only counterpart of
+	// the file's embed_cmd). An explicit empty value is not distinguishable from an
+	// unset var here, so only a non-empty value overrides.
+	if v := os.Getenv("OUTBOX_EMBED_CMD"); v != "" {
+		cfg.EmbedCmd = v
+	}
+	// OUTBOX_KB_SCOPE overrides the retrieval scope (project|all).
+	if v := os.Getenv("OUTBOX_KB_SCOPE"); v != "" {
+		cfg.KBScope = v
 	}
 	// A yaml that explicitly sets `agent_cmd:` to empty would blank the template;
 	// fall back to the default so the engine always has a runnable command.
