@@ -260,7 +260,10 @@ function AddProject({ onAdded, onSingleFolder }: { onAdded: () => void; onSingle
   const [save, setSave] = useState<SaveState>(idleSave);
 
   const reset = () => {
-    setRoot(""); setDocs(""); setMembers([]); setChair({ agent: "", model: "" }); setSave(idleSave);
+    // Reset the chair to the SAME default as the initial state (claude), so a
+    // reopened add form doesn't start with an empty chair that trips the required
+    // check for a 2+ member project.
+    setRoot(""); setDocs(""); setMembers([]); setChair({ agent: "claude", model: "" }); setSave(idleSave);
   };
 
   const chairRequired = members.length >= 2;
