@@ -344,7 +344,18 @@ func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub) http.Handler {
 				docs = kept
 			}
 		}
-		writeJSON(w, docs, err)
+		// Attach each doc's active-comment count so the file tree can badge it
+		// (best-effort: a count error just leaves the badges at 0, never fails the list).
+		counts, _ := st.OpenCommentCounts()
+		type docDTO struct {
+			domain.Document
+			OpenComments int `json:"openComments"`
+		}
+		out := make([]docDTO, 0, len(docs))
+		for _, d := range docs {
+			out = append(out, docDTO{Document: d, OpenComments: counts[d.ID]})
+		}
+		writeJSON(w, out, err)
 	})
 
 	mux.HandleFunc("GET /api/docs/{id}", func(w http.ResponseWriter, r *http.Request) {

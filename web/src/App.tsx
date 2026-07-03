@@ -41,7 +41,7 @@ const clampTreeW = (w: number) => Math.min(560, Math.max(180, w));
 const PROJECT_KEY = "outbox.project";
 
 export default function App() {
-  const [docs, setDocs] = useState<{ id: string; path: string; project: string }[]>([]);
+  const [docs, setDocs] = useState<{ id: string; path: string; project: string; openComments?: number }[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   // Selected project name; persisted so a reload keeps the same project. The
   // empty string is the single-folder mode (no switcher shown).
@@ -153,6 +153,13 @@ export default function App() {
     const onEvent = (e: MessageEvent) => {
       try {
         const d = JSON.parse(e.data) as { docId?: string };
+        // A comment created/resolved/status-changed shifts the file-tree badge for
+        // ITS doc — which may not be the open one — so refresh the doc list (it
+        // carries openComments) OUTSIDE the open-doc filter. Skip the high-frequency
+        // no-count events (processing heartbeats, suggestion.proposed, approvals).
+        if (e.type === "comment.created" || e.type === "comment.resolved" || e.type === "comment.updated") {
+          listDocs().then((docs) => setDocs(docs ?? []));
+        }
         if (!d.docId || d.docId === docIdRef.current) {
           refreshRef.current();
           // refresh() reloads the comment LIST; each open Card keeps its own

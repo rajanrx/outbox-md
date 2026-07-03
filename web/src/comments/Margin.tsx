@@ -219,6 +219,15 @@ export function Margin({ docId, content, docPath, rootRef, comments, reloadKey =
     setFocused(c.id);
   };
 
+  // Auto-select the FIRST open comment on load (and after a doc switch), so the
+  // panel opens on a real comment instead of the empty "click a passage" state.
+  // Keeps the current focus when it is still a valid open comment — never overrides
+  // the user's own selection; clears to null only when the doc has no open comments.
+  useEffect(() => {
+    const open = comments.filter((c) => c.status !== "resolved");
+    setFocused((cur) => (cur && open.some((c) => c.id === cur) ? cur : (open[0]?.id ?? null)));
+  }, [comments]);
+
   // One comment at a time (the nearby/focused one) plus any pinned comments.
   const focusedC = comments.find((c) => c.id === focused) || null;
   const shown: Comment[] = [];

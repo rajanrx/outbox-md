@@ -69,6 +69,42 @@ func TestCommentCouncilEnabledRoundTrips(t *testing.T) {
 	}
 }
 
+// TestOpenCommentCounts: the file-tree badge count is per-doc and counts only
+// ACTIVE comments — resolved and detached (terminal) comments are excluded, so a
+// file with only settled comments has no badge (absent from the map ⇒ 0).
+func TestOpenCommentCounts(t *testing.T) {
+	s, _ := Open(":memory:")
+	defer s.Close()
+	a, _, _ := s.CreateDocument("a.md", "hi", "human")
+	b, _, _ := s.CreateDocument("b.md", "hi", "human")
+
+	mk := func(doc domain.Document, status domain.CommentStatus) {
+		if _, err := s.CreateComment(domain.Comment{
+			DocID: doc.ID, AgainstVersionID: doc.CurrentVersionID,
+			Anchor: domain.Anchor{Start: 0, End: 1}, AuthorIdentity: "human",
+			Owner: "human", Status: status,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk(a, domain.CommentOpen)
+	mk(a, domain.CommentReplied)
+	mk(a, domain.CommentResolved) // terminal — excluded
+	mk(a, domain.CommentDetached) // terminal — excluded
+	mk(b, domain.CommentOpen)
+
+	counts, err := s.OpenCommentCounts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts[a.ID] != 2 {
+		t.Fatalf("doc a active count = %d, want 2 (open+replied, excluding resolved/detached)", counts[a.ID])
+	}
+	if counts[b.ID] != 1 {
+		t.Fatalf("doc b active count = %d, want 1", counts[b.ID])
+	}
+}
+
 // TestMigrateAddsCouncilEnabledToLegacyDB exercises the ADD COLUMN path a fresh
 // schema.sql never triggers: it builds a comments table in the OLD pre-flag shape
 // (no council_enabled), runs migrate(), confirms the column resolves and legacy

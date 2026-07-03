@@ -1,7 +1,7 @@
 import { useState } from "react";
 
-type Doc = { id: string; path: string };
-type Node = { name: string; path: string; id?: string; children: Map<string, Node> };
+type Doc = { id: string; path: string; openComments?: number };
+type Node = { name: string; path: string; id?: string; count?: number; children: Map<string, Node> };
 
 function buildTree(docs: Doc[]): Node {
   const root: Node = { name: "", path: "", children: new Map() };
@@ -14,7 +14,7 @@ function buildTree(docs: Doc[]): Node {
         child = { name: part, path: parts.slice(0, i + 1).join("/"), children: new Map() };
         cur.children.set(part, child);
       }
-      if (i === parts.length - 1) child.id = d.id;
+      if (i === parts.length - 1) { child.id = d.id; child.count = d.openComments; }
       cur = child;
     });
   }
@@ -61,6 +61,11 @@ function Row({ node, depth, activeId, onSelect }: {
         <span className="chev" />
         <FileIcon />
         <span className="name">{node.name}</span>
+        {!!node.count && (
+          <span className="tree-count" title={`${node.count} active comment${node.count === 1 ? "" : "s"}`}>
+            {node.count}
+          </span>
+        )}
       </button>
     );
   }

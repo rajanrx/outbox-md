@@ -113,6 +113,29 @@ func (s *Store) ListComments(docID string) ([]domain.Comment, error) {
 	return out, rows.Err()
 }
 
+// OpenCommentCounts returns the number of ACTIVE (non-terminal) comments per
+// document id — the count the file-tree badges show. Terminal comments (resolved
+// or detached) are excluded, so a file with only settled comments shows no badge.
+func (s *Store) OpenCommentCounts() (map[string]int, error) {
+	rows, err := s.DB.Query(
+		`SELECT doc_id, COUNT(*) FROM comments WHERE status NOT IN (?, ?) GROUP BY doc_id`,
+		domain.CommentResolved, domain.CommentDetached)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var id string
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
+}
+
 // ListOpenComments returns the agent work set as of now: every comment that is
 // 'open', PLUS every 'claimed' comment whose claim has been ABANDONED (a stale
 // claim — see domain.Comment.IsStaleClaim). This recovers comments stranded when

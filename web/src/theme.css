@@ -143,7 +143,14 @@ button { font-family: inherit; cursor: pointer; }
 .tree-row .chev.open { transform: rotate(90deg); }
 .tree-row .ic { width: 15px; height: 15px; flex: none; color: var(--chrome-soft); }
 .tree-row.file.active .ic { color: var(--accent); }
-.tree-row .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tree-row .name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Active-comment count badge on a file row (hidden when 0 — never rendered). */
+.tree-count {
+  flex: none; min-width: 16px; height: 16px; padding: 0 5px;
+  border-radius: 8px; background: var(--accent-soft); color: var(--accent);
+  font-size: 11px; font-weight: 600; line-height: 16px; text-align: center;
+}
+.tree-row.file.active .tree-count { background: var(--accent); color: var(--surface, #fff); }
 .tree-children { overflow: hidden; }
 
 /* ── reader pane (the paper) ── */
