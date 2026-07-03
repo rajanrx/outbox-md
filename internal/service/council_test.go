@@ -158,7 +158,7 @@ func TestRecordSynthesisEmitsSuggestionAndSetsState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	syn, err := svc.RecordSynthesis(c.ID, tok, "skeptic dissented", "Hello there", "chair", 0.75, 80)
+	syn, err := svc.RecordSynthesis(c.ID, tok, "skeptic dissented", "Hello there", "chair explains the edit", "chair", 0.75, 80)
 	if err != nil {
 		t.Fatalf("synthesis: %v", err)
 	}
@@ -168,8 +168,12 @@ func TestRecordSynthesisEmitsSuggestionAndSetsState(t *testing.T) {
 	if syn.Confidence != 80 {
 		t.Errorf("confidence = %d, want 80", syn.Confidence)
 	}
-	if view, _ := svc.ListCandidates(c.ID); view.Synthesis == nil || view.Synthesis.Confidence != 80 {
-		t.Errorf("confidence not persisted through the view: %+v", view.Synthesis)
+	// An edit verdict stores the summary for the modal while still emitting the suggestion.
+	if syn.Summary != "chair explains the edit" {
+		t.Errorf("summary = %q, want %q", syn.Summary, "chair explains the edit")
+	}
+	if view, _ := svc.ListCandidates(c.ID); view.Synthesis == nil || view.Synthesis.Confidence != 80 || view.Synthesis.Summary != "chair explains the edit" {
+		t.Errorf("confidence/summary not persisted through the view: %+v", view.Synthesis)
 	}
 	view, _ := svc.ListCandidates(c.ID)
 	if view.Set.State != domain.CandidateSetSynthesized || view.Synthesis == nil {
@@ -305,7 +309,7 @@ func TestCouncilEditRejectedWhenStale(t *testing.T) {
 	if _, err := s2.AddVersion(doc2.ID, "changed content", "watch"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc2.RecordSynthesis(c2.ID, tok2, "", "howdy world", "chair", 0.9, 50); err == nil {
+	if _, err := svc2.RecordSynthesis(c2.ID, tok2, "", "howdy world", "", "chair", 0.9, 50); err == nil {
 		t.Fatal("RecordSynthesis emitting a stale edit succeeded; want stale rejection")
 	}
 	if _, ok, _ := s2.GetSuggestionByComment(c2.ID); ok {
@@ -325,7 +329,8 @@ func TestRecordSynthesisNoEditRepliesAndUnclaims(t *testing.T) {
 	if _, err := svc.SubmitReview(c.ID, tok, 0, domain.LensCorrectness, domain.VerdictReply, "no change needed", "", "m1"); err != nil {
 		t.Fatal(err)
 	}
-	syn, err := svc.RecordSynthesis(c.ID, tok, "skeptic dissented", "", "chair", 0.6, 70)
+	// Empty summary → the reply falls back to the old generic verdict line.
+	syn, err := svc.RecordSynthesis(c.ID, tok, "skeptic dissented", "", "", "chair", 0.6, 70)
 	if err != nil {
 		t.Fatalf("no-edit synthesis: %v", err)
 	}
@@ -345,6 +350,46 @@ func TestRecordSynthesisNoEditRepliesAndUnclaims(t *testing.T) {
 	}
 }
 
+// TestRecordSynthesisNoEditPostsSummaryAsReply: on a no-edit verdict WITH a chair
+// summary (the substantive answer to the human), the chair reply is the summary
+// itself — not the generic "no edit" line — and the summary is stored on the
+// synthesis so the Chair Synthesis panel can render it.
+func TestRecordSynthesisNoEditPostsSummaryAsReply(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _, _ string) error { return nil })
+	c, tok := claimedComment(t, s, svc)
+	if _, err := svc.SubmitReview(c.ID, tok, 0, domain.LensCorrectness, domain.VerdictReply, "answered", "", "m1"); err != nil {
+		t.Fatal(err)
+	}
+	const answer = "Outbox turns Markdown comments into AI-reviewed edits and replies."
+	syn, err := svc.RecordSynthesis(c.ID, tok, "", "", answer, "chair", 0.97, 88)
+	if err != nil {
+		t.Fatalf("no-edit synthesis with summary: %v", err)
+	}
+	if syn.SuggestionID != "" {
+		t.Fatalf("no-edit synthesis should emit no suggestion, got %q", syn.SuggestionID)
+	}
+	if syn.Summary != answer {
+		t.Errorf("summary = %q, want the answer stored on the synthesis", syn.Summary)
+	}
+	th, _ := s.ListThread(c.ID)
+	if len(th) == 0 {
+		t.Fatal("expected a chair reply")
+	}
+	body := th[len(th)-1].Body
+	if !strings.Contains(body, answer) {
+		t.Fatalf("chair reply should lead with the answer, got %q", body)
+	}
+	if strings.Contains(body, "Council verdict: no edit") {
+		t.Fatalf("chair reply should NOT be the generic line when a summary is present, got %q", body)
+	}
+	// A confidence footer may follow, but the answer leads.
+	if !strings.HasPrefix(body, answer) {
+		t.Fatalf("answer must lead the reply, got %q", body)
+	}
+}
+
 // TestRecordSynthesisIsSingleShot: a second RecordSynthesis on an already-
 // synthesized set is rejected — even with a still-valid token — so one comment
 // never gets two syntheses / two proposed suggestions.
@@ -356,10 +401,10 @@ func TestRecordSynthesisIsSingleShot(t *testing.T) {
 	if _, err := svc.SubmitReview(c.ID, tok, 0, domain.LensCorrectness, domain.VerdictEdit, "fix", "Hello there", "m1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.RecordSynthesis(c.ID, tok, "", "Hello there", "chair", 0.9, 90); err != nil {
+	if _, err := svc.RecordSynthesis(c.ID, tok, "", "Hello there", "", "chair", 0.9, 90); err != nil {
 		t.Fatalf("first synthesis: %v", err)
 	}
-	if _, err := svc.RecordSynthesis(c.ID, tok, "", "Hello again", "chair", 0.9, 90); err == nil {
+	if _, err := svc.RecordSynthesis(c.ID, tok, "", "Hello again", "", "chair", 0.9, 90); err == nil {
 		t.Fatal("second synthesis on a synthesized set should be rejected")
 	}
 	if sg, ok, _ := s.GetSuggestionByComment(c.ID); !ok || sg.ProposedContent != "Hello there" {
@@ -386,7 +431,7 @@ func TestRecordSynthesisConcurrentSingleWinner(t *testing.T) {
 	for i := 0; i < n; i++ {
 		go func() {
 			defer wg.Done()
-			if _, err := svc.RecordSynthesis(c.ID, tok, "", "Hello there", "chair", 0.9, 90); err == nil {
+			if _, err := svc.RecordSynthesis(c.ID, tok, "", "Hello there", "", "chair", 0.9, 90); err == nil {
 				atomic.AddInt64(&wins, 1)
 			}
 		}()

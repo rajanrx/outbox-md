@@ -24,7 +24,7 @@ func TestDecisionRecordedOnSynthesisAndAccept(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Chair synthesis with an edit → first decision record (a verdict).
-	if _, err := svc.RecordSynthesis(c.ID, tok, "skeptic dissented", "Hello there", "chair", 0.75, 80); err != nil {
+	if _, err := svc.RecordSynthesis(c.ID, tok, "skeptic dissented", "Hello there", "", "chair", 0.75, 80); err != nil {
 		t.Fatal(err)
 	}
 	if len(recs) != 1 {
@@ -73,7 +73,7 @@ func TestDecisionSinkFailureNeverBlocks(t *testing.T) {
 	if _, err := svc.SubmitReview(c.ID, tok, 0, domain.LensCorrectness, domain.VerdictEdit, "fix", "Hello there", "m1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.RecordSynthesis(c.ID, tok, "", "Hello there", "chair", 0.9, 90); err != nil {
+	if _, err := svc.RecordSynthesis(c.ID, tok, "", "Hello there", "", "chair", 0.9, 90); err != nil {
 		t.Fatalf("a failing decision sink blocked the synthesis: %v", err)
 	}
 	if _, err := svc.Accept(c.ID); err != nil {
@@ -100,7 +100,7 @@ func TestDecisionDetailBoundedNoFullBodyLeak(t *testing.T) {
 	if _, err := svc.SubmitReview(c.ID, tok, 0, domain.LensCorrectness, domain.VerdictEdit, "fix", content, "m1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.RecordSynthesis(c.ID, tok, "", content, "chair", 0.9, 90); err != nil {
+	if _, err := svc.RecordSynthesis(c.ID, tok, "", content, "", "chair", 0.9, 90); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.Accept(c.ID); err != nil {

@@ -25,7 +25,7 @@ func TestPickNonEditRejectsStaleChairSuggestion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.RecordSynthesis(c.ID, tok, "", "Hello EDITED", "chair", 0.3, 30); err != nil {
+	if _, err := svc.RecordSynthesis(c.ID, tok, "", "Hello EDITED", "", "chair", 0.3, 30); err != nil {
 		t.Fatalf("synthesis: %v", err)
 	}
 	if sg, ok, _ := s.GetSuggestionByComment(c.ID); !ok || sg.State != domain.SuggestionProposed {

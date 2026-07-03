@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/rajanrx/outbox-md/internal/anchor"
@@ -681,7 +682,7 @@ func (s *Service) ListCandidates(commentID string) (CouncilView, error) {
 // human's accept-flow is unchanged. The chair is the external runner; only the
 // claiming council may record, so it validates the shared claim token like every
 // other write path. confidence (0..100) is the chair's confidence in the verdict.
-func (s *Service) RecordSynthesis(commentID, token, dissent, content, createdBy string, agreementScore float64, confidence int) (domain.Synthesis, error) {
+func (s *Service) RecordSynthesis(commentID, token, dissent, content, summary, createdBy string, agreementScore float64, confidence int) (domain.Synthesis, error) {
 	c, err := s.requireToken(commentID, token)
 	if err != nil {
 		return domain.Synthesis{}, err
@@ -723,7 +724,16 @@ func (s *Service) RecordSynthesis(commentID, token, dissent, content, createdBy 
 		// out of 'claimed' (→ replied) so the human sees a terminal outcome and
 		// stale-claim recovery can't re-loop it. comment.updated (not .replied) so
 		// the runner is never re-triggered by the council's own reply.
-		body := fmt.Sprintf("Council verdict: no edit (agreement %.0f%%, confidence %d%%).", agreementScore*100, confidence)
+		// The chair's summary IS the answer to the human — lead with it and append a
+		// dim confidence footer. Fall back to the old generic line only when the
+		// chair supplied no summary.
+		var body string
+		if strings.TrimSpace(summary) != "" {
+			body = strings.TrimSpace(summary)
+			body += fmt.Sprintf("\n\n— council: %.0f%% agree, %d%% confidence", agreementScore*100, confidence)
+		} else {
+			body = fmt.Sprintf("Council verdict: no edit (agreement %.0f%%, confidence %d%%).", agreementScore*100, confidence)
+		}
 		if dissent != "" {
 			body += " Dissent: " + dissent
 		}
@@ -740,7 +750,7 @@ func (s *Service) RecordSynthesis(commentID, token, dissent, content, createdBy 
 	}
 	syn, err := s.store.RecordSynthesis(domain.Synthesis{
 		CandidateSetID: set.ID, AgreementScore: agreementScore, Confidence: confidence,
-		Dissent: dissent, SuggestionID: suggestionID, CreatedBy: createdBy,
+		Dissent: dissent, Summary: summary, SuggestionID: suggestionID, CreatedBy: createdBy,
 	})
 	if err != nil {
 		return domain.Synthesis{}, err

@@ -20,11 +20,11 @@ func TestHumanReplyReEngagesCouncil(t *testing.T) {
 	if _, err := svc.SubmitReview(c.ID, tok, 0, domain.LensCorrectness, domain.VerdictEdit, "fix", "Hello there", "m1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.RecordSynthesis(c.ID, tok, "", "Hello there", "chair", 0.9, 90); err != nil {
+	if _, err := svc.RecordSynthesis(c.ID, tok, "", "Hello there", "", "chair", 0.9, 90); err != nil {
 		t.Fatalf("first synthesis: %v", err)
 	}
 	// Baseline: a second synthesis is blocked while the set is synthesized.
-	if _, err := svc.RecordSynthesis(c.ID, tok, "", "Hello again", "chair", 0.9, 90); err == nil {
+	if _, err := svc.RecordSynthesis(c.ID, tok, "", "Hello again", "", "chair", 0.9, 90); err == nil {
 		t.Fatal("second synthesis should be blocked before re-engagement")
 	}
 
@@ -40,7 +40,7 @@ func TestHumanReplyReEngagesCouncil(t *testing.T) {
 	if err != nil || len(won) != 1 {
 		t.Fatalf("re-claim won=%v err=%v", won, err)
 	}
-	if _, err := svc.RecordSynthesis(c.ID, tok2, "", "Hello again", "chair", 0.8, 80); err != nil {
+	if _, err := svc.RecordSynthesis(c.ID, tok2, "", "Hello again", "", "chair", 0.8, 80); err != nil {
 		t.Fatalf("re-synthesis after re-engagement should succeed: %v", err)
 	}
 }

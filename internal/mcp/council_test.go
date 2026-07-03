@@ -124,7 +124,7 @@ func TestRecordSynthesisAndListCandidatesHandlers(t *testing.T) {
 	}
 
 	// Bad token is rejected and records nothing.
-	if _, err := h.RecordSynthesis(c.ID, "wrong-token", "Howdy world", "m2 dissented", 0.8, 90, "chair"); err == nil {
+	if _, err := h.RecordSynthesis(c.ID, "wrong-token", "Howdy world", "m2 dissented", "chair summary", 0.8, 90, "chair"); err == nil {
 		t.Fatal("record_synthesis with a bad token: want error, got nil")
 	}
 	if _, ok, _ := s.GetSynthesisByComment(c.ID); ok {
@@ -132,7 +132,7 @@ func TestRecordSynthesisAndListCandidatesHandlers(t *testing.T) {
 	}
 
 	// Valid claim token records the verdict and emits the suggestion.
-	syn, err := h.RecordSynthesis(c.ID, tok, "Howdy world", "m2 dissented", 0.8, 90, "chair")
+	syn, err := h.RecordSynthesis(c.ID, tok, "Howdy world", "m2 dissented", "the chair's edit rationale", 0.8, 90, "chair")
 	if err != nil {
 		t.Fatalf("record_synthesis: %v", err)
 	}
@@ -141,6 +141,10 @@ func TestRecordSynthesisAndListCandidatesHandlers(t *testing.T) {
 	}
 	if syn.Confidence != 90 {
 		t.Errorf("confidence = %d, want 90", syn.Confidence)
+	}
+	// The summary passes through the MCP handler onto the stored synthesis.
+	if syn.Summary != "the chair's edit rationale" {
+		t.Errorf("summary = %q, want %q", syn.Summary, "the chair's edit rationale")
 	}
 	if _, ok, _ := s.GetSuggestionByComment(c.ID); !ok {
 		t.Error("expected an emitted, accept-eligible suggestion")
@@ -175,7 +179,7 @@ func TestCouncilChairToolsRespectSourcesWhitelist(t *testing.T) {
 	if _, err := h.ListCandidates(outC.ID); err == nil {
 		t.Fatal("ListCandidates on hidden-doc comment: want error, got nil")
 	}
-	if _, err := h.RecordSynthesis(outC.ID, "tok", "x", "", 0.5, 50, "chair"); err == nil {
+	if _, err := h.RecordSynthesis(outC.ID, "tok", "x", "", "", 0.5, 50, "chair"); err == nil {
 		t.Fatal("RecordSynthesis on hidden-doc comment: want error, got nil")
 	}
 }
