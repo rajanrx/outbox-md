@@ -162,16 +162,54 @@ describe("SettingsPage", () => {
     await waitFor(() => expect(api.getSettings).toHaveBeenCalledWith("repoB"));
   });
 
-  it("blocks save with a chair-required error for 2+ members", async () => {
+  it("blocks save when the chair is cleared on a 2+ member project", async () => {
+    // The chair defaults to a preset (claude), so a fresh 2-member project saves
+    // fine; the required-chair block fires only when the user CLEARS the chair
+    // (switching its agent to a custom command and leaving it blank).
     const twoMembers: Project[] = [
-      { name: "repo", root: "/repo", docs: ["docs"], members: [{ agent: "claude" }, { agent: "codex" }], chair: null },
+      { name: "repo", root: "/repo", docs: ["docs"], members: [{ agent: "claude" }, { agent: "codex" }], chair: { agent: "claude" } },
     ];
     const { container, getByText } = render(
       <SettingsPage projects={twoMembers} initialProject="repo" version="dev" onBack={noop} onProjectsChanged={noop} />,
     );
     const card = container.querySelector(".settings-card") as HTMLElement;
+    const chairSection = card.querySelector(".settings-chair") as HTMLElement;
+    const chairSelect = within(chairSection).getByLabelText("Agent preset") as HTMLSelectElement;
+    fireEvent.change(chairSelect, { target: { value: "custom" } }); // blanks the chair agent
     fireEvent.click(within(card).getByText("Save"));
     expect(getByText(/chair is required/i)).toBeTruthy();
     expect(api.updateProject).not.toHaveBeenCalled();
+  });
+
+  it("shows the per-agent model datalist so a supported model can be picked", async () => {
+    const { container } = render(
+      <SettingsPage projects={multi} initialProject="repo" version="dev" onBack={noop} onProjectsChanged={noop} />,
+    );
+    const card = container.querySelector(".settings-card") as HTMLElement;
+    fireEvent.click(within(card).getByText("+ Add member")); // defaults to claude
+    const modelInput = within(card).getAllByLabelText("Model")[0] as HTMLInputElement;
+    expect(modelInput.getAttribute("list")).toBe("models-claude");
+    // The claude datalist carries real supported models (an alias + a full id).
+    const list = card.querySelector("#models-claude") as HTMLElement;
+    const opts = Array.from(list.querySelectorAll("option")).map((o) => o.getAttribute("value"));
+    expect(opts).toContain("opus");
+    expect(opts).toContain("claude-opus-4-8");
+  });
+
+  it("keeps the chair default after cancel+reopen of the add form (P3)", async () => {
+    const { getByText, container } = render(
+      <SettingsPage projects={multi} initialProject="repo" version="dev" onBack={noop} onProjectsChanged={noop} />,
+    );
+    fireEvent.click(getByText("+ Add project")); // open
+    fireEvent.click(getByText("Cancel")); // close → reset()
+    fireEvent.click(getByText("+ Add project")); // reopen — chair must still default to claude
+    const form = container.querySelector(".settings-card-new") as HTMLElement;
+    fireEvent.change(within(form).getByPlaceholderText("/path/to/repo"), { target: { value: "/new/repo" } });
+    fireEvent.click(within(form).getByText("+ Add member"));
+    fireEvent.click(within(form).getByText("+ Add member"));
+    // Two members ⇒ chair required; the reset chair defaults to claude, so submit
+    // must NOT be blocked by the required-chair error.
+    fireEvent.click(within(form).getByText("Add project"));
+    await waitFor(() => expect(api.createProject).toHaveBeenCalledTimes(1));
   });
 });
