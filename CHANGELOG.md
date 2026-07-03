@@ -4,6 +4,28 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.0](https://github.com/rajanrx/outbox-md/compare/v0.19.0...v0.20.0) (2026-07-03)
+
+
+### Features
+
+* **autoreply:** chair prompt requires an answering summary ([a1941df](https://github.com/rajanrx/outbox-md/commit/a1941dffa50558ef99193c5af2681134ff95b7a2))
+* **council:** chair delivers a substantive answer + reasoning (not just a verdict) ([2d32691](https://github.com/rajanrx/outbox-md/commit/2d32691e8e5e1e23b55d948ac2ceb91a5808235a))
+* **domain/store:** synthesis summary field ([f12aeb0](https://github.com/rajanrx/outbox-md/commit/f12aeb04264a968a708ba853e2772b7337eff413))
+* **service/mcp:** record_synthesis summary -&gt; chair reply ([2e3e1ba](https://github.com/rajanrx/outbox-md/commit/2e3e1baa61155c2534fb907d890cfcc8a6a5f9e2))
+* **web:** auto-open first comment + active-comment badges in the file tree ([8386bbe](https://github.com/rajanrx/outbox-md/commit/8386bbe1895c8f2297f21b59c26c60fa214aca4a))
+* **web:** auto-open the first comment + active-comment badges in the file tree ([c241081](https://github.com/rajanrx/outbox-md/commit/c241081a2d8e213989e54f1e9582042df02fa645))
+* **web:** chair synthesis shows decision + summary ([c9404d1](https://github.com/rajanrx/outbox-md/commit/c9404d1137553eed5ce6254b105d6f9fc9036cb0))
+
+
+### Bug Fixes
+
+* **council:** record the chair summary into decision memory (PR [#94](https://github.com/rajanrx/outbox-md/issues/94) P2) ([bb040f3](https://github.com/rajanrx/outbox-md/commit/bb040f32621bc40b26179becd435a6c415163823))
+* **web:** refresh file-tree badges on comment count events (PR [#95](https://github.com/rajanrx/outbox-md/issues/95) P2) ([9b403a3](https://github.com/rajanrx/outbox-md/commit/9b403a30daf0d980e096f956d5c7ba33e4f6f06c))
+* **web:** reset() defaults the add-form chair to claude (PR [#92](https://github.com/rajanrx/outbox-md/issues/92) P3) ([1cc3b49](https://github.com/rajanrx/outbox-md/commit/1cc3b4994cbebbe8eadd392075d39f47b1d60960))
+* **web:** settings save (phantom chair) + per-agent model picker ([a91fa48](https://github.com/rajanrx/outbox-md/commit/a91fa48d3fad042f5d9058132be6e7cbf801ea4d))
+* **web:** settings save no longer blocked by phantom chair + per-agent model picker ([1b9e7dc](https://github.com/rajanrx/outbox-md/commit/1b9e7dc7dc63f0ad829a8b05dca817d6b6fa0f6e))
+
 ## [0.19.0](https://github.com/rajanrx/outbox-md/compare/v0.18.0...v0.19.0) (2026-07-03)
 
 
