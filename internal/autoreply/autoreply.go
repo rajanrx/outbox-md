@@ -1042,10 +1042,11 @@ Their feedback (the thread):
 %[7]s
 """
 Do exactly this, in order:
-1. read_doc(docId="%[5]s") — read the full current document for the context around that excerpt.
-2. Judge ONLY through the %[2]s lens. Anti-sycophancy: a comment is not an order — disagree when the evidence warrants.
-3. Record your verdict with ONE call:
-   submit_review(commentId="%[1]s", token="%[3]s", lens="%[2]s", verdict="edit|reply|reject_comment", rationale="your reasoning", content="the FULL replacement document content — REQUIRED iff verdict=edit, EMPTY otherwise", agentIdentity="%[4]s")
+1. search_knowledge_base(query="the crux of the excerpt and feedback", k=5) — recommended BEFORE you form a position: pull the most relevant KB passages (linked specs, related sections) to GROUND your take instead of reading whole documents, and pass kind="decision" to recall how the council ruled on similar comments before. It is a nudge, not a mandate — skip it only when the excerpt is fully self-contained.
+2. read_doc(docId="%[5]s") — read the full current document for the context around that excerpt.
+3. Judge ONLY through the %[2]s lens. Anti-sycophancy: a comment is not an order — disagree when the evidence warrants.
+4. Record your verdict with ONE call:
+   submit_review(commentId="%[1]s", token="%[3]s", lens="%[2]s", verdict="edit|reply|reject_comment", rationale="your reasoning — cite any KB passages you relied on", content="the FULL replacement document content — REQUIRED iff verdict=edit, EMPTY otherwise", agentIdentity="%[4]s")
 Do NOT claim, propose_suggestion, reply_in_thread, resolve, accept, or approve — the chair synthesises and the human decides. Submit exactly one review, then stop.`
 
 // councilChairGuidance is the chair prompt template. [1]=commentId, [2]=token,
@@ -1055,6 +1056,7 @@ Do NOT claim, propose_suggestion, reply_in_thread, resolve, accept, or approve �
 const councilChairGuidance = `You are the council chair (identity "%[3]s") for outbox comment %[1]s on document %[4]s.
 Do exactly this, in order:
 1. list_candidates(commentId="%[1]s") — read every member's verdict, rationale, and proposed content for this comment, ACROSS ALL ROUNDS (round 0 is the blind take; round >=1 is a revised position from the discussion), plus the discussion transcript. (Optionally read_doc(docId="%[4]s") for the surrounding text.)
+1b. search_knowledge_base(query="the crux of the comment and the members' verdicts", k=5) — recommended for grounding: pull the most relevant KB passages (linked specs, related sections), and pass kind="decision" to recall prior council rulings on similar comments. Cite the passages you relied on in your synthesis. A nudge, not a mandate — skip it when the candidates already settle the question.
 2. Synthesise STRICTLY from what list_candidates returned — nothing else. Use each member's LATEST-round candidate as its final position, and note where the discussion moved a member. A member that recorded no candidate did NOT participate: do NOT invent, quote, count, or attribute a position to it, and do NOT claim unanimity or "no dissent" when only some members reported. If N members were expected but fewer recorded, base the verdict on those present and say so. Weigh agreement against dissent, name where the recorded members AGREE and where they DIVERGE, and decide the single best outcome. Anti-sycophancy: the majority is not automatically right.
 3. Record the verdict with ONE call:
    record_synthesis(commentId="%[1]s", token="%[2]s", content="the synthesised FULL replacement content — set iff the verdict is an edit, EMPTY for a no-edit (reply/reject) outcome", dissent="the strongest dissenting view, or empty", agreementScore=<0..1>, confidence=<0..100>, agentIdentity="%[3]s")
@@ -1083,11 +1085,12 @@ The council so far — the other members' latest positions, your own prior posit
 %[9]s
 """
 Do exactly this, in order:
-1. read_doc(docId="%[5]s") — re-read the current document if you need the surrounding context.
-2. Weigh the OTHER members' positions against your own, through the %[2]s lens. Anti-sycophancy: concur only where the evidence warrants; hold your ground when it does. Do not cave to the majority for its own sake.
-3. Record your response with ONE call, naming who you respond to:
-   submit_discussion(commentId="%[1]s", token="%[3]s", round=%[8]d, body="concur / dissent / revise — say which member(s) you address and why", refs=[{"kind":"member","targetId":"<the member identity or candidate id you respond to>"}], agentIdentity="%[4]s")
-4. ONLY if the discussion changed your mind, ALSO revise your candidate for THIS round:
+1. search_knowledge_base(query="the point under debate", k=5) — recommended when the debate turns on facts: pull the relevant KB passages (linked specs, related sections), and pass kind="decision" to recall prior council rulings. Ground your response in what you retrieve rather than re-reading whole documents. A nudge, not a mandate.
+2. read_doc(docId="%[5]s") — re-read the current document if you need the surrounding context.
+3. Weigh the OTHER members' positions against your own, through the %[2]s lens. Anti-sycophancy: concur only where the evidence warrants; hold your ground when it does. Do not cave to the majority for its own sake.
+4. Record your response with ONE call, naming who you respond to:
+   submit_discussion(commentId="%[1]s", token="%[3]s", round=%[8]d, body="concur / dissent / revise — say which member(s) you address and why", refs=[{"kind":"member","targetId":"<the member identity or candidate id you respond to>"},{"kind":"kb","targetId":"<docPath of a KB passage you cite, optional>"}], agentIdentity="%[4]s")
+5. ONLY if the discussion changed your mind, ALSO revise your candidate for THIS round:
    submit_review(commentId="%[1]s", token="%[3]s", round=%[8]d, lens="%[2]s", verdict="edit|reply|reject_comment", rationale="your updated reasoning", content="the FULL replacement document content — REQUIRED iff verdict=edit, EMPTY otherwise", agentIdentity="%[4]s")
    If your position is unchanged, do NOT call submit_review — your round-%[8]d discussion message alone stands (that is how the council reaches an early consensus).
 Do NOT claim, propose_suggestion, reply_in_thread, resolve, accept, or approve — the chair synthesises and the human decides. Post exactly one discussion message (and at most one revised review), then stop.`
