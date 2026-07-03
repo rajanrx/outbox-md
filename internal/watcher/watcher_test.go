@@ -193,7 +193,10 @@ func TestDeleteRemoves(t *testing.T) {
 	}) {
 		t.Fatal("gone.md still in store after delete")
 	}
-	if spy.count(EventDocsChanged) < 1 {
+	// Wait for the broadcast too: the watcher removes the doc from the store BEFORE
+	// appending docs.changed, so the deletion above can be observed a beat before the
+	// event lands — asserting immediately raced to an empty event list on CI.
+	if !eventually(t, func() bool { return spy.count(EventDocsChanged) >= 1 }) {
 		t.Fatalf("no docs.changed on delete, events=%v", spy.events)
 	}
 }
@@ -285,6 +288,130 @@ func TestSelfWriteDoesNotLoop(t *testing.T) {
 	}
 	if spy.count(EventDocsChanged) != 0 {
 		t.Fatalf("self-write fired docs.changed %d time(s), want 0", spy.count(EventDocsChanged))
+	}
+}
+
+// spyReindexer records the RAG hook calls so tests can assert a write re-indexes
+// and a delete drops — without a real embedder/store.
+type spyReindexer struct {
+	mu      sync.Mutex
+	reindex map[string]string // path -> last content re-indexed
+	dropped []string
+}
+
+func (r *spyReindexer) Reindex(_, path, content string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.reindex == nil {
+		r.reindex = map[string]string{}
+	}
+	r.reindex[path] = content
+	return nil
+}
+
+func (r *spyReindexer) DropDoc(_, path string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.dropped = append(r.dropped, path)
+	return nil
+}
+
+func (r *spyReindexer) reindexed(path string) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	c, ok := r.reindex[path]
+	return c, ok
+}
+
+func (r *spyReindexer) wasDropped(path string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, p := range r.dropped {
+		if p == path {
+			return true
+		}
+	}
+	return false
+}
+
+// TestWriteTriggersRagReindex: a served .md write re-indexes the KB on the same
+// debounced pass (with the file's content), riding the existing reconcile — no
+// second polling loop.
+func TestWriteTriggersRagReindex(t *testing.T) {
+	dir := t.TempDir()
+	svc, _ := realSvc(t)
+	spy := &spyNotifier{}
+	rr := &spyReindexer{}
+	w := startWatcher(t, dir, svc, spy, 40*time.Millisecond)
+	w.SetReindexer(rr)
+
+	if err := os.WriteFile(filepath.Join(dir, "k.md"), []byte("# K\n\nkb body\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !eventually(t, func() bool { _, ok := rr.reindexed("k.md"); return ok }) {
+		t.Fatal("write did not trigger a rag re-index")
+	}
+	if c, _ := rr.reindexed("k.md"); c != "# K\n\nkb body\n" {
+		t.Fatalf("re-index got content %q, want the file bytes", c)
+	}
+}
+
+// TestDeleteDropsRagChunks: deleting a served .md drops its KB chunks via the hook.
+func TestDeleteDropsRagChunks(t *testing.T) {
+	dir := t.TempDir()
+	svc, _ := realSvc(t)
+	path := filepath.Join(dir, "d.md")
+	if err := os.WriteFile(path, []byte("bye\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SyncFile("", "d.md", "bye\n"); err != nil {
+		t.Fatal(err)
+	}
+	spy := &spyNotifier{}
+	rr := &spyReindexer{}
+	w := startWatcher(t, dir, svc, spy, 40*time.Millisecond)
+	w.SetReindexer(rr)
+
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if !eventually(t, func() bool { return rr.wasDropped("d.md") }) {
+		t.Fatal("delete did not drop the doc's rag chunks")
+	}
+}
+
+// TestServiceWriteStillReindexes: a service-owned write (Accept/Reapprove) updates
+// the governance store BEFORE the file lands on disk, so the watcher's SyncFile sees
+// no change (changed=false) — yet the KB MUST still re-index the new content, or it
+// serves stale bytes until restart. The watcher now drives the RAG hook on EVERY doc
+// event, independent of `changed`; the hook (ReindexIfChanged) is what idempotently
+// skips a truly-unchanged file, so the spy here (no hash check) receives the new
+// content.
+func TestServiceWriteStillReindexes(t *testing.T) {
+	dir := t.TempDir()
+	svc, _ := realSvc(t)
+	path := filepath.Join(dir, "a.md")
+	if err := os.WriteFile(path, []byte("v1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SyncFile("", "a.md", "v1"); err != nil {
+		t.Fatal(err)
+	}
+	spy := &spyNotifier{}
+	rr := &spyReindexer{}
+	w := startWatcher(t, dir, svc, spy, 40*time.Millisecond)
+	w.SetReindexer(rr)
+
+	// Mirror a service Accept: governance store advances to v2 FIRST (AddVersionTx),
+	// so when the disk write below is seen, SyncFile("a.md","v2 body") is changed=false.
+	if _, err := svc.SyncFile("", "a.md", "v2 body"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("v2 body"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !eventually(t, func() bool { c, ok := rr.reindexed("a.md"); return ok && c == "v2 body" }) {
+		t.Fatal("a service-owned write (SyncFile changed=false) did not re-index the KB with the new content")
 	}
 }
 

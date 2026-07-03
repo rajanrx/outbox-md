@@ -48,6 +48,38 @@ func TestConfigEndpointIncludesVersion(t *testing.T) {
 	}
 }
 
+// TestConfigEndpointIncludesRetrievalMode verifies /api/config carries the KB
+// retrieval mode (§5.5): "" when retrieval is unwired, and the tracker's value
+// once buildServer installs the mode reader.
+func TestConfigEndpointIncludesRetrievalMode(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := service.New(s, func(_, _, _ string) error { return nil })
+	h := NewAPI(svc, s, sse.NewHub())
+
+	// Unwired: retrievalMode is empty so the UI renders no chip.
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/config", nil))
+	var got struct {
+		RetrievalMode string `json:"retrievalMode"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.RetrievalMode != "" {
+		t.Fatalf("unwired retrievalMode = %q, want empty", got.RetrievalMode)
+	}
+
+	// Wired: the reader surfaces the tracker's current mode.
+	svc.SetRetrievalMode(func() string { return "keyword-only" })
+	rr2 := httptest.NewRecorder()
+	h.ServeHTTP(rr2, httptest.NewRequest(http.MethodGet, "/api/config", nil))
+	_ = json.Unmarshal(rr2.Body.Bytes(), &got)
+	if got.RetrievalMode != "keyword-only" {
+		t.Fatalf("wired retrievalMode = %q, want keyword-only", got.RetrievalMode)
+	}
+}
+
 // singleFolderAPI wires an API over a temp dir seeded with the given outbox.yaml
 // content, in single-folder mode (one project keyed "").
 func singleFolderAPI(t *testing.T, yaml string) (http.Handler, string) {

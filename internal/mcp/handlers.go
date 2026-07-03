@@ -2,17 +2,86 @@ package mcp
 
 import (
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/rajanrx/outbox-md/internal/anchor"
 	"github.com/rajanrx/outbox-md/internal/domain"
+	"github.com/rajanrx/outbox-md/internal/rag"
 	"github.com/rajanrx/outbox-md/internal/service"
 	"github.com/rajanrx/outbox-md/internal/store"
 )
 
+// RAGSearcher is the read-only retrieval seam the search_knowledge_base tool
+// drives. *rag.Searcher satisfies it; it is project-scoped (kb_scope:all is a
+// later slice — this slice always scopes to one project). Nil ⇒ retrieval is not
+// wired and the tool returns no hits.
+type RAGSearcher interface {
+	Search(project, query string, k int) ([]rag.Result, error)
+}
+
 type Handlers struct {
 	Svc *service.Service
 	St  *store.Store
+	// RAG is the knowledge-base searcher backing search_knowledge_base. Optional:
+	// nil ⇒ the tool is a no-op returning zero hits (retrieval not wired).
+	RAG RAGSearcher
+}
+
+// KBHit is one search_knowledge_base result: the source doc + heading for
+// citation, a snippet preview, and the blended relevance score (higher = better).
+type KBHit struct {
+	DocPath string  `json:"docPath"`
+	Heading string  `json:"heading"`
+	Snippet string  `json:"snippet"`
+	Score   float64 `json:"score"`
+}
+
+// SearchKnowledgeBase runs project-scoped retrieval over the served corpus and
+// returns the top-k passages. project selects the corpus; empty defaults to the
+// sole served project (the single-folder "" project, or the one registered
+// project). It NEVER returns a passage from a doc outside its project's active
+// sources whitelist — 3A only indexes served docs, so this is belt-and-suspenders
+// over that invariant. k <= 0 falls back to the searcher default.
+func (h *Handlers) SearchKnowledgeBase(project, query string, k int) ([]KBHit, error) {
+	if h.RAG == nil {
+		return []KBHit{}, nil
+	}
+	project = h.resolveKBProject(project)
+	results, err := h.RAG.Search(project, query, k)
+	if err != nil {
+		return nil, err
+	}
+	restricted := h.Svc != nil && h.Svc.SourcesRestricted()
+	out := make([]KBHit, 0, len(results))
+	for _, r := range results {
+		if restricted && !h.Svc.ProjectServes(project, r.DocPath) {
+			continue // hidden doc: never leak a chunk (assert the whitelist)
+		}
+		out = append(out, KBHit{
+			DocPath: r.DocPath,
+			Heading: r.Heading,
+			Snippet: r.Snippet,
+			Score:   r.Score,
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Score > out[j].Score })
+	return out, nil
+}
+
+// resolveKBProject maps an omitted project to the sole served project so an agent
+// spawned per-project (cwd = its root) need not name it. A non-empty project is
+// honoured verbatim (an unknown project simply retrieves nothing). With exactly
+// one served project its name is used (the single-folder "" project or the one
+// registered project); with none registered it stays "" (single-folder mode).
+func (h *Handlers) resolveKBProject(project string) string {
+	if project != "" || h.Svc == nil {
+		return project
+	}
+	if ps := h.Svc.Projects(); len(ps) == 1 {
+		return ps[0].Name
+	}
+	return project
 }
 
 func (h *Handlers) ReadDoc(docID string) (map[string]any, error) {

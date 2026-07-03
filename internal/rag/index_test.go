@@ -143,3 +143,55 @@ func TestBuildAllPrunesUnservedDocs(t *testing.T) {
 		}
 	}
 }
+
+// countEmbedder wraps stubEmbedder and counts Embed calls, so a test can prove
+// ReindexIfChanged skips (no re-embed) when the content is unchanged.
+type countEmbedder struct {
+	stub  stubEmbedder
+	calls int
+}
+
+func (c *countEmbedder) ID() string { return c.stub.ID() }
+func (c *countEmbedder) Dims() int  { return c.stub.Dims() }
+func (c *countEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	c.calls++
+	return c.stub.Embed(ctx, texts)
+}
+
+// TestReindexIfChangedReplacesStaleAndSkipsUnchanged (PR #86 P1): a service-owned
+// Accept/Reapprove write updates the governance store before the file lands, so the
+// watcher's SyncFile is changed=false — but the KB must still re-index. ReindexIfChanged
+// is hash-based (not governance-flag-based): a v2 write replaces v1 (search no longer
+// returns v1), while identical content is an idempotent no-op (no re-embed).
+func TestReindexIfChangedReplacesStaleAndSkipsUnchanged(t *testing.T) {
+	s := newStore(t)
+	emb := &countEmbedder{}
+	ix := NewIndexer(s, emb, nil, func(string, ...any) {})
+	ctx := context.Background()
+
+	if err := ix.ReindexIfChanged(ctx, "p", "d.md", "# D\n\napple v1 body"); err != nil {
+		t.Fatal(err)
+	}
+	if hits, _ := s.LexicalSearch("p", "apple", 5); len(hits) == 0 {
+		t.Fatal("v1 not indexed")
+	}
+	// A v2 write (changed=false at the governance layer, but the RAG hash differs).
+	if err := ix.ReindexIfChanged(ctx, "p", "d.md", "# D\n\nbanana v2 body"); err != nil {
+		t.Fatal(err)
+	}
+	if hits, _ := s.LexicalSearch("p", "apple", 5); len(hits) != 0 {
+		t.Fatal("stale v1 still searchable after the v2 write")
+	}
+	if hits, _ := s.LexicalSearch("p", "banana", 5); len(hits) == 0 {
+		t.Fatal("v2 not indexed")
+	}
+	callsAfterV2 := emb.calls
+
+	// Identical content again → idempotent no-op: no additional embed.
+	if err := ix.ReindexIfChanged(ctx, "p", "d.md", "# D\n\nbanana v2 body"); err != nil {
+		t.Fatal(err)
+	}
+	if emb.calls != callsAfterV2 {
+		t.Fatalf("ReindexIfChanged re-embedded unchanged content (calls %d → %d)", callsAfterV2, emb.calls)
+	}
+}
