@@ -2,6 +2,11 @@ name: ci
 on:
   push: { branches: [main] }
   pull_request:
+# Least-privilege GITHUB_TOKEN: both jobs only checkout + build/test, so read-only
+# access to repo contents is all they need (closes CodeQL actions/missing-workflow-
+# permissions #1/#2).
+permissions:
+  contents: read
 jobs:
   go:
     runs-on: ubuntu-latest
