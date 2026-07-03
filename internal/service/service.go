@@ -320,12 +320,29 @@ func (s *Service) PostComment(docID string, a domain.Anchor, author string) (dom
 		DocID: docID, AgainstVersionID: doc.CurrentVersionID, Anchor: a,
 		AuthorIdentity: author, Owner: author, Status: domain.CommentOpen,
 		PostApproval: governed,
+		// Seed the per-comment council flag from the project's council_default
+		// (system default false ⇒ single-agent). The human can then flip it per
+		// comment from the thread UI (SetCommentCouncil).
+		CouncilEnabled: s.cfg.ResolveCouncilDefault(),
 	})
 	if err != nil {
 		return domain.Comment{}, err
 	}
 	s.fireCommentEvent(webhook.EventCommentCreated, c)
 	return c, nil
+}
+
+// SetCommentCouncil flips a comment's council on/off flag
+// (domain.Comment.CouncilEnabled). It is a human-only toggle from the thread UI:
+// like Resolve it changes no status, writes no file, and fires no event (so it
+// never re-triggers the auto-reply engine). On a council project it selects the
+// full council (true) vs the single-agent chair path (false) for THIS comment;
+// on a non-council project it is inert (always single-agent).
+func (s *Service) SetCommentCouncil(commentID string, enabled bool) error {
+	if _, err := s.store.GetComment(commentID); err != nil {
+		return err
+	}
+	return s.store.SetCommentCouncil(commentID, enabled)
 }
 
 // PendingCommentCount reports how many comments in project still need agent
@@ -369,6 +386,10 @@ type CouncilComment struct {
 	DocPath   string
 	Excerpt   string
 	Thread    []domain.ThreadMessage
+	// CouncilEnabled carries the comment's per-comment council flag so the engine
+	// can branch: true ⇒ the full council, false ⇒ single-agent (the chair command
+	// run as a normal agent) for THIS comment.
+	CouncilEnabled bool
 }
 
 // OpenCouncilComments returns the open (+ recovered stale-claimed) comments a
@@ -392,7 +413,7 @@ func (s *Service) OpenCouncilComments(project string) ([]CouncilComment, error) 
 		if restricted && !s.ProjectServes(doc.Project, doc.Path) {
 			continue
 		}
-		cc := CouncilComment{CommentID: c.ID, DocID: c.DocID, DocPath: doc.Path}
+		cc := CouncilComment{CommentID: c.ID, DocID: c.DocID, DocPath: doc.Path, CouncilEnabled: c.CouncilEnabled}
 		if ver, err := s.store.GetVersion(c.AgainstVersionID); err == nil {
 			cc.Excerpt = anchor.Excerpt(ver.Content, c.Anchor.Start, c.Anchor.End)
 		}

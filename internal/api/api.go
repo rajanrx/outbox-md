@@ -581,6 +581,25 @@ func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub) http.Handler {
 		writeJSON(w, map[string]any{"ok": true}, nil)
 	})
 
+	// Per-comment council on/off toggle. Human-only (like resolve): the actor is
+	// server-set and the body carries only {enabled}. On a council project it
+	// selects the full council (true) vs the single-agent chair path (false) for
+	// this comment; on a non-council project it is inert.
+	mux.HandleFunc("POST /api/comments/{id}/council", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Enabled bool `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			writeJSONError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err))
+			return
+		}
+		if err := svc.SetCommentCouncil(r.PathValue("id"), in.Enabled); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "councilEnabled": in.Enabled}, nil)
+	})
+
 	// Settings: read/write the EDITABLE structured fields of a project's
 	// outbox.yaml. GET returns the per-project values (unlike /api/config, which
 	// carries only the root/global config in multi-project mode); PUT writes them
@@ -771,6 +790,7 @@ func settingsView(cfg config.Config) map[string]any {
 		"council_rounds":             cfg.ResolveCouncilRounds(),
 		"council_budget":             cfg.ResolveCouncilBudget(),
 		"council_deadlock_threshold": cfg.ResolveCouncilDeadlockThreshold(),
+		"council_default":            cfg.ResolveCouncilDefault(),
 	}
 }
 
