@@ -94,7 +94,9 @@ func councilConfigFor(rec *councilRecorder, members []string, chair string, comm
 			}
 			refs := make([]CommentRef, 0, len(commentIDs))
 			for _, id := range commentIDs {
-				refs = append(refs, CommentRef{ID: id})
+				// CouncilEnabled: true so these tests exercise the FULL council path
+				// (per-comment toggle ON); the OFF path is covered separately.
+				refs = append(refs, CommentRef{ID: id, CouncilEnabled: true})
 			}
 			return refs, nil
 		},
@@ -352,7 +354,7 @@ func TestCouncilPerProjectIsolation(t *testing.T) {
 			return rec.spawn(context.Background(), "", agentCmd, prompt)
 		},
 		Claim:        func(string) (string, bool, error) { return "t", true, nil },
-		OpenComments: func(p string) ([]CommentRef, error) { return []CommentRef{{ID: "c-" + p}}, nil },
+		OpenComments: func(p string) ([]CommentRef, error) { return []CommentRef{{ID: "c-" + p, CouncilEnabled: true}}, nil },
 		Heartbeat:    func(string, string) error { return nil },
 	}
 	e := New(cfg)
