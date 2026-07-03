@@ -169,6 +169,7 @@ func NewServer(h *Handlers) *mcp.Server {
 		Query   string `json:"query" jsonschema:"the natural-language question or topic to retrieve grounding for"`
 		K       int    `json:"k,omitempty" jsonschema:"how many passages to return; omit or <=0 for the default (5)"`
 		Project string `json:"project,omitempty" jsonschema:"the project whose corpus to search; omit to use the project you are working in"`
+		Kind    string `json:"kind,omitempty" jsonschema:"what to retrieve: omit or 'doc' for served document passages (the default), 'decision' to recall prior council rulings + accepted changes"`
 	}
 	type searchKBOut struct {
 		Hits []KBHit `json:"hits"`
@@ -176,11 +177,12 @@ func NewServer(h *Handlers) *mcp.Server {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "search_knowledge_base",
 		Description: "Retrieve the most relevant passages from the project's Markdown corpus (hybrid semantic + keyword search) to GROUND a review. " +
-			"Council members and the chair: pull targeted prior context — linked specs, decisions, related sections — instead of asking to read whole documents. " +
-			"Read-only and advisory: it never edits, resolves, or bypasses the claim/approval model. Returns ranked {docPath, heading, snippet, score}. " +
+			"Council members and the chair: pull targeted prior context — linked specs, related sections — instead of asking to read whole documents. " +
+			"Pass kind=\"decision\" to recall prior council rulings and accepted changes (decision memory) instead of document passages; omit kind (or \"doc\") for documents. " +
+			"Read-only and advisory: it never edits, resolves, or bypasses the claim/approval model. Returns ranked {docPath, heading, snippet, score, kind}. " +
 			"Degrades to keyword-only when no embedder is configured — always returns hits when the corpus has matches.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in searchKBIn) (*mcp.CallToolResult, searchKBOut, error) {
-		hits, err := h.SearchKnowledgeBase(in.Project, in.Query, in.K)
+		hits, err := h.SearchKnowledgeBaseKind(in.Project, in.Query, in.Kind, in.K)
 		return nil, searchKBOut{Hits: hits}, err
 	})
 

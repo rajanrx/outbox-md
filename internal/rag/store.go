@@ -10,11 +10,22 @@ import (
 	"github.com/rajanrx/outbox-md/internal/domain"
 )
 
+// Chunk kinds (§5.4). KindDoc chunks come from a served Markdown document and are
+// what reconciliation manages. KindDecision chunks are DURABLE decision memory —
+// past council verdicts and accepted changes — that live keyed to the project and
+// carry the real doc path for citation, but are never dropped by doc re-index or
+// reconciliation. Retrieval defaults to docs; kind="decision" restricts to memory.
+const (
+	KindDoc      = "doc"
+	KindDecision = "decision"
+)
+
 // ChunkRow is a persisted chunk: its text and citation metadata, a per-doc
 // content hash (for §5.1 reconciliation), and — when an embedder produced one —
 // its vector plus the embedder identity/dims the index is keyed by (§5.2). A row
 // with EmbedderID == "" (or Embedding == nil) is text/FTS5-only: retrievable by
-// keyword, invisible to vector search until embedded.
+// keyword, invisible to vector search until embedded. Kind ("" ⇒ KindDoc)
+// separates served-doc chunks from durable decision memory (§5.4).
 type ChunkRow struct {
 	ID          string
 	Project     string
@@ -26,6 +37,7 @@ type ChunkRow struct {
 	EmbedderID  string
 	Dims        int
 	Embedding   []float32
+	Kind        string
 }
 
 // Store is the RAG persistence layer over a *sql.DB (injected, so the server owns
@@ -45,6 +57,14 @@ func NewStore(db *sql.DB) (*Store, error) {
 	s := &Store{db: db}
 	if _, err := db.Exec(chunksSchema); err != nil {
 		return nil, fmt.Errorf("rag: create chunks table: %w", err)
+	}
+	// Additive migration for a store created before §5.4: add the kind column if it
+	// is missing (a fresh CREATE already includes it). "duplicate column name" means
+	// the column is already there — not an error.
+	if _, err := db.Exec(`ALTER TABLE chunks ADD COLUMN kind TEXT NOT NULL DEFAULT 'doc'`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return nil, fmt.Errorf("rag: add kind column: %w", err)
+		}
 	}
 	if _, err := db.Exec(chunksFTSSchema); err != nil {
 		if isNoFTS5(err) {
@@ -72,7 +92,8 @@ CREATE TABLE IF NOT EXISTS chunks (
   content_hash TEXT NOT NULL DEFAULT '',
   embedder_id TEXT NOT NULL DEFAULT '',
   dims INTEGER NOT NULL DEFAULT 0,
-  embedding BLOB
+  embedding BLOB,
+  kind TEXT NOT NULL DEFAULT 'doc'
 );
 CREATE INDEX IF NOT EXISTS idx_chunks_project_doc ON chunks(project, doc_path);
 `
@@ -139,11 +160,12 @@ type DocKey struct {
 	Path    string
 }
 
-// ListIndexedDocs returns every (project, doc_path) that currently has chunks in
-// the index. BuildAll uses it to prune docs that have left the served set (removed
-// from docs, hidden by narrowed sources, or deleted) so they can't be retrieved.
+// ListIndexedDocs returns every (project, doc_path) that has DOC chunks in the
+// index (kind='doc' only — decision memory is durable and not pruned). BuildAll
+// uses it to prune docs that have left the served set (removed from docs, hidden by
+// narrowed sources, or deleted) so they can't be retrieved.
 func (s *Store) ListIndexedDocs() ([]DocKey, error) {
-	rows, err := s.db.Query(`SELECT DISTINCT project, doc_path FROM chunks`)
+	rows, err := s.db.Query(`SELECT DISTINCT project, doc_path FROM chunks WHERE kind='doc'`)
 	if err != nil {
 		return nil, err
 	}
@@ -159,19 +181,49 @@ func (s *Store) ListIndexedDocs() ([]DocKey, error) {
 	return out, rows.Err()
 }
 
+// deleteDocTx removes a doc's chunks. It is scoped to kind='doc' so a doc
+// re-index or delete NEVER touches decision memory that shares the same real doc
+// path (§5.4: decisions are durable and survive doc churn).
 func deleteDocTx(tx *sql.Tx, fts bool, project, docPath string) error {
 	if fts {
 		// Delete FTS rows by the chunk-id set being removed (delete-by-UNINDEXED-col
 		// is not reliable on a standalone FTS5 table, so we scope by chunk_id).
 		if _, err := tx.Exec(
 			`DELETE FROM chunks_fts WHERE chunk_id IN (
-			   SELECT id FROM chunks WHERE project=? AND doc_path=?)`,
+			   SELECT id FROM chunks WHERE project=? AND doc_path=? AND kind='doc')`,
 			project, docPath); err != nil {
 			return err
 		}
 	}
-	_, err := tx.Exec(`DELETE FROM chunks WHERE project=? AND doc_path=?`, project, docPath)
+	_, err := tx.Exec(`DELETE FROM chunks WHERE project=? AND doc_path=? AND kind='doc'`, project, docPath)
 	return err
+}
+
+// AppendChunks inserts decision-memory rows WITHOUT the delete-then-insert of
+// UpsertDoc — decision memory is append-only and never replaces a served doc's
+// chunks (§5.4). Each row's Kind is forced to KindDecision; callers set Project +
+// the real DocPath (for citation). Written in one transaction with the FTS mirror.
+func (s *Store) AppendChunks(project string, rows []ChunkRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for i := range rows {
+		r := rows[i]
+		r.Project = project
+		r.Kind = KindDecision
+		if r.ID == "" {
+			r.ID = domain.NewID()
+		}
+		if err := insertChunkTx(tx, s.fts, r); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func insertChunkTx(tx *sql.Tx, fts bool, r ChunkRow) error {
@@ -179,10 +231,14 @@ func insertChunkTx(tx *sql.Tx, fts bool, r ChunkRow) error {
 	if len(r.Embedding) > 0 {
 		blob = float32sToBlob(r.Embedding)
 	}
+	kind := r.Kind
+	if kind == "" {
+		kind = KindDoc
+	}
 	if _, err := tx.Exec(
-		`INSERT INTO chunks(id, project, doc_path, heading, ord, text, content_hash, embedder_id, dims, embedding)
-		 VALUES(?,?,?,?,?,?,?,?,?,?)`,
-		r.ID, r.Project, r.DocPath, r.Heading, r.Ord, r.Text, r.ContentHash, r.EmbedderID, r.Dims, blob); err != nil {
+		`INSERT INTO chunks(id, project, doc_path, heading, ord, text, content_hash, embedder_id, dims, embedding, kind)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+		r.ID, r.Project, r.DocPath, r.Heading, r.Ord, r.Text, r.ContentHash, r.EmbedderID, r.Dims, blob, kind); err != nil {
 		return err
 	}
 	if fts {
@@ -201,7 +257,7 @@ func insertChunkTx(tx *sql.Tx, fts bool, r ChunkRow) error {
 // this against the on-disk file hash to decide re-embed.
 func (s *Store) DocContentHash(project, docPath string) (hash string, ok bool, err error) {
 	err = s.db.QueryRow(
-		`SELECT content_hash FROM chunks WHERE project=? AND doc_path=? LIMIT 1`,
+		`SELECT content_hash FROM chunks WHERE project=? AND doc_path=? AND kind='doc' LIMIT 1`,
 		project, docPath).Scan(&hash)
 	if err == sql.ErrNoRows {
 		return "", false, nil
@@ -214,7 +270,7 @@ func (s *Store) DocContentHash(project, docPath string) (hash string, ok bool, e
 // to drop chunks for docs no longer served or present.
 func (s *Store) ListDocPaths(project string) ([]string, error) {
 	rows, err := s.db.Query(
-		`SELECT DISTINCT doc_path FROM chunks WHERE project=?`, project)
+		`SELECT DISTINCT doc_path FROM chunks WHERE project=? AND kind='doc'`, project)
 	if err != nil {
 		return nil, err
 	}
@@ -261,7 +317,7 @@ func (s *Store) DocVectorCount(project, docPath, embedderID string, dims int) (i
 	var n int
 	err := s.db.QueryRow(
 		`SELECT COUNT(*) FROM chunks
-		  WHERE project=? AND doc_path=? AND embedder_id=? AND dims=? AND embedding IS NOT NULL`,
+		  WHERE project=? AND doc_path=? AND kind='doc' AND embedder_id=? AND dims=? AND embedding IS NOT NULL`,
 		project, docPath, embedderID, dims).Scan(&n)
 	return n, err
 }
@@ -275,17 +331,24 @@ type VectorChunk struct {
 	Embedding []float32
 }
 
-// VectorChunks returns a project's chunks whose embedding is keyed by the given
-// embedder id AND dims — i.e. comparable with a query embedded by the SAME
-// embedder. Chunks embedded by a different embedder (or not embedded) are stale
-// for this search and skipped; FTS5 still carries them. This is the §5.2
-// ID()+Dims() index-key invariant enforced at read time.
+// VectorChunks returns a project's DOC chunks whose embedding is keyed by the
+// given embedder id AND dims. It is the kind="doc" default; VectorChunksKind
+// serves decision memory. Preserved for existing callers.
 func (s *Store) VectorChunks(project, embedderID string, dims int) ([]VectorChunk, error) {
+	return s.VectorChunksKind(project, KindDoc, embedderID, dims)
+}
+
+// VectorChunksKind returns a project's chunks of the given kind whose embedding is
+// keyed by the given embedder id AND dims — i.e. comparable with a query embedded
+// by the SAME embedder. Chunks embedded by a different embedder (or not embedded)
+// are stale for this search and skipped; FTS5 still carries them. This is the §5.2
+// ID()+Dims() index-key invariant enforced at read time, kind-scoped for §5.4.
+func (s *Store) VectorChunksKind(project, kind, embedderID string, dims int) ([]VectorChunk, error) {
 	rows, err := s.db.Query(
 		`SELECT id, doc_path, heading, text, embedding
 		   FROM chunks
-		  WHERE project=? AND embedder_id=? AND dims=? AND embedding IS NOT NULL`,
-		project, embedderID, dims)
+		  WHERE project=? AND kind=? AND embedder_id=? AND dims=? AND embedding IS NOT NULL`,
+		project, kind, embedderID, dims)
 	if err != nil {
 		return nil, err
 	}
@@ -313,11 +376,18 @@ type LexicalHit struct {
 	Score   float64
 }
 
-// LexicalSearch runs the always-on keyword layer scoped to a project, returning up
-// to limit hits ranked best-first. It uses FTS5/BM25 when available, falling back
-// to a LIKE token scan otherwise. It is the retrieval floor: it works with no
-// embedder at all (design §5.2).
+// LexicalSearch runs the always-on keyword layer over a project's DOC chunks
+// (kind="doc"). LexicalSearchKind serves other kinds (decision memory). Preserved
+// for existing callers.
 func (s *Store) LexicalSearch(project, query string, limit int) ([]LexicalHit, error) {
+	return s.LexicalSearchKind(project, query, KindDoc, limit)
+}
+
+// LexicalSearchKind runs the always-on keyword layer scoped to a project AND a
+// chunk kind, returning up to limit hits ranked best-first. It uses FTS5/BM25 when
+// available, falling back to a LIKE token scan otherwise. It is the retrieval
+// floor: it works with no embedder at all (design §5.2), kind-scoped for §5.4.
+func (s *Store) LexicalSearchKind(project, query, kind string, limit int) ([]LexicalHit, error) {
 	if limit <= 0 {
 		limit = 10
 	}
@@ -325,19 +395,20 @@ func (s *Store) LexicalSearch(project, query string, limit int) ([]LexicalHit, e
 		return nil, nil
 	}
 	if s.fts {
-		return s.ftsSearch(project, query, limit)
+		return s.ftsSearch(project, query, kind, limit)
 	}
-	return s.likeSearch(project, query, limit)
+	return s.likeSearch(project, query, kind, limit)
 }
 
-func (s *Store) ftsSearch(project, query string, limit int) ([]LexicalHit, error) {
-	// bm25() is more-negative-is-better; negate so higher = more relevant.
+func (s *Store) ftsSearch(project, query, kind string, limit int) ([]LexicalHit, error) {
+	// bm25() is more-negative-is-better; negate so higher = more relevant. Kind is
+	// filtered via the joined chunks row (the FTS table itself is kind-agnostic).
 	rows, err := s.db.Query(
 		`SELECT f.chunk_id, c.doc_path, c.heading, c.text, -bm25(chunks_fts) AS score
 		   FROM chunks_fts f JOIN chunks c ON c.id = f.chunk_id
-		  WHERE f.project=? AND chunks_fts MATCH ?
+		  WHERE f.project=? AND c.kind=? AND chunks_fts MATCH ?
 		  ORDER BY score DESC LIMIT ?`,
-		project, ftsMatchQuery(query), limit)
+		project, kind, ftsMatchQuery(query), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -374,7 +445,7 @@ func ftsMatchQuery(query string) string {
 // likeSearch is the FTS5-absent fallback: a per-token LIKE scan scoring by the
 // number of distinct query tokens a chunk contains. Coarse but keeps retrieval
 // working without FTS5 (the spec's degrade-don't-break floor).
-func (s *Store) likeSearch(project, query string, limit int) ([]LexicalHit, error) {
+func (s *Store) likeSearch(project, query, kind string, limit int) ([]LexicalHit, error) {
 	tokens := strings.FieldsFunc(strings.ToLower(query), func(r rune) bool {
 		return !(r == '_' || ('a' <= r && r <= 'z') || ('A' <= r && r <= 'Z') || ('0' <= r && r <= '9'))
 	})
@@ -382,7 +453,7 @@ func (s *Store) likeSearch(project, query string, limit int) ([]LexicalHit, erro
 		return nil, nil
 	}
 	rows, err := s.db.Query(
-		`SELECT id, doc_path, heading, text FROM chunks WHERE project=?`, project)
+		`SELECT id, doc_path, heading, text FROM chunks WHERE project=? AND kind=?`, project, kind)
 	if err != nil {
 		return nil, err
 	}
