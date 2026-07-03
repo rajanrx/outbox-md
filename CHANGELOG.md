@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.0](https://github.com/rajanrx/outbox-md/compare/v0.18.0...v0.19.0) (2026-07-03)
+
+
+### Features
+
+* **cli:** add 'outbox down' + a getting-started hint in help ([3f1e3e8](https://github.com/rajanrx/outbox-md/commit/3f1e3e80f2c22e5cd4b78eebfe46205e6058b10e))
+* **cli:** outbox down + getting-started hint in help ([769636d](https://github.com/rajanrx/outbox-md/commit/769636d688706717922c34d75699d0c562c6ca30))
+
 ## [0.18.0](https://github.com/rajanrx/outbox-md/compare/v0.17.0...v0.18.0) (2026-07-03)
 
 
