@@ -332,12 +332,16 @@ func (w *Watcher) reconcile(path string, ctx dirCtx) {
 		}
 		if changed {
 			log.Printf("watcher: imported %s", key)
-			// Ride the SAME debounced pass to re-index the KB (§5.1). Gated on
-			// `changed` so the server's own accept/reapprove self-writes (identical
-			// bytes → changed=false) never trigger a re-embed.
-			w.reindexDoc(ctx.project, key, content)
 			w.broadcast(ctx.project, key, "upsert")
 		}
+		// Re-index the KB on EVERY doc event, INDEPENDENT of SyncFile's `changed`.
+		// A service-owned write (Accept/Reapprove) updates the governance store
+		// BEFORE the watcher reads the file, so SyncFile returns changed=false even
+		// though the doc content is new — gating the re-index on `changed` would let
+		// the KB serve stale content until restart. reindexDoc → ReindexIfChanged is
+		// idempotent on the RAG content hash, so an unchanged file (or the server's
+		// own no-op writes) is a cheap hash check, not a re-embed.
+		w.reindexDoc(ctx.project, key, content)
 		return
 	} else if !os.IsNotExist(err) {
 		log.Printf("watcher: read %s: %v", key, err)

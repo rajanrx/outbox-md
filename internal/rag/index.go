@@ -52,6 +52,20 @@ func (ix *Indexer) Reindex(ctx context.Context, project, docPath, content string
 	return err
 }
 
+// ReindexIfChanged re-indexes a doc ONLY when its content differs from what the
+// index already holds (the stored per-doc content hash). It lets the watcher drive
+// re-indexing on EVERY doc event — including a service-owned write (Accept /
+// Reapprove) the governance store already absorbed, where SyncFile reports no
+// change — so the KB never serves stale content until restart, WITHOUT a redundant
+// re-embed when the on-disk bytes are truly unchanged (e.g. an editor touch). A doc
+// the index has never seen is indexed.
+func (ix *Indexer) ReindexIfChanged(ctx context.Context, project, docPath, content string) error {
+	if h, ok, err := ix.Store.DocContentHash(project, docPath); err == nil && ok && h == contentHash(content) {
+		return nil
+	}
+	return ix.Reindex(ctx, project, docPath, content)
+}
+
 // reindex is Reindex plus a report of whether the embed step failed (so BuildAll
 // can settle the aggregate mode). embedFailed is false when there is no embedder.
 func (ix *Indexer) reindex(ctx context.Context, project, docPath, content string) (embedFailed bool, err error) {

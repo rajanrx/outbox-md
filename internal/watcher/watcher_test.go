@@ -377,9 +377,14 @@ func TestDeleteDropsRagChunks(t *testing.T) {
 	}
 }
 
-// TestSelfWriteDoesNotReindex: the server's own identical self-write (changed=false)
-// must NOT trigger a re-embed, mirroring the docs.changed suppression.
-func TestSelfWriteDoesNotReindex(t *testing.T) {
+// TestServiceWriteStillReindexes: a service-owned write (Accept/Reapprove) updates
+// the governance store BEFORE the file lands on disk, so the watcher's SyncFile sees
+// no change (changed=false) — yet the KB MUST still re-index the new content, or it
+// serves stale bytes until restart. The watcher now drives the RAG hook on EVERY doc
+// event, independent of `changed`; the hook (ReindexIfChanged) is what idempotently
+// skips a truly-unchanged file, so the spy here (no hash check) receives the new
+// content.
+func TestServiceWriteStillReindexes(t *testing.T) {
 	dir := t.TempDir()
 	svc, _ := realSvc(t)
 	path := filepath.Join(dir, "a.md")
@@ -394,16 +399,16 @@ func TestSelfWriteDoesNotReindex(t *testing.T) {
 	w := startWatcher(t, dir, svc, spy, 40*time.Millisecond)
 	w.SetReindexer(rr)
 
-	tmp := filepath.Join(dir, ".outbox-tmp-a")
-	if err := os.WriteFile(tmp, []byte("v1"), 0o644); err != nil {
+	// Mirror a service Accept: governance store advances to v2 FIRST (AddVersionTx),
+	// so when the disk write below is seen, SyncFile("a.md","v2 body") is changed=false.
+	if _, err := svc.SyncFile("", "a.md", "v2 body"); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Rename(tmp, path); err != nil {
+	if err := os.WriteFile(path, []byte("v2 body"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(300 * time.Millisecond)
-	if _, ok := rr.reindexed("a.md"); ok {
-		t.Fatal("identical self-write triggered a rag re-index")
+	if !eventually(t, func() bool { c, ok := rr.reindexed("a.md"); return ok && c == "v2 body" }) {
+		t.Fatal("a service-owned write (SyncFile changed=false) did not re-index the KB with the new content")
 	}
 }
 

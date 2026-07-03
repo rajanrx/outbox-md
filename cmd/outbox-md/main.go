@@ -224,7 +224,11 @@ type ragReindexer struct {
 }
 
 func (r ragReindexer) Reindex(project, path, content string) error {
-	return r.ix.Reindex(context.Background(), project, path, content)
+	// Idempotent on the RAG content hash: the watcher calls this on EVERY doc event
+	// (not just when SyncFile reports a governance change), so a service-owned
+	// Accept/Reapprove write — which updates the governance store before the watcher
+	// sees the file, making SyncFile return changed=false — still re-indexes the KB.
+	return r.ix.ReindexIfChanged(context.Background(), project, path, content)
 }
 
 func (r ragReindexer) DropDoc(project, path string) error {
