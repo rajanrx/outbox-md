@@ -80,3 +80,38 @@ func TestDecisionSinkFailureNeverBlocks(t *testing.T) {
 		t.Fatalf("a failing decision sink blocked the accept: %v", err)
 	}
 }
+
+// TestDecisionDetailBoundedNoFullBodyLeak (PR #87 P1): decision memory bypasses the
+// sources whitelist by design, so a decision record must NOT carry the full proposed
+// document body — otherwise a doc later hidden by narrowed sources would still expose
+// arbitrary body text via search_knowledge_base(kind="decision"). A body marker
+// placed BEYOND the bounded excerpt must not survive in any decision record.
+func TestDecisionDetailBoundedNoFullBodyLeak(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+	svc := New(s, func(_, _, _ string) error { return nil })
+	var recs []DecisionRecord
+	svc.SetDecisionRecorder(func(r DecisionRecord) { recs = append(recs, r) })
+
+	c, tok := claimedComment(t, s, svc)
+	// An edit whose body carries a unique secret WELL beyond the excerpt bound.
+	unique := "ZZUNIQUEBODYSECRET42"
+	content := "# Title\n\n" + strings.Repeat("padding word ", 60) + "\n\n" + unique + " at the very end.\n"
+	if _, err := svc.SubmitReview(c.ID, tok, 0, domain.LensCorrectness, domain.VerdictEdit, "fix", content, "m1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.RecordSynthesis(c.ID, tok, "", content, "chair", 0.9, 90); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Accept(c.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) < 2 {
+		t.Fatalf("expected verdict + accept decision records, got %d", len(recs))
+	}
+	for i, r := range recs {
+		if strings.Contains(r.Detail, unique) {
+			t.Fatalf("decision record %d leaked full body text (%q) past the excerpt bound: Detail=%q", i, unique, r.Detail)
+		}
+	}
+}

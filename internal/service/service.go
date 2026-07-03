@@ -187,7 +187,21 @@ type DecisionRecord struct {
 	Excerpt   string // the anchored comment excerpt that triggered the decision
 	Outcome   string // e.g. "Council verdict: edit" | "Suggestion accepted → v3"
 	Rationale string // the reasoning / dissent behind the outcome
-	Detail    string // optional extra context (a synthesis body / change summary)
+	Detail    string // optional extra context (a BOUNDED change preview — see decisionDetailExcerpt)
+}
+
+// decisionDetailExcerpt bounds the proposed-content preview stored in durable
+// decision memory. Decision memory intentionally BYPASSES the sources whitelist so
+// the council can recall a ruling even for a now-hidden doc — so it must NOT carry
+// the full document body, or a hidden doc's text would stay fully searchable via
+// search_knowledge_base(kind="decision"). A short, rune-safe preview keeps the gist
+// of the change without exposing arbitrary body text.
+func decisionDetailExcerpt(content string) string {
+	const max = 280
+	if r := []rune(content); len(r) > max {
+		return string(r[:max]) + "\n…(truncated)"
+	}
+	return content
 }
 
 // SetDecisionRecorder installs the decision-memory sink fired on a chair synthesis
@@ -720,7 +734,7 @@ func (s *Service) RecordSynthesis(commentID, token, dissent, content, createdBy 
 		Excerpt:   s.commentExcerpt(c),
 		Outcome:   fmt.Sprintf("%s (agreement %.0f%%, confidence %d%%)", outcome, agreementScore*100, confidence),
 		Rationale: dissent,
-		Detail:    content,
+		Detail:    decisionDetailExcerpt(content),
 	}
 	if doc, err := s.store.GetDocument(c.DocID); err == nil {
 		rec.Project, rec.DocPath = doc.Project, doc.Path
@@ -1047,7 +1061,7 @@ func (s *Service) Accept(commentID string) (domain.Version, error) {
 		Excerpt:   s.commentExcerpt(c),
 		Outcome:   fmt.Sprintf("Suggestion accepted → version %d", newVer.Ordinal),
 		Rationale: "accepted from " + sg.CreatedBy,
-		Detail:    sg.ProposedContent,
+		Detail:    decisionDetailExcerpt(sg.ProposedContent),
 	})
 	return newVer, nil
 }
