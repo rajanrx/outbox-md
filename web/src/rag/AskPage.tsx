@@ -49,6 +49,11 @@ export function AskPage({
 }) {
   const multiProject = projects.length > 1;
   const [project, setProject] = useState(initialProject);
+  // Latest project, for stale-guarding awaited continuations (createSession / askKB)
+  // against a project switch mid-flight — a promise started for project A must not
+  // install a session or overwrite messages once the UI has moved to project B.
+  const projectRef = useRef(project);
+  projectRef.current = project;
   const [sessions, setSessions] = useState<RagSession[]>([]);
   const [activeId, setActiveId] = useState("");
   const [messages, setMessages] = useState<RagMessage[]>([]);
@@ -68,6 +73,8 @@ export function AskPage({
     setSessions([]);
     setActiveId("");
     setMessages([]);
+    setThinking(false);
+    setError(null);
     listSessions(project).then((s) => {
       if (!live) return;
       setSessions(s);
@@ -95,12 +102,15 @@ export function AskPage({
 
   const newChat = useCallback(async () => {
     setError(null);
+    const p = project;
     try {
-      const s = await createSession(project);
+      const s = await createSession(p);
+      if (projectRef.current !== p) return; // switched away — don't install A's session under B
       setSessions((cur) => [s, ...cur]);
       setActiveId(s.id);
       setMessages([]);
     } catch (e) {
+      if (projectRef.current !== p) return;
       setError(e instanceof Error ? e.message : String(e));
     }
   }, [project]);
@@ -122,16 +132,18 @@ export function AskPage({
     const q = question.trim();
     if (!q || thinking) return;
     setError(null);
+    const p = project;
     let sessionId = activeId;
     // No session yet → open one implicitly so the first question always lands.
     if (!sessionId) {
       try {
-        const s = await createSession(project);
+        const s = await createSession(p);
+        if (projectRef.current !== p) return; // switched — don't open/target A's session under B
         setSessions((cur) => [s, ...cur]);
         setActiveId(s.id);
         sessionId = s.id;
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        if (projectRef.current === p) setError(e instanceof Error ? e.message : String(e));
         return;
       }
     }
@@ -144,14 +156,16 @@ export function AskPage({
     setThinking(true);
     try {
       await askKB(sessionId, q);
+      if (projectRef.current !== p) return; // switched — don't overwrite B's messages with A's answer
       // Re-fetch the canonical turns (the server persisted both) so ids/order are real.
       setMessages(await listMessages(sessionId));
     } catch (e) {
+      if (projectRef.current !== p) return;
       setError(e instanceof Error ? e.message : String(e));
       // Drop the optimistic turn — nothing was persisted on failure.
       setMessages((cur) => cur.filter((m) => m.id !== optimistic.id));
     } finally {
-      setThinking(false);
+      if (projectRef.current === p) setThinking(false);
     }
   }, [question, thinking, activeId, project]);
 
