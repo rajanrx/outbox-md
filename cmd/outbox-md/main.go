@@ -332,6 +332,8 @@ func run(args []string, out io.Writer) error {
 		return pathsCmd(out)
 	case "settings":
 		return settingsCmd(rest, out, os.Stdin)
+	case "embed":
+		return embedCmd(rest, out)
 	case "upgrade":
 		return upgrade(out)
 	case "version", "--version", "-v":

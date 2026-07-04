@@ -95,7 +95,7 @@ func (t *ModeTracker) MarkDegraded() {
 func startupMessage(m RetrievalMode) string {
 	switch m {
 	case ModeKeywordOnly:
-		return "keyword-only (FTS5) — no embedder found; install ollama for semantic recall"
+		return "keyword-only (FTS5) — no embedder. Run 'outbox embed setup' for semantic search (ollama + embeddinggemma)."
 	case ModeDegraded:
 		return "degraded — embedder configured but unavailable, falling back to FTS5"
 	default:
