@@ -158,7 +158,9 @@ export function AskPage({
       await askKB(sessionId, q);
       if (projectRef.current !== p) return; // switched — don't overwrite B's messages with A's answer
       // Re-fetch the canonical turns (the server persisted both) so ids/order are real.
-      setMessages(await listMessages(sessionId));
+      const next = await listMessages(sessionId);
+      if (projectRef.current !== p) return; // re-check after the SECOND await — a switch during it must not overwrite B
+      setMessages(next);
     } catch (e) {
       if (projectRef.current !== p) return;
       setError(e instanceof Error ? e.message : String(e));
