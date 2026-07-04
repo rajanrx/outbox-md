@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.1](https://github.com/rajanrx/outbox-md/compare/v0.21.0...v0.21.1) (2026-07-04)
+
+
+### Bug Fixes
+
+* **rag:** background startup reconcile — don't block serving on embeds ([5b0fbe4](https://github.com/rajanrx/outbox-md/commit/5b0fbe4d6410d73c52a2047478ff718119055370))
+* **rag:** run startup reconcile in the background so it never blocks serving ([06f7624](https://github.com/rajanrx/outbox-md/commit/06f7624ded09cb29fb85c6c54b3d27ef08d574eb))
+
 ## [0.21.0](https://github.com/rajanrx/outbox-md/compare/v0.20.0...v0.21.0) (2026-07-04)
 
 
