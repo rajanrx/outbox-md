@@ -706,11 +706,19 @@ func buildServer(root string, projects []registry.Project, autoReplyFlag, logs b
 	})
 	// §5.1 startup reconciliation: after the doc import, converge the index with the
 	// served docs-union on disk — re-embed stale/missing/embedder-changed docs, drop
-	// chunks for docs no longer served. Non-blocking: a reconcile error is logged,
-	// never fatal (retrieval degrades, serving continues).
-	if _, err := ragIndexer.Reconcile(context.Background(), ragDocs); err != nil {
-		log.Printf("rag: startup reconcile had errors (retrieval may be partial): %v", err)
+	// chunks for docs no longer served. Run in the BACKGROUND (like the decision
+	// recorder above) so a slow, cold, or wedged embedder never blocks the web server
+	// from coming up: serving starts immediately in keyword-only, and the mode tracker
+	// flips to semantic once vectors land. A reconcile error is logged, never fatal.
+	if len(ragDocs) > 0 {
+		log.Printf("rag: reconciling %d docs in the background — serving now; retrieval upgrades to semantic when embeds land", len(ragDocs))
 	}
+	go func() {
+		defer func() { _ = recover() }()
+		if _, err := ragIndexer.Reconcile(context.Background(), ragDocs); err != nil {
+			log.Printf("rag: startup reconcile had errors (retrieval may be partial): %v", err)
+		}
+	}()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
