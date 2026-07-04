@@ -59,6 +59,12 @@ type Service struct {
 	// buildServer wires it to the KB indexer. Best-effort by contract: a failed
 	// index NEVER blocks or fails the verdict/accept.
 	decisionSink func(DecisionRecord)
+	// kbSearch / kbLLM are the Ask-the-KB seams (see rag_chat.go): retrieval over
+	// the shared rag.Searcher and a plain-completion LLM spawn. Both are wired by
+	// buildServer; unset ⇒ AskKB returns ErrKBNotWired, so governance is unaffected
+	// when the KB is not available.
+	kbSearch KBSearchFunc
+	kbLLM    KBLLMFunc
 	// projectSources, when non-nil, is the per-project runtime sources map built
 	// by the server at startup (single-folder mode is a single "" entry carrying
 	// the real cfg). It drives the read guards so each project's Sources whitelist

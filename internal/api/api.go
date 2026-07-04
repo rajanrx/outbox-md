@@ -678,6 +678,12 @@ func NewAPI(svc *service.Service, st *store.Store, hub *sse.Hub) http.Handler {
 		writeJSON(w, settingsView(config.Load(root)), nil)
 	})
 
+	// Ask-the-KB chat: project-scoped RAG chat sessions + the grounded answer path
+	// (POST …/ask → AskKB). Mounted under /api/rag/; not doc/comment-scoped, so the
+	// sources guard below passes it through (retrieval is itself project-scoped and
+	// the index only holds served docs).
+	registerRAGChat(mux, svc, st)
+
 	// Enforce the sources whitelist uniformly across every doc- and
 	// comment-scoped route (GET/POST /api/docs/{id}/…, /api/comments/{id}/…),
 	// so a stale hidden-doc id can't read or mutate through any single endpoint.
