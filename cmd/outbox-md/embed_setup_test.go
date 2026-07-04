@@ -95,3 +95,26 @@ func TestEmbedDispatchHelpAndUnknown(t *testing.T) {
 		t.Fatalf("error %q should name the bad subcommand", err.Error())
 	}
 }
+
+// TestOllamaEnvThreadsURL (PR #99 P2): a non-default --url must reach the ollama CLI
+// (pull/list) via OLLAMA_HOST, so setup pulls/lists from the SAME daemon it writes
+// into embed_cmd — never the CLI's default host.
+func TestOllamaEnvThreadsURL(t *testing.T) {
+	has := func(env []string, want string) bool {
+		for _, e := range env {
+			if e == want {
+				return true
+			}
+		}
+		return false
+	}
+	if !has(ollamaEnv("http://remote:11434"), "OLLAMA_HOST=http://remote:11434") {
+		t.Fatal("ollamaEnv(non-default) must set OLLAMA_HOST so pull/list target that daemon")
+	}
+	if !has(ollamaEnv(""), "OLLAMA_HOST="+defaultOllamaURL) {
+		t.Fatalf("ollamaEnv(\"\") should default OLLAMA_HOST to %s", defaultOllamaURL)
+	}
+	if !has(ollamaEnv("http://remote:11434/"), "OLLAMA_HOST=http://remote:11434") {
+		t.Fatal("ollamaEnv should trim a trailing slash before setting OLLAMA_HOST")
+	}
+}

@@ -80,6 +80,7 @@ func embedSetup(args []string, out io.Writer) error {
 	// 4. Pull the model, streaming ollama's own progress output to the user.
 	fmt.Fprintf(out, "pulling ollama model %q …\n", *model)
 	pull := exec.Command("ollama", "pull", *model)
+	pull.Env = ollamaEnv(*url) // pull against the SAME daemon --url points at (not the CLI default)
 	pull.Stdout, pull.Stderr = out, out
 	if err := pull.Run(); err != nil {
 		return fmt.Errorf("embed setup: `ollama pull %s` failed: %w", *model, err)
@@ -139,7 +140,7 @@ func embedStatus(args []string, out io.Writer) error {
 
 	pulled := false
 	if installed {
-		pulled = ollamaHasModel(*model)
+		pulled = ollamaHasModel(*model, *url)
 	}
 	fmt.Fprintf(out, "model %q pulled:   %s\n", *model, yesNo(pulled))
 
@@ -181,11 +182,25 @@ func ollamaReachable(baseURL string) bool {
 	return true
 }
 
-// ollamaHasModel reports whether `ollama list` includes model (matched on the name
-// prefix, so "embeddinggemma" matches the "embeddinggemma:latest" tag). Any error
-// running ollama list means we cannot confirm the model → false.
-func ollamaHasModel(model string) bool {
-	out, err := exec.Command("ollama", "list").Output()
+// ollamaEnv returns the process environment with OLLAMA_HOST set to baseURL, so the
+// ollama CLI (`pull`/`list`) targets the SAME daemon as --url — not its own default
+// host. An empty baseURL keeps the default.
+func ollamaEnv(baseURL string) []string {
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if base == "" {
+		base = defaultOllamaURL
+	}
+	return append(os.Environ(), "OLLAMA_HOST="+base)
+}
+
+// ollamaHasModel reports whether `ollama list` (against the daemon at baseURL)
+// includes model (matched on the name prefix, so "embeddinggemma" matches the
+// "embeddinggemma:latest" tag). Any error running ollama list means we cannot
+// confirm the model → false.
+func ollamaHasModel(model, baseURL string) bool {
+	cmd := exec.Command("ollama", "list")
+	cmd.Env = ollamaEnv(baseURL) // same daemon as --url, not the CLI default
+	out, err := cmd.Output()
 	if err != nil {
 		return false
 	}
