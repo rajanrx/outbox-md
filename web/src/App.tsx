@@ -7,6 +7,7 @@ import { BaselineDiff } from "./governance/BaselineDiff";
 import { DecisionLog } from "./log/DecisionLog";
 import { Modal } from "./Modal";
 import { SettingsPage } from "./settings/SettingsPage";
+import { AskPage } from "./rag/AskPage";
 import { RetrievalChip } from "./RetrievalChip";
 import "./governance/governance.css";
 
@@ -27,6 +28,13 @@ const GearIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
     <circle cx="12" cy="12" r="3" />
     <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+  </svg>
+);
+
+const SparkIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 3v4M12 17v4M3 12h4M17 12h4" />
+    <path d="M12 8.5c.6 1.9 1.6 2.9 3.5 3.5-1.9.6-2.9 1.6-3.5 3.5-.6-1.9-1.6-2.9-3.5-3.5 1.9-.6 2.9-1.6 3.5-3.5z" fill="currentColor" stroke="none" />
   </svg>
 );
 
@@ -58,6 +66,10 @@ export default function App() {
   // the URL (?settings) so a reload keeps the page, mirroring ?doc= routing.
   const [showSettings, setShowSettings] = useState(
     () => new URLSearchParams(window.location.search).has("settings"),
+  );
+  // The dedicated "Ask the KB" page, restored from ?ask (mirrors ?settings).
+  const [showAsk, setShowAsk] = useState(
+    () => new URLSearchParams(window.location.search).has("ask"),
   );
   // Build version for the header badge ("dev" for local builds).
   const [version, setVersion] = useState("");
@@ -243,9 +255,31 @@ export default function App() {
     setShowSettings(false);
     window.history.replaceState(null, "", window.location.pathname);
   }, []);
-  // Sync the view with browser back/forward navigation.
+  // Ask-the-KB page open/close, URL-synced via ?ask (mirrors Settings).
+  const openAsk = useCallback(() => {
+    setShowAsk(true);
+    window.history.pushState(null, "", `${window.location.pathname}?ask`);
+  }, []);
+  const closeAsk = useCallback(() => {
+    setShowAsk(false);
+    window.history.replaceState(null, "", window.location.pathname);
+  }, []);
+  // Navigate from an Ask source citation back to the reader at that doc path.
+  const openDocByPath = useCallback((path: string) => {
+    const match = docs.find((d) => d.path === path);
+    if (match) {
+      if (multiProject && match.project) setProject(match.project);
+      setDocId(match.id);
+    }
+    closeAsk();
+  }, [docs, multiProject, closeAsk]);
+  // Sync both dedicated views with browser back/forward navigation.
   useEffect(() => {
-    const onPop = () => setShowSettings(new URLSearchParams(window.location.search).has("settings"));
+    const onPop = () => {
+      const params = new URLSearchParams(window.location.search);
+      setShowSettings(params.has("settings"));
+      setShowAsk(params.has("ask"));
+    };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
@@ -254,7 +288,7 @@ export default function App() {
   // replaceState (not pushState) to avoid history-stack spam. Skipped while the
   // Settings page owns the URL (?settings).
   useEffect(() => {
-    if (showSettings) return;
+    if (showSettings || showAsk) return;
     if (!docId) return;
     const path = docs.find((d) => d.id === docId)?.path;
     if (!path) return;
@@ -267,7 +301,7 @@ export default function App() {
     const enc = encodeURIComponent(path).replace(/%2F/g, "/");
     const hash = keepHash ? window.location.hash : "";
     window.history.replaceState(null, "", `${window.location.pathname}?doc=${enc}${hash}`);
-  }, [docId, docs, showSettings]);
+  }, [docId, docs, showSettings, showAsk]);
   useEffect(() => {
     if (!docId) return;
     refresh();
@@ -297,6 +331,19 @@ export default function App() {
         version={version}
         onBack={closeSettings}
         onProjectsChanged={loadProjects}
+      />
+    );
+  }
+
+  if (showAsk) {
+    return (
+      <AskPage
+        projects={projects}
+        initialProject={project}
+        version={version}
+        retrievalMode={retrievalMode}
+        onBack={closeAsk}
+        onOpenDoc={openDocByPath}
       />
     );
   }
@@ -347,6 +394,7 @@ export default function App() {
           <button className="gov-btn ghost" onClick={() => setShowLog((v) => !v)}>History</button>
         )}
         <div className="spacer" />
+        <button className="icon-btn" title="Ask the KB" aria-label="Ask the KB" onClick={openAsk}><SparkIcon /></button>
         <button className="icon-btn" title="Settings" aria-label="Settings" onClick={openSettings}><GearIcon /></button>
         <button className={"icon-btn" + (treeOpen ? " on" : "")} title="Toggle files" onClick={() => setTreeOpen((v) => !v)}><PanelLeftIcon /></button>
         <button className={"icon-btn" + (commentsOpen ? " on" : "")} title="Toggle comments" onClick={() => setCommentsOpen((v) => !v)}><PanelRightIcon /></button>
