@@ -190,6 +190,34 @@ Examples:
   outbox settings auto_reply true     # turn the auto-reply loop on
   outbox settings auto_update false   # opt out of self-update
 `,
+	"embed": `outbox embed — enable + drive semantic RAG search via a local ollama embedder.
+
+Usage:
+  outbox embed setup  [--model <m>] [--url <ollama-url>]   # one-shot enabler
+  outbox embed status [--model <m>] [--url <ollama-url>]   # is semantic search ready?
+  outbox embed run    [--model <m>] [--url <ollama-url>]   # embedder bridge (utility)
+
+By default outbox retrieval is keyword-only (FTS5). "outbox embed setup" turns on
+SEMANTIC search in one step: it checks ollama is installed + running, pulls the
+embedding model (default embeddinggemma), and points embed_cmd at THIS binary's
+"embed run" — so no curl/jq wrapper is needed. Restart "outbox up" to apply.
+
+  setup    Install-check ollama, pull the model, and set embed_cmd for you.
+  status   Report ollama installed/reachable, model pulled, and embed_cmd.
+  run      The embedder bridge embed_cmd points at: reads one text on stdin, POSTs
+           it to ollama, and writes the JSON float vector to stdout. You normally
+           never run this by hand — "embed setup" wires it up.
+
+Flags:
+  --model  ollama embedding model   (default embeddinggemma)
+  --url    ollama base URL          (default http://localhost:11434)
+
+Examples:
+  outbox embed setup                        # pull embeddinggemma + wire embed_cmd
+  outbox embed setup --model nomic-embed-text
+  outbox embed status                       # check whether semantic search is ready
+  outbox embed setup --url http://localhost:11434
+`,
 	"version": `outbox version — print the version.
 
 Usage:
@@ -232,6 +260,7 @@ Commands (with a one-line example each):
   retry      Re-queue stranded claimed comments      outbox retry
   paths      Print outbox's on-disk locations        outbox paths
   settings   View/change outbox.yaml fields          outbox settings auto_reply true
+  embed      Enable semantic RAG search (ollama)      outbox embed setup
   upgrade    Self-update to the latest release       outbox upgrade
   version    Print the version                       outbox version
   help       Show this help (or "help <command>")    outbox help add
