@@ -4,6 +4,30 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.0](https://github.com/rajanrx/outbox-md/compare/v0.20.0...v0.21.0) (2026-07-04)
+
+
+### Features
+
+* Ask-the-KB — dedicated RAG chat page with sessions ([ebc3f10](https://github.com/rajanrx/outbox-md/commit/ebc3f106d34ef63aca81bc1d9e5214d12942445e))
+* **cli:** outbox embed — one-command semantic RAG setup ([97e0920](https://github.com/rajanrx/outbox-md/commit/97e09209eca528bd863eb378020d2ec720e4d6b9))
+* **cli:** outbox embed run — ollama embedder bridge ([9a33ca0](https://github.com/rajanrx/outbox-md/commit/9a33ca075f60a89c16508ea99573ac30bb1bd1df))
+* **cli:** outbox embed setup + status ([2bce93e](https://github.com/rajanrx/outbox-md/commit/2bce93e88fcb5896b244466cceb9da2bd1d77ffd))
+* **outbox-md:** wire rag chat seams into buildServer ([5f8bb5f](https://github.com/rajanrx/outbox-md/commit/5f8bb5f61f53dc582df317714fe0c2634a7bb2d4))
+* **rag:** point the keyword-only hint at 'outbox embed setup' ([ac626ea](https://github.com/rajanrx/outbox-md/commit/ac626ea4a01003010cfcf731e98468b7a3e6dda2))
+* **service/api:** AskKB grounded chat endpoint ([5d499b9](https://github.com/rajanrx/outbox-md/commit/5d499b96ace1ddeda2c5775ad0b1d646a6cd651d))
+* **store:** rag chat sessions + messages ([d509979](https://github.com/rajanrx/outbox-md/commit/d509979da53ca7b12cc12591150522ec81920719))
+* **web:** Ask-the-KB page with sessions ([151e691](https://github.com/rajanrx/outbox-md/commit/151e691674192084eafd2ace2c887e77c5c6d1a5))
+
+
+### Bug Fixes
+
+* **cli:** embed setup/status thread --url into ollama pull/list (PR [#99](https://github.com/rajanrx/outbox-md/issues/99) P2) ([13336c8](https://github.com/rajanrx/outbox-md/commit/13336c83ecf1128e4e34bfd9a74dcf07c78a6b8f))
+* **rag-chat:** atomic turn write + synchronous project-switch clear (PR [#100](https://github.com/rajanrx/outbox-md/issues/100) P2s) ([ba68637](https://github.com/rajanrx/outbox-md/commit/ba6863775d36696082eaa38d9b91e1a92e41596f))
+* **rag-chat:** guard createSession/askKB continuations against project switch (PR [#100](https://github.com/rajanrx/outbox-md/issues/100) P2) ([5088774](https://github.com/rajanrx/outbox-md/commit/50887744a8a28d4ca3935ea3c64e953f539245a8))
+* **rag-chat:** guard project session-load against stale responses (PR [#100](https://github.com/rajanrx/outbox-md/issues/100) P2) ([8192ae5](https://github.com/rajanrx/outbox-md/commit/8192ae5b3384bb85cdc5663fba4f629c85a686ab))
+* **rag-chat:** re-check project after the listMessages await too (PR [#100](https://github.com/rajanrx/outbox-md/issues/100) P2) ([d466cbd](https://github.com/rajanrx/outbox-md/commit/d466cbd31bf602d7b1034967ba7d6aea16efe53c))
+
 ## [0.20.0](https://github.com/rajanrx/outbox-md/compare/v0.19.0...v0.20.0) (2026-07-03)
 
 
