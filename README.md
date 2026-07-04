@@ -4,11 +4,11 @@
 
 <div align="center">
 
-<a href="https://www.youtube.com/watch?v=LN0Z_cve36w">
+<a href="https://youtu.be/ibF3tvFr0zs">
   <img src="docs/media/hero-thumb.png" alt="Watch: outbox-md — the full walkthrough" width="100%">
 </a>
 
-<em>▶ <b><a href="https://www.youtube.com/watch?v=LN0Z_cve36w">Watch the full walkthrough</a></b> — what it is, how to use it, and the architecture</em>
+<em>▶ <b><a href="https://youtu.be/ibF3tvFr0zs">Watch the full walkthrough</a></b> — what it is, how to use it, and the architecture</em>
 
 </div>
 
