@@ -109,3 +109,25 @@ CREATE TABLE IF NOT EXISTS syntheses (
   created_by TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+-- Ask-the-KB chat: persistent RAG chat sessions and their message turns, scoped
+-- per project. A session is a titled conversation; each message is a user question
+-- or an assistant answer. The assistant answer carries the retrieved passages it
+-- was grounded in as a JSON array (sources_json). Foreign keys are not enforced
+-- (store.Open sets no PRAGMA foreign_keys=ON), so DeleteSession removes a session's
+-- messages explicitly in one transaction rather than relying on ON DELETE CASCADE.
+CREATE TABLE IF NOT EXISTS rag_sessions (
+  id TEXT PRIMARY KEY,
+  project TEXT NOT NULL DEFAULT '',
+  title TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS rag_messages (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES rag_sessions(id),
+  role TEXT NOT NULL,               -- 'user' | 'assistant'
+  content TEXT NOT NULL,
+  sources_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_rag_sessions_project ON rag_sessions(project);
+CREATE INDEX IF NOT EXISTS idx_rag_messages_session ON rag_messages(session_id);

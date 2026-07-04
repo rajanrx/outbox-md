@@ -293,6 +293,80 @@ export function isSingleFolderMode(projects: Project[]): boolean {
   return projects.length === 1 && projects[0].name === "";
 }
 
+// ── Ask the KB (RAG chat) ───────────────────────────────────────────────────
+// A dedicated Q&A surface: persistent chat sessions per project, answered by the
+// project's LLM grounded in retrieved KB passages.
+
+// RagSource is one retrieved passage the assistant answer was grounded in. The
+// backend serialises Go's rag.Result with its FIELD names (no json tags), so the
+// keys are capitalised. docPath/heading identify the cited doc; score is the
+// blended relevance; source is "semantic" | "keyword" | "hybrid".
+export type RagSource = {
+  DocPath: string;
+  Heading: string;
+  Snippet: string;
+  Score: number;
+  Source: string;
+  Kind: string;
+};
+
+// RagSession is one persistent chat conversation, scoped to a project.
+export type RagSession = { id: string; project: string; title: string; createdAt: string };
+
+// RagMessage is one turn: a user question or an assistant answer. sources is the
+// grounding passages (present on assistant turns; empty on user turns).
+export type RagMessage = {
+  id: string;
+  sessionId: string;
+  role: "user" | "assistant";
+  content: string;
+  sources: RagSource[];
+  createdAt: string;
+};
+
+// listSessions returns a project's chat sessions, newest first.
+export async function listSessions(project = ""): Promise<RagSession[]> {
+  const r = await fetch(`/api/rag/sessions?project=${encodeURIComponent(project)}`);
+  return r.ok ? r.json() : [];
+}
+
+// createSession opens a new chat session. A blank title defaults server-side.
+export async function createSession(project = "", title = ""): Promise<RagSession> {
+  const r = await fetch("/api/rag/sessions", { method: "POST", body: JSON.stringify({ project, title }) });
+  if (!r.ok) await throwApiError(r);
+  return r.json();
+}
+
+// renameSession updates a session's title. Throws ApiError on 404.
+export async function renameSession(id: string, title: string): Promise<void> {
+  const r = await fetch(`/api/rag/sessions/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ title }) });
+  if (!r.ok) await throwApiError(r);
+}
+
+// deleteSession removes a session and its messages.
+export async function deleteSession(id: string): Promise<void> {
+  const r = await fetch(`/api/rag/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!r.ok) await throwApiError(r);
+}
+
+// listMessages returns a session's turns in order.
+export async function listMessages(sessionId: string): Promise<RagMessage[]> {
+  const r = await fetch(`/api/rag/sessions/${encodeURIComponent(sessionId)}/messages`);
+  return r.ok ? r.json() : [];
+}
+
+// askKB runs a grounded question against the session and returns the assistant
+// answer (with its sources). Throws ApiError with the server message on failure
+// (503 unwired KB, 502 model/retrieval failure, 400 empty question).
+export async function askKB(sessionId: string, question: string): Promise<RagMessage> {
+  const r = await fetch(`/api/rag/sessions/${encodeURIComponent(sessionId)}/ask`, {
+    method: "POST",
+    body: JSON.stringify({ question }),
+  });
+  if (!r.ok) await throwApiError(r);
+  return r.json();
+}
+
 // Settings is the editable subset of a project's outbox.yaml, keyed by the
 // outbox.yaml field names (the same keys the PUT endpoint accepts). The council
 // guardrails are integers; auto_* are booleans; agent_cmd is a template string.

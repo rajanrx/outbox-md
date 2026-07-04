@@ -678,6 +678,14 @@ func buildServer(root string, projects []registry.Project, autoReplyFlag, logs b
 	ragSearcher := rag.NewSearcher(ragStore, embedder, ragMode)
 	// Surface the retrieval mode at /api/config for the UI chip (§5.5).
 	svc.SetRetrievalMode(func() string { return string(ragMode.Mode()) })
+	// Ask-the-KB chat (dedicated Q&A page): inject the retrieval seam (the shared
+	// searcher) and the LLM-spawn seam (resolve the project's chair/agent command,
+	// run it as a plain completion in a neutral cwd). AskKB retrieves → grounds →
+	// spawns the project LLM → persists the exchange with its sources.
+	svc.SetKBChat(
+		func(project, query string, k int) ([]rag.Result, error) { return ragSearcher.Search(project, query, k) },
+		newKBLLMSpawn(projects, cfg.AgentCmd),
+	)
 	// Decision memory (§5.4): a chair synthesis (verdict) and an Accept (accepted
 	// change) index a kind="decision" KB entry via the same indexer, so future
 	// councils can recall prior rulings. Best-effort — a failed index is logged and
