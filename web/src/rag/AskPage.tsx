@@ -59,12 +59,22 @@ export function AskPage({
 
   const note = useMemo(() => retrievalNote(retrievalMode), [retrievalMode]);
 
-  const loadSessions = useCallback(async () => {
-    const s = await listSessions(project);
-    setSessions(s);
-    setActiveId((cur) => (s.some((x) => x.id === cur) ? cur : s[0]?.id ?? ""));
+  // Load the project's sessions, guarded against STALE responses: the cleanup clears
+  // synchronously on a project switch, then any in-flight listSessions(oldProject)
+  // that resolves after the switch is IGNORED (live=false) — so it can't restore the
+  // old project's sessions/activeId, which a later send() would ask/write into.
+  useEffect(() => {
+    let live = true;
+    setSessions([]);
+    setActiveId("");
+    setMessages([]);
+    listSessions(project).then((s) => {
+      if (!live) return;
+      setSessions(s);
+      setActiveId(s[0]?.id ?? "");
+    });
+    return () => { live = false; };
   }, [project]);
-  useEffect(() => { loadSessions(); }, [loadSessions]);
 
   // Load the active session's messages whenever it changes.
   useEffect(() => {
@@ -164,15 +174,7 @@ export function AskPage({
           <select
             className="project-switcher"
             value={project}
-            onChange={(e) => {
-              // Clear the previous project's session + messages SYNCHRONOUSLY so a
-              // quick send (or a slow/failed session reload) can't ask or write into
-              // the old project's session while the UI already shows the new project.
-              setProject(e.target.value);
-              setActiveId("");
-              setMessages([]);
-              setSessions([]);
-            }}
+            onChange={(e) => setProject(e.target.value)}
             title="Knowledge base + LLM to ask"
           >
             {projects.map((p) => (
