@@ -126,3 +126,37 @@ func TestRagChatDeleteSessionCascadesMessages(t *testing.T) {
 		t.Fatalf("orphaned messages after delete = %d, want 0", n)
 	}
 }
+
+// TestAppendExchangeIsAtomic (PR #100 P2): a failed assistant insert must NOT commit
+// a dangling user turn — AskKB persists a full exchange or nothing.
+func TestAppendExchangeIsAtomic(t *testing.T) {
+	s, _ := Open(":memory:")
+	defer s.Close()
+	sess, _ := s.CreateSession("p", "t")
+
+	// Happy path: both turns land; the assistant comes back with its timestamp.
+	a, err := s.AppendExchange(
+		RagMessage{SessionID: sess.ID, Role: RagRoleUser, Content: "q"},
+		RagMessage{SessionID: sess.ID, Role: RagRoleAssistant, Content: "a"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Content != "a" || a.CreatedAt == "" {
+		t.Fatalf("assistant not returned intact: %+v", a)
+	}
+	if m, _ := s.ListMessages(sess.ID); len(m) != 2 {
+		t.Fatalf("happy exchange = %d messages, want 2", len(m))
+	}
+
+	// Force the assistant insert to fail (duplicate PK) → the user turn must roll back.
+	if _, err := s.AppendExchange(
+		RagMessage{ID: "dup", SessionID: sess.ID, Role: RagRoleUser, Content: "q2"},
+		RagMessage{ID: "dup", SessionID: sess.ID, Role: RagRoleAssistant, Content: "a2"},
+	); err == nil {
+		t.Fatal("duplicate-id exchange should fail")
+	}
+	if m, _ := s.ListMessages(sess.ID); len(m) != 2 {
+		t.Fatalf("failed exchange left %d messages, want 2 (rolled back — only the first pair)", len(m))
+	}
+}

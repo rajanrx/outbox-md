@@ -164,7 +164,15 @@ export function AskPage({
           <select
             className="project-switcher"
             value={project}
-            onChange={(e) => setProject(e.target.value)}
+            onChange={(e) => {
+              // Clear the previous project's session + messages SYNCHRONOUSLY so a
+              // quick send (or a slow/failed session reload) can't ask or write into
+              // the old project's session while the UI already shows the new project.
+              setProject(e.target.value);
+              setActiveId("");
+              setMessages([]);
+              setSessions([]);
+            }}
             title="Knowledge base + LLM to ask"
           >
             {projects.map((p) => (

@@ -146,6 +146,53 @@ func (s *Store) AppendMessage(m RagMessage) (RagMessage, error) {
 	return m, nil
 }
 
+// AppendExchange writes a user turn and the assistant turn it produced in ONE
+// transaction, so a failed assistant insert never leaves a dangling user message —
+// AskKB persists a full exchange or nothing. Returns the stored assistant message.
+func (s *Store) AppendExchange(user, assistant RagMessage) (RagMessage, error) {
+	if assistant.ID == "" {
+		assistant.ID = domain.NewID()
+	}
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return RagMessage{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := insertMessageTx(tx, user); err != nil {
+		return RagMessage{}, err
+	}
+	if err := insertMessageTx(tx, assistant); err != nil {
+		return RagMessage{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return RagMessage{}, err
+	}
+	if err := s.DB.QueryRow(
+		`SELECT created_at FROM rag_messages WHERE id=?`, assistant.ID).Scan(&assistant.CreatedAt); err != nil {
+		return RagMessage{}, err
+	}
+	return assistant, nil
+}
+
+// insertMessageTx inserts one rag message within tx (id + sources defaulted).
+func insertMessageTx(tx *sql.Tx, m RagMessage) error {
+	if m.ID == "" {
+		m.ID = domain.NewID()
+	}
+	if m.Sources == nil {
+		m.Sources = []rag.Result{}
+	}
+	raw, err := json.Marshal(m.Sources)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(
+		`INSERT INTO rag_messages(id, session_id, role, content, sources_json)
+		 VALUES(?,?,?,?,?)`,
+		m.ID, m.SessionID, m.Role, m.Content, string(raw))
+	return err
+}
+
 // ListMessages returns a session's messages in turn order (insertion order via
 // created_at then rowid — a user+assistant pair written in the same second still
 // renders in the right order). It returns a non-nil (possibly empty) slice; each

@@ -75,16 +75,14 @@ func (s *Service) AskKB(project, sessionID, question string) (store.RagMessage, 
 		answer = "The model returned an empty answer. Try rephrasing the question."
 	}
 
-	// Persist both turns only now that we have an answer. The user turn carries no
+	// Persist both turns in ONE transaction now that we have an answer — so a failed
+	// assistant insert never commits a dangling user turn (the client drops its
+	// optimistic pair on error, assuming nothing persisted). The user turn carries no
 	// sources; the assistant turn carries the retrieved passages it was grounded in.
-	if _, err := s.store.AppendMessage(store.RagMessage{
-		SessionID: sessionID, Role: store.RagRoleUser, Content: question,
-	}); err != nil {
-		return store.RagMessage{}, err
-	}
-	assistant, err := s.store.AppendMessage(store.RagMessage{
-		SessionID: sessionID, Role: store.RagRoleAssistant, Content: answer, Sources: passages,
-	})
+	assistant, err := s.store.AppendExchange(
+		store.RagMessage{SessionID: sessionID, Role: store.RagRoleUser, Content: question},
+		store.RagMessage{SessionID: sessionID, Role: store.RagRoleAssistant, Content: answer, Sources: passages},
+	)
 	if err != nil {
 		return store.RagMessage{}, err
 	}
